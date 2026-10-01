@@ -14,6 +14,10 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    // Production Security: Never generate source maps in production to prevent leaking symbols or architecture
+    sourcemap: false,
+  },
   test: {
     globals: true,
     environment: 'jsdom',

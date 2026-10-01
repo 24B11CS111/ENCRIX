@@ -9,10 +9,11 @@ import {
   AlertTriangle,
   ArrowRight,
   FileSpreadsheet,
-  Download,
   Sparkles,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { sanitizeFormulaInjection, sanitizeText } from '@/lib/validation';
+import { MAX_IMPORT_ROWS, MAX_IMPORT_FILE_SIZE_BYTES } from '@/lib/config';
 
 export const LeadImportWizard: React.FC = () => {
   const { profile } = useAuth();
@@ -41,12 +42,22 @@ export const LeadImportWizard: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (file.size > MAX_IMPORT_FILE_SIZE_BYTES) {
+      alert('Security Limit Exceeded: File size must not exceed 5MB to prevent memory exhaustion.');
+      return;
+    }
+
     setFileName(file.name);
 
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
       complete: (results) => {
+        if (results.data.length > MAX_IMPORT_ROWS) {
+          alert(`Batch limit exceeded: Maximum allowed batch size is ${MAX_IMPORT_ROWS} rows.`);
+          return;
+        }
+
         const headers = results.meta.fields || [];
         setRawHeaders(headers);
         setRawRows(results.data as Record<string, string>[]);
@@ -131,12 +142,15 @@ Rahul Dravid,+91 9845012340,rahul.d@duplicate.com,Referral,HIGH,Duplicate phone 
     let invalidCount = 0;
 
     rawRows.forEach((raw) => {
-      const name = nameCol ? raw[nameCol]?.trim() || '' : '';
+      const rawName = nameCol ? raw[nameCol]?.trim() || '' : '';
+      const name = sanitizeFormulaInjection(sanitizeText(rawName));
       const phone = phoneCol ? raw[phoneCol]?.trim() || '' : '';
       const email = emailCol ? raw[emailCol]?.trim() : undefined;
-      const source = sourceCol ? raw[sourceCol]?.trim() : 'CSV Import';
+      const rawSource = sourceCol ? raw[sourceCol]?.trim() || 'CSV Import' : 'CSV Import';
+      const source = sanitizeFormulaInjection(sanitizeText(rawSource));
       const rawPriority = priorityCol ? (raw[priorityCol]?.trim().toUpperCase() as any) : 'MEDIUM';
-      const notes = notesCol ? raw[notesCol]?.trim() : undefined;
+      const rawNotes = notesCol ? raw[notesCol]?.trim() : undefined;
+      const notes = rawNotes ? sanitizeFormulaInjection(sanitizeText(rawNotes)) : undefined;
 
       const errors: string[] = [];
 

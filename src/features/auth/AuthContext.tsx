@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Profile, Organization, UserRole } from '@/types';
 import { db } from '@/services/supabase/db';
 import { DEMO_PROFILES, DEMO_ORGS } from '@/services/supabase/demoData';
+import { IS_DEMO_MODE } from '@/lib/config';
+import { rateLimiter } from '@/lib/rateLimiter';
 
 interface AuthContextType {
   user: { id: string; email: string } | null;
@@ -9,6 +11,7 @@ interface AuthContextType {
   organization: Organization | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  isDemoMode: boolean;
   login: (email: string, password?: string) => Promise<{ success: boolean; role?: UserRole; error?: string }>;
   register: (data: {
     companyName: string;
@@ -30,7 +33,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Initialize from saved session or default to Owner for immediate high-impact demo
+  // Initialize from saved session or default in demo sandbox
   useEffect(() => {
     try {
       const savedUser = localStorage.getItem('leadvault_session');
@@ -38,59 +41,111 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const parsed = JSON.parse(savedUser);
         const allProfiles = db.getProfiles({ role: 'ADMIN', organization_id: '' } as Profile);
         const found = allProfiles.find((p) => p.id === parsed.profileId);
-        if (found) {
+        
+        // Ensure account is active and not disabled
+        if (found && found.status !== 'DISABLED') {
           setProfile(found);
           const orgs = db.getOrganizations(found);
           setOrganization(orgs.find((o) => o.id === found.organization_id) || null);
           setIsLoading(false);
           return;
+        } else if (found && found.status === 'DISABLED') {
+          // Immediately revoke session for disabled account
+          localStorage.removeItem('leadvault_session');
+          setProfile(null);
+          setOrganization(null);
+          setIsLoading(false);
+          return;
         }
       }
 
-      // Default initial state: Vikram Malhotra (Owner of Vertex Consultancy)
-      const defaultOwner = DEMO_PROFILES.find((p) => p.role === 'OWNER' && p.organization_id === 'org-vertex-001');
-      if (defaultOwner) {
-        setProfile(defaultOwner);
-        setOrganization(DEMO_ORGS[0]);
+      // In Demo mode only: default initial state to Vikram Malhotra (Owner of Vertex Consultancy)
+      if (IS_DEMO_MODE) {
+        const defaultOwner = DEMO_PROFILES.find((p) => p.role === 'OWNER' && p.organization_id === 'org-vertex-001');
+        if (defaultOwner) {
+          setProfile(defaultOwner);
+          setOrganization(DEMO_ORGS[0]);
+        }
+      } else {
+        // Production: clean unauthenticated state
+        setProfile(null);
+        setOrganization(null);
       }
     } catch {
-      // Fallback
+      setProfile(null);
+      setOrganization(null);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  const login = async (email: string, _password?: string) => {
+  const login = async (email: string, password?: string) => {
+    // Rate limit login attempts: 5 attempts per 60 seconds
+    const limitCheck = rateLimiter.check(`login:${email.toLowerCase().trim()}`, 5, 60000);
+    if (!limitCheck.allowed) {
+      return {
+        success: false,
+        error: `Too many login attempts. Please wait ${Math.ceil(limitCheck.resetMs / 1000)} seconds before trying again.`,
+      };
+    }
+
     setIsLoading(true);
     try {
-      // Find matching demo user or profile by email / pattern
       const allProfiles = db.getProfiles({ role: 'ADMIN', organization_id: '' } as Profile);
-      
-      let matchedProfile = allProfiles.find(
-        (p) =>
-          p.phone === email ||
-          p.full_name.toLowerCase().includes(email.toLowerCase().split('@')[0])
-      );
+      let matchedProfile: Profile | undefined;
 
-      if (email.includes('admin')) {
-        matchedProfile = allProfiles.find((p) => p.role === 'ADMIN');
-      } else if (email.includes('owner') || email.includes('vikram')) {
-        matchedProfile = allProfiles.find((p) => p.id === 'prof-owner-001');
-      } else if (email.includes('prime')) {
-        matchedProfile = allProfiles.find((p) => p.id === 'prof-owner-002');
-      } else if (email.includes('arjun') || email.includes('telecaller')) {
-        matchedProfile = allProfiles.find((p) => p.id === 'tc-arjun-01');
-      } else if (email.includes('rahul')) {
-        matchedProfile = allProfiles.find((p) => p.id === 'tc-rahul-02');
-      } else if (email.includes('priya')) {
-        matchedProfile = allProfiles.find((p) => p.id === 'tc-priya-03');
+      if (IS_DEMO_MODE) {
+        // Demo sandbox: convenience email / role matching
+        matchedProfile = allProfiles.find(
+          (p) =>
+            p.phone === email ||
+            p.full_name.toLowerCase().includes(email.toLowerCase().split('@')[0])
+        );
+
+        if (email.includes('admin')) {
+          matchedProfile = allProfiles.find((p) => p.role === 'ADMIN');
+        } else if (email.includes('owner') || email.includes('vikram')) {
+          matchedProfile = allProfiles.find((p) => p.id === 'prof-owner-001');
+        } else if (email.includes('prime')) {
+          matchedProfile = allProfiles.find((p) => p.id === 'prof-owner-002');
+        } else if (email.includes('arjun') || email.includes('telecaller')) {
+          matchedProfile = allProfiles.find((p) => p.id === 'tc-arjun-01');
+        } else if (email.includes('rahul')) {
+          matchedProfile = allProfiles.find((p) => p.id === 'tc-rahul-02');
+        } else if (email.includes('priya')) {
+          matchedProfile = allProfiles.find((p) => p.id === 'tc-priya-03');
+        }
+      } else {
+        // PRODUCTION: Strict email lookup, password required
+        if (!password || password.length < 6) {
+          return { success: false, error: 'Password is required and must be at least 6 characters.' };
+        }
+        matchedProfile = allProfiles.find(
+          (p) =>
+            p.phone === email ||
+            p.full_name.toLowerCase() === email.toLowerCase().split('@')[0]
+        );
       }
 
       if (!matchedProfile) {
-        // Fallback default to owner
-        matchedProfile = allProfiles.find((p) => p.role === 'OWNER') || DEMO_PROFILES[1];
+        return { success: false, error: 'Invalid credentials. User profile not found.' };
       }
 
+      // Check account status: revoked/disabled account must be denied access
+      if (matchedProfile.status === 'DISABLED') {
+        db.recordSecurityEvent(
+          {
+            event_type: 'DISABLED_ACCOUNT_LOGIN_ATTEMPT',
+            severity: 'HIGH',
+            description: `Suspended user ${matchedProfile.full_name} (${matchedProfile.id}) attempted to log in.`,
+            metadata: { email, userId: matchedProfile.id },
+          },
+          matchedProfile
+        );
+        return { success: false, error: 'Your account has been suspended. Please contact your organization owner.' };
+      }
+
+      rateLimiter.reset(`login:${email.toLowerCase().trim()}`);
       setProfile(matchedProfile);
       const orgs = db.getOrganizations(matchedProfile);
       const org = orgs.find((o) => o.id === matchedProfile!.organization_id) || DEMO_ORGS[0];
@@ -191,6 +246,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const switchRole = (role: UserRole) => {
+    if (!IS_DEMO_MODE) {
+      throw new Error('Role escalation forbidden: Persona switching is strictly disabled in production.');
+    }
     const allProfiles = db.getProfiles({ role: 'ADMIN', organization_id: '' } as Profile);
     const target = allProfiles.find((p) => p.role === role && p.organization_id === 'org-vertex-001');
     if (target) {
@@ -202,6 +260,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const quickLogin = (type: 'admin' | 'owner' | 'telecaller' | 'prime_owner') => {
+    if (!IS_DEMO_MODE) {
+      throw new Error('Quick login forbidden: Demo authentication is strictly disabled in production.');
+    }
     const allProfiles = db.getProfiles({ role: 'ADMIN', organization_id: '' } as Profile);
     let target: Profile | undefined;
 
@@ -231,6 +292,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         organization,
         isAuthenticated: Boolean(profile),
         isLoading,
+        isDemoMode: IS_DEMO_MODE,
         login,
         register,
         logout,

@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 
 export const LandingPage: React.FC = () => {
-  const { quickLogin } = useAuth();
+  const { quickLogin, isDemoMode } = useAuth();
   const navigate = useNavigate();
 
   const handleLaunchDemo = (role: 'owner' | 'telecaller' | 'admin') => {
@@ -50,13 +50,15 @@ export const LandingPage: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => handleLaunchDemo('owner')}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-emerald-500/50 text-xs font-semibold text-emerald-400 transition-all"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Instant Live Demo</span>
-            </button>
+            {isDemoMode && (
+              <button
+                onClick={() => handleLaunchDemo('owner')}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-emerald-500/50 text-xs font-semibold text-emerald-400 transition-all"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Instant Live Demo</span>
+              </button>
+            )}
 
             <Link
               to="/login"
@@ -104,37 +106,41 @@ export const LandingPage: React.FC = () => {
               START PROTECTING YOUR LEADS
             </Link>
 
-            <button
-              onClick={() => handleLaunchDemo('owner')}
-              className="w-full sm:w-auto px-7 py-3.5 bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white font-semibold text-sm rounded-xl border border-slate-700 transition-all flex items-center justify-center gap-2"
-            >
-              <Play className="w-4 h-4 text-emerald-400 fill-current" />
-              <span>VIEW LIVE DEMO</span>
-            </button>
+            {isDemoMode && (
+              <button
+                onClick={() => handleLaunchDemo('owner')}
+                className="w-full sm:w-auto px-7 py-3.5 bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white font-semibold text-sm rounded-xl border border-slate-700 transition-all flex items-center justify-center gap-2"
+              >
+                <Play className="w-4 h-4 text-emerald-400 fill-current" />
+                <span>VIEW LIVE DEMO</span>
+              </button>
+            )}
           </div>
 
-          {/* Quick Demo Persona Badges */}
-          <div className="pt-6 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400">
-            <span>Explore with pre-seeded data:</span>
-            <button
-              onClick={() => handleLaunchDemo('owner')}
-              className="px-2.5 py-1 rounded bg-slate-900 border border-slate-800 hover:border-emerald-500 text-slate-300 hover:text-white font-medium transition-colors"
-            >
-              👑 Owner Workspace
-            </button>
-            <button
-              onClick={() => handleLaunchDemo('telecaller')}
-              className="px-2.5 py-1 rounded bg-slate-900 border border-slate-800 hover:border-sky-500 text-slate-300 hover:text-white font-medium transition-colors"
-            >
-              🎧 Telecaller (Masked)
-            </button>
-            <button
-              onClick={() => handleLaunchDemo('admin')}
-              className="px-2.5 py-1 rounded bg-slate-900 border border-slate-800 hover:border-purple-500 text-slate-300 hover:text-white font-medium transition-colors"
-            >
-              🛡️ Super Admin
-            </button>
-          </div>
+          {/* Quick Demo Persona Badges - STRICTLY REMOVED IN PRODUCTION */}
+          {isDemoMode && (
+            <div className="pt-6 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400">
+              <span>Explore with pre-seeded data:</span>
+              <button
+                onClick={() => handleLaunchDemo('owner')}
+                className="px-2.5 py-1 rounded bg-slate-900 border border-slate-800 hover:border-emerald-500 text-slate-300 hover:text-white font-medium transition-colors"
+              >
+                👑 Owner Workspace
+              </button>
+              <button
+                onClick={() => handleLaunchDemo('telecaller')}
+                className="px-2.5 py-1 rounded bg-slate-900 border border-slate-800 hover:border-sky-500 text-slate-300 hover:text-white font-medium transition-colors"
+              >
+                🎧 Telecaller (Masked)
+              </button>
+              <button
+                onClick={() => handleLaunchDemo('admin')}
+                className="px-2.5 py-1 rounded bg-slate-900 border border-slate-800 hover:border-purple-500 text-slate-300 hover:text-white font-medium transition-colors"
+              >
+                🛡️ Super Admin
+              </button>
+            </div>
+          )}
         </div>
       </section>
 

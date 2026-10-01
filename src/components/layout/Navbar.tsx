@@ -17,7 +17,7 @@ import { formatRelativeTime } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
 
 export const Navbar: React.FC = () => {
-  const { profile, organization, logout, quickLogin } = useAuth();
+  const { profile, organization, logout, quickLogin, isDemoMode } = useAuth();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showRoleSwitcher, setShowRoleSwitcher] = useState(false);
@@ -102,76 +102,78 @@ export const Navbar: React.FC = () => {
           <span>Realtime Live</span>
         </div>
 
-        {/* Demo Fast Role Switcher */}
-        <div className="relative">
-          <button
-            onClick={() => setShowRoleSwitcher(!showRoleSwitcher)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 hover:text-white transition-all"
-            title="Switch demo persona for testing"
-          >
-            <span className="w-2 h-2 rounded-full bg-cyan-400" />
-            <span className="font-semibold text-white">Role: {profile?.role}</span>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-          </button>
+        {/* Demo Fast Role Switcher - STRICTLY REMOVED IN PRODUCTION */}
+        {isDemoMode && (
+          <div className="relative">
+            <button
+              onClick={() => setShowRoleSwitcher(!showRoleSwitcher)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 hover:text-white transition-all"
+              title="Switch demo persona for testing"
+            >
+              <span className="w-2 h-2 rounded-full bg-cyan-400" />
+              <span className="font-semibold text-white">Role: {profile?.role}</span>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+            </button>
 
-          {showRoleSwitcher && (
-            <div className="absolute right-0 mt-2 w-72 rounded-xl border border-slate-800 bg-slate-900/95 p-2 shadow-2xl backdrop-blur-xl z-50">
-              <div className="px-3 py-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800/80">
-                Switch Test Persona
+            {showRoleSwitcher && (
+              <div className="absolute right-0 mt-2 w-72 rounded-xl border border-slate-800 bg-slate-900/95 p-2 shadow-2xl backdrop-blur-xl z-50">
+                <div className="px-3 py-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800/80">
+                  Switch Test Persona
+                </div>
+
+                <button
+                  onClick={() => handleRoleSwitch('owner')}
+                  className="w-full text-left p-2.5 rounded-lg hover:bg-slate-800/80 transition-colors flex items-center justify-between"
+                >
+                  <div>
+                    <div className="text-xs font-semibold text-white">Vikram Malhotra (Owner)</div>
+                    <div className="text-[11px] text-slate-400">Vertex Consultancy • Full Org Control</div>
+                  </div>
+                  {profile?.role === 'OWNER' && profile.organization_id === 'org-vertex-001' && (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  )}
+                </button>
+
+                <button
+                  onClick={() => handleRoleSwitch('telecaller')}
+                  className="w-full text-left p-2.5 rounded-lg hover:bg-slate-800/80 transition-colors flex items-center justify-between"
+                >
+                  <div>
+                    <div className="text-xs font-semibold text-white">Arjun Kumar (Telecaller)</div>
+                    <div className="text-[11px] text-slate-400">Masked Leads • Mobile Workspace</div>
+                  </div>
+                  {profile?.role === 'TELECALLER' && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+                </button>
+
+                <button
+                  onClick={() => handleRoleSwitch('admin')}
+                  className="w-full text-left p-2.5 rounded-lg hover:bg-slate-800/80 transition-colors flex items-center justify-between"
+                >
+                  <div>
+                    <div className="text-xs font-semibold text-white">System Admin</div>
+                    <div className="text-[11px] text-slate-400">Platform-Wide Health & Tenant Audit</div>
+                  </div>
+                  {profile?.role === 'ADMIN' && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+                </button>
+
+                <div className="my-1 border-t border-slate-800/60" />
+
+                <button
+                  onClick={() => handleRoleSwitch('prime_owner')}
+                  className="w-full text-left p-2 rounded-lg hover:bg-slate-800/80 transition-colors flex items-center justify-between"
+                >
+                  <div>
+                    <div className="text-xs font-medium text-amber-300">Rohan Verma (Tenant B Owner)</div>
+                    <div className="text-[10px] text-slate-400">Prime Careers • Test Tenant Isolation</div>
+                  </div>
+                  {profile?.organization_id === 'org-prime-002' && (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
+                  )}
+                </button>
               </div>
-
-              <button
-                onClick={() => handleRoleSwitch('owner')}
-                className="w-full text-left p-2.5 rounded-lg hover:bg-slate-800/80 transition-colors flex items-center justify-between"
-              >
-                <div>
-                  <div className="text-xs font-semibold text-white">Vikram Malhotra (Owner)</div>
-                  <div className="text-[11px] text-slate-400">Vertex Consultancy • Full Org Control</div>
-                </div>
-                {profile?.role === 'OWNER' && profile.organization_id === 'org-vertex-001' && (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                )}
-              </button>
-
-              <button
-                onClick={() => handleRoleSwitch('telecaller')}
-                className="w-full text-left p-2.5 rounded-lg hover:bg-slate-800/80 transition-colors flex items-center justify-between"
-              >
-                <div>
-                  <div className="text-xs font-semibold text-white">Arjun Kumar (Telecaller)</div>
-                  <div className="text-[11px] text-slate-400">Masked Leads • Mobile Workspace</div>
-                </div>
-                {profile?.role === 'TELECALLER' && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-              </button>
-
-              <button
-                onClick={() => handleRoleSwitch('admin')}
-                className="w-full text-left p-2.5 rounded-lg hover:bg-slate-800/80 transition-colors flex items-center justify-between"
-              >
-                <div>
-                  <div className="text-xs font-semibold text-white">System Admin</div>
-                  <div className="text-[11px] text-slate-400">Platform-Wide Health & Tenant Audit</div>
-                </div>
-                {profile?.role === 'ADMIN' && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-              </button>
-
-              <div className="my-1 border-t border-slate-800/60" />
-
-              <button
-                onClick={() => handleRoleSwitch('prime_owner')}
-                className="w-full text-left p-2 rounded-lg hover:bg-slate-800/80 transition-colors flex items-center justify-between"
-              >
-                <div>
-                  <div className="text-xs font-medium text-amber-300">Rohan Verma (Tenant B Owner)</div>
-                  <div className="text-[10px] text-slate-400">Prime Careers • Test Tenant Isolation</div>
-                </div>
-                {profile?.organization_id === 'org-prime-002' && (
-                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
-                )}
-              </button>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
         {/* Notifications Center */}
         <div className="relative">

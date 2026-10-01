@@ -1,28 +1,36 @@
 import { CallStatus, TelephonyProvider, TelephonySession } from '@/types';
+import { maskPhoneNumber } from '@/lib/dataMasking';
 
 export class MockTelephonyProvider implements TelephonyProvider {
   public name = 'Mock Telephony Gateway (Development & QA)';
-  private activeCalls: Map<string, TelephonySession> = new Map();
+  // Provider internal state - stores real phone numbers server-side
+  private activeCalls: Map<string, TelephonySession & { internalResolvedPhone?: string }> = new Map();
   private timers: Map<string, number> = new Map();
 
   public async initiateCall(params: {
     leadId: string;
     telecallerId: string;
-    phoneNumber: string;
+    phoneNumber?: string;
   }): Promise<TelephonySession> {
     const callId = `mock-call-${Date.now().toString(36)}`;
+
+    // Store secure session: telecaller client NEVER receives the raw internal phone
     const session: TelephonySession = {
       callId,
       leadId: params.leadId,
       telecallerId: params.telecallerId,
-      phoneNumber: params.phoneNumber,
+      maskedPhoneNumber: params.phoneNumber ? maskPhoneNumber(params.phoneNumber) : 'Masked (Carrier Direct)',
       status: 'INITIATED',
       startedAt: new Date(),
       durationSeconds: 0,
       isMuted: false,
     };
 
-    this.activeCalls.set(callId, session);
+    // Keep internal resolved phone strictly in provider-side memory
+    this.activeCalls.set(callId, {
+      ...session,
+      internalResolvedPhone: params.phoneNumber,
+    });
 
     // Simulate network progression: INITIATED -> RINGING
     setTimeout(() => {

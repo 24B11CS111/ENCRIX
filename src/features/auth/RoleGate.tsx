@@ -2,7 +2,7 @@ import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { UserRole } from '@/types';
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert, UserX } from 'lucide-react';
 
 interface RoleGateProps {
   children: React.ReactNode;
@@ -10,7 +10,7 @@ interface RoleGateProps {
 }
 
 export const RoleGate: React.FC<RoleGateProps> = ({ children, allowedRoles }) => {
-  const { profile, isAuthenticated, isLoading } = useAuth();
+  const { profile, isAuthenticated, isLoading, logout } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -24,6 +24,27 @@ export const RoleGate: React.FC<RoleGateProps> = ({ children, allowedRoles }) =>
 
   if (!isAuthenticated || !profile) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // Session Security: Block and display notification for disabled accounts
+  if (profile.status === 'DISABLED') {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
+        <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl mb-4 text-rose-400">
+          <UserX className="w-12 h-12" />
+        </div>
+        <h1 className="text-2xl font-bold text-white mb-2">Account Suspended</h1>
+        <p className="text-slate-400 max-w-md mb-6 text-sm">
+          Your account has been deactivated by your organization administrator. All workspace access, calling privileges, and lead queues have been revoked.
+        </p>
+        <button
+          onClick={() => logout()}
+          className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-sm font-medium rounded-lg transition-colors"
+        >
+          Sign Out
+        </button>
+      </div>
+    );
   }
 
   if (!allowedRoles.includes(profile.role)) {

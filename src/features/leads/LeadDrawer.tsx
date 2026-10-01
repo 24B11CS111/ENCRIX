@@ -61,12 +61,10 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
 
     setIsAddingNote(true);
     try {
-      db.recordCallOutcome(
+      db.updateLead(
+        lead.id,
         {
-          call_id: `note-${Date.now()}`,
-          lead_id: lead.id,
-          outcome: 'FOLLOW_UP',
-          notes: newNote,
+          notes: lead.notes ? `${lead.notes}\n[${new Date().toLocaleDateString()}] ${newNote}` : newNote,
         },
         profile
       );

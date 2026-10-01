@@ -10,7 +10,9 @@ import {
   Organization,
   LeadStatus,
 } from '@/types';
-import { sanitizeLeadForRole, sanitizeLeadsForRole } from '@/lib/dataMasking';
+import { sanitizeLeadForRole, sanitizeLeadsForRole, maskPhoneNumber } from '@/lib/dataMasking';
+import { sanitizeFormulaInjection, sanitizeText } from '@/lib/validation';
+import { MAX_IMPORT_ROWS } from '@/lib/config';
 import {
   DEMO_ORGS,
   DEMO_PROFILES,
@@ -21,13 +23,25 @@ import {
   DEMO_SECURITY_EVENTS,
   DEMO_ACTIVITY_LOGS,
 } from './demoData';
-import { supabase, isRealSupabaseConfigured } from './client';
 
-type RealtimeListener = (event: { type: string; payload: unknown }) => void;
+export type RealtimeEvent = {
+  type: string;
+  payload: unknown;
+  organization_id?: string;
+  target_user_id?: string;
+};
+
+type RealtimeListener = (event: RealtimeEvent) => void;
+
+interface SubscriptionEntry {
+  listener: RealtimeListener;
+  profile?: Profile;
+}
 
 class LeadVaultDatabase {
   private orgs: Organization[] = [...DEMO_ORGS];
   private profiles: Profile[] = [...DEMO_PROFILES];
+  // In-memory persistent master state (never dumped as raw unmasked leads into browser localStorage)
   private leads: Lead[] = [];
   private calls: Call[] = [];
   private outcomes: CallOutcome[] = [];
@@ -36,7 +50,7 @@ class LeadVaultDatabase {
   private securityEvents: SecurityEvent[] = [...DEMO_SECURITY_EVENTS];
   private activityLogs: ActivityLog[] = [...DEMO_ACTIVITY_LOGS];
 
-  private listeners: Set<RealtimeListener> = new Set();
+  private subscriptions: Set<SubscriptionEntry> = new Set();
   private broadcastChannel: BroadcastChannel | null = null;
   private initialized = false;
 
@@ -47,119 +61,108 @@ class LeadVaultDatabase {
   private init() {
     if (this.initialized) return;
 
-    // Check localStorage for persisted sandbox data
-    try {
-      const storedLeads = localStorage.getItem('leadvault_leads');
-      if (storedLeads) {
-        this.leads = JSON.parse(storedLeads);
-      } else {
-        this.leads = generateDemoLeads();
-        this.save('leadvault_leads', this.leads);
+    // SECURITY COMPLIANCE (Section 12):
+    // Purge any raw customer lead databases accidentally saved in localStorage
+    if (typeof window !== 'undefined' && 'localStorage' in window) {
+      try {
+        localStorage.removeItem('leadvault_leads');
+        localStorage.removeItem('leadvault_calls');
+      } catch {
+        // Fallback
       }
-
-      const storedCalls = localStorage.getItem('leadvault_calls');
-      if (storedCalls) {
-        this.calls = JSON.parse(storedCalls);
-      } else {
-        this.calls = generateDemoCalls(this.leads);
-        this.save('leadvault_calls', this.calls);
-      }
-
-      const storedFollowups = localStorage.getItem('leadvault_followups');
-      if (storedFollowups) {
-        this.followUps = JSON.parse(storedFollowups);
-      }
-
-      const storedLogs = localStorage.getItem('leadvault_activity_logs');
-      if (storedLogs) {
-        this.activityLogs = JSON.parse(storedLogs);
-      }
-
-      const storedSec = localStorage.getItem('leadvault_security_events');
-      if (storedSec) {
-        this.securityEvents = JSON.parse(storedSec);
-      }
-
-      const storedProfiles = localStorage.getItem('leadvault_profiles');
-      if (storedProfiles) {
-        this.profiles = JSON.parse(storedProfiles);
-      }
-
-      const storedOrgs = localStorage.getItem('leadvault_orgs');
-      if (storedOrgs) {
-        this.orgs = JSON.parse(storedOrgs);
-      }
-    } catch {
-      this.leads = generateDemoLeads();
-      this.calls = generateDemoCalls(this.leads);
     }
 
-    // Cross-tab real-time sync via BroadcastChannel
+    // Seed in-memory demo datasets
+    this.leads = generateDemoLeads();
+    this.calls = generateDemoCalls(this.leads);
+
+    // Cross-tab real-time sync with tenant context
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      this.broadcastChannel = new BroadcastChannel('leadvault_realtime_channel');
-      this.broadcastChannel.onmessage = (message) => {
-        if (message.data && message.data.type) {
-          this.refreshFromStorage();
-          this.notifyListeners(message.data.type, message.data.payload);
-        }
-      };
+      try {
+        this.broadcastChannel = new BroadcastChannel('leadvault_realtime_channel');
+        this.broadcastChannel.onmessage = (message) => {
+          if (message.data && message.data.type) {
+            this.notifyListeners(message.data as RealtimeEvent);
+          }
+        };
+      } catch {
+        // Fallback
+      }
     }
 
     this.initialized = true;
   }
 
-  private save(key: string, data: unknown) {
-    try {
-      localStorage.setItem(key, JSON.stringify(data));
-    } catch {
-      // Storage quota or SSR fallback
+  /**
+   * Session validation guard: Ensures caller account is not disabled/suspended
+   */
+  private ensureActive(profile: Profile): void {
+    if (profile.status === 'DISABLED') {
+      throw new Error('Forbidden: Account has been suspended. All access revoked.');
     }
   }
 
-  private refreshFromStorage() {
-    try {
-      const storedLeads = localStorage.getItem('leadvault_leads');
-      if (storedLeads) this.leads = JSON.parse(storedLeads);
-      const storedCalls = localStorage.getItem('leadvault_calls');
-      if (storedCalls) this.calls = JSON.parse(storedCalls);
-      const storedFollowups = localStorage.getItem('leadvault_followups');
-      if (storedFollowups) this.followUps = JSON.parse(storedFollowups);
-      const storedLogs = localStorage.getItem('leadvault_activity_logs');
-      if (storedLogs) this.activityLogs = JSON.parse(storedLogs);
-      const storedSec = localStorage.getItem('leadvault_security_events');
-      if (storedSec) this.securityEvents = JSON.parse(storedSec);
-      const storedProfiles = localStorage.getItem('leadvault_profiles');
-      if (storedProfiles) this.profiles = JSON.parse(storedProfiles);
-    } catch {
-      // Silent error
-    }
-  }
+  private emit(
+    type: string,
+    payload: unknown,
+    meta?: { organization_id?: string; target_user_id?: string }
+  ) {
+    const event: RealtimeEvent = {
+      type,
+      payload,
+      organization_id: meta?.organization_id,
+      target_user_id: meta?.target_user_id,
+    };
 
-  private emit(type: string, payload: unknown) {
-    this.notifyListeners(type, payload);
+    this.notifyListeners(event);
     if (this.broadcastChannel) {
       try {
-        this.broadcastChannel.postMessage({ type, payload });
+        this.broadcastChannel.postMessage(event);
       } catch {
         // Fallback
       }
     }
   }
 
-  private notifyListeners(type: string, payload: unknown) {
-    this.listeners.forEach((fn) => {
+  private notifyListeners(event: RealtimeEvent) {
+    this.subscriptions.forEach((sub) => {
       try {
-        fn({ type, payload });
+        // Tenant & User Isolation for Realtime Events (Section 11)
+        if (sub.profile) {
+          // If event has organization_id, ensure listener is in same org or is ADMIN
+          if (
+            event.organization_id &&
+            sub.profile.role !== 'ADMIN' &&
+            sub.profile.organization_id !== event.organization_id
+          ) {
+            return; // Drop cross-tenant event
+          }
+
+          // If event has target_user_id, ensure listener is target user, OWNER, or ADMIN
+          if (
+            event.target_user_id &&
+            sub.profile.role === 'TELECALLER' &&
+            sub.profile.id !== event.target_user_id
+          ) {
+            return; // Drop other telecaller's event
+          }
+        }
+
+        sub.listener(event);
       } catch (e) {
         console.error('Realtime listener error:', e);
       }
     });
   }
 
-  public subscribe(listener: RealtimeListener): () => void {
-    this.listeners.add(listener);
+  /**
+   * Subscribe to real-time events with tenant boundary enforcement
+   */
+  public subscribe(listener: RealtimeListener, userProfile?: Profile): () => void {
+    const entry: SubscriptionEntry = { listener, profile: userProfile };
+    this.subscriptions.add(entry);
     return () => {
-      this.listeners.delete(listener);
+      this.subscriptions.delete(entry);
     };
   }
 
@@ -168,6 +171,7 @@ class LeadVaultDatabase {
   // ----------------------------------------------------
 
   public getOrganizations(currentProfile: Profile): Organization[] {
+    this.ensureActive(currentProfile);
     if (currentProfile.role === 'ADMIN') {
       return [...this.orgs];
     }
@@ -182,31 +186,31 @@ class LeadVaultDatabase {
   }): Organization {
     const newOrg: Organization = {
       id: `org-${Date.now().toString(36)}`,
-      name: data.name,
+      name: sanitizeText(data.name),
       slug: data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
       owner_id: data.owner_id,
-      industry: data.industry,
+      industry: sanitizeText(data.industry),
       company_size: data.company_size,
       status: 'ACTIVE',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
     this.orgs.push(newOrg);
-    this.save('leadvault_orgs', this.orgs);
     return newOrg;
   }
 
   public getProfiles(currentProfile: Profile): Profile[] {
+    this.ensureActive(currentProfile);
     if (currentProfile.role === 'ADMIN') {
       return [...this.profiles];
     }
-    // Organization-level isolation
     return this.profiles.filter(
       (p) => p.organization_id === currentProfile.organization_id
     );
   }
 
   public getTelecallers(currentProfile: Profile): Profile[] {
+    this.ensureActive(currentProfile);
     const orgProfiles = this.getProfiles(currentProfile);
     return orgProfiles.filter((p) => p.role === 'TELECALLER' && p.status === 'ACTIVE');
   }
@@ -215,6 +219,7 @@ class LeadVaultDatabase {
     data: { full_name: string; phone: string; email: string },
     currentProfile: Profile
   ): Profile {
+    this.ensureActive(currentProfile);
     if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
       throw new Error('Unauthorized: Only Owners can create telecallers.');
     }
@@ -223,8 +228,8 @@ class LeadVaultDatabase {
       id: `tc-${Date.now().toString(36)}`,
       user_id: `user-${Date.now().toString(36)}`,
       organization_id: currentProfile.organization_id,
-      full_name: data.full_name,
-      phone: data.phone,
+      full_name: sanitizeText(data.full_name),
+      phone: data.phone.trim(),
       role: 'TELECALLER',
       status: 'ACTIVE',
       avatar_url: `https://images.unsplash.com/photo-${1530000000000 + Math.floor(Math.random() * 100000)}?w=120&auto=format&fit=crop&q=80`,
@@ -237,7 +242,6 @@ class LeadVaultDatabase {
     };
 
     this.profiles.push(newProfile);
-    this.save('leadvault_profiles', this.profiles);
 
     this.logActivity({
       organization_id: currentProfile.organization_id,
@@ -250,7 +254,7 @@ class LeadVaultDatabase {
       metadata: { name: newProfile.full_name, role: 'TELECALLER' },
     });
 
-    this.emit('TEAM_UPDATED', newProfile);
+    this.emit('TEAM_UPDATED', newProfile, { organization_id: currentProfile.organization_id });
     return newProfile;
   }
 
@@ -259,6 +263,7 @@ class LeadVaultDatabase {
     status: 'ACTIVE' | 'DISABLED',
     currentProfile: Profile
   ): Profile {
+    this.ensureActive(currentProfile);
     if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
       throw new Error('Unauthorized: Only Owners can modify user status.');
     }
@@ -272,7 +277,6 @@ class LeadVaultDatabase {
     }
 
     this.profiles[index] = { ...target, status, updated_at: new Date().toISOString() };
-    this.save('leadvault_profiles', this.profiles);
 
     this.logActivity({
       organization_id: currentProfile.organization_id,
@@ -285,16 +289,18 @@ class LeadVaultDatabase {
       metadata: { targetUser: target.full_name, status },
     });
 
-    this.emit('TEAM_UPDATED', this.profiles[index]);
+    this.emit('TEAM_UPDATED', this.profiles[index], { organization_id: currentProfile.organization_id });
     return this.profiles[index];
   }
 
   // ----------------------------------------------------
-  // LEADS & STRICT RLS ENFORCEMENT
+  // LEADS & DATA MASKING
   // ----------------------------------------------------
 
   public getLeads(currentProfile: Profile): Lead[] {
-    // ADMIN: Can inspect org leads
+    this.ensureActive(currentProfile);
+
+    // ADMIN: Can inspect platform leads
     if (currentProfile.role === 'ADMIN') {
       return [...this.leads];
     }
@@ -310,7 +316,7 @@ class LeadVaultDatabase {
     }
 
     // TELECALLER: Can ONLY see leads assigned to them!
-    // And sensitive fields (full surname, raw phone, email) are sanitized/masked at data boundary
+    // Sensitive fields (full surname, raw phone, email) are sanitized/masked at data boundary
     if (currentProfile.role === 'TELECALLER') {
       const assignedOnly = orgLeads.filter((l) => l.assigned_to === currentProfile.id);
       return sanitizeLeadsForRole(assignedOnly, 'TELECALLER');
@@ -320,6 +326,7 @@ class LeadVaultDatabase {
   }
 
   public getLeadById(leadId: string, currentProfile: Profile): Lead {
+    this.ensureActive(currentProfile);
     const lead = this.leads.find((l) => l.id === leadId);
     if (!lead) {
       throw new Error('Lead not found.');
@@ -351,15 +358,51 @@ class LeadVaultDatabase {
   }
 
   /**
-   * Internal method for authorized telephony gateway to resolve real phone number
-   * when telecaller initiates a call. Telecallers NEVER receive this directly into UI state.
+   * Search leads with strict RLS enforcement (Section 22)
+   */
+  public searchLeads(query: string, currentProfile: Profile): Lead[] {
+    this.ensureActive(currentProfile);
+    const normalized = query.toLowerCase().trim();
+    if (!normalized) return this.getLeads(currentProfile);
+
+    // Filter ONLY authorized leads for caller
+    const authorizedLeads = this.getLeads(currentProfile);
+    return authorizedLeads.filter(
+      (l) =>
+        l.lead_code.toLowerCase().includes(normalized) ||
+        l.name.toLowerCase().includes(normalized) ||
+        l.phone.toLowerCase().includes(normalized) ||
+        (l.email && l.email.toLowerCase().includes(normalized)) ||
+        l.source.toLowerCase().includes(normalized)
+    );
+  }
+
+  /**
+   * Server-side/internal phone resolution for telephony gateway only.
+   * Telecallers are strictly blocked from calling this directly into client code!
    */
   public getAuthorizedCallingNumber(leadId: string, currentProfile: Profile): string {
+    this.ensureActive(currentProfile);
     const lead = this.leads.find((l) => l.id === leadId);
     if (!lead) throw new Error('Lead not found');
 
-    if (currentProfile.role === 'TELECALLER' && lead.assigned_to !== currentProfile.id) {
-      throw new Error('Unauthorized call attempt on unassigned lead.');
+    if (currentProfile.role === 'TELECALLER') {
+      this.recordSecurityEvent(
+        {
+          event_type: 'UNAUTHORIZED_PHONE_EXTRACTION_ATTEMPT',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted direct client extraction of raw phone for lead ${lead.lead_code}.`,
+          metadata: { leadId, leadCode: lead.lead_code },
+        },
+        currentProfile
+      );
+      throw new Error(
+        'Forbidden: Client-side extraction of raw customer phone numbers is prohibited. Calling must be placed through server gateway.'
+      );
+    }
+
+    if (currentProfile.role !== 'ADMIN' && lead.organization_id !== currentProfile.organization_id) {
+      throw new Error('Forbidden: Lead belongs to another organization.');
     }
 
     return lead.phone;
@@ -369,6 +412,7 @@ class LeadVaultDatabase {
     leadData: Omit<Lead, 'id' | 'organization_id' | 'lead_code' | 'created_at' | 'updated_at'>,
     currentProfile: Profile
   ): Lead {
+    this.ensureActive(currentProfile);
     if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
       throw new Error('Unauthorized: Only Owners can create leads.');
     }
@@ -376,7 +420,13 @@ class LeadVaultDatabase {
     const nextNumber = 10300 + this.leads.length + 1;
     const newLead: Lead = {
       ...leadData,
+      name: sanitizeText(leadData.name),
+      phone: leadData.phone.trim(),
+      email: leadData.email ? leadData.email.trim() : undefined,
+      source: sanitizeText(leadData.source || 'Direct'),
+      notes: leadData.notes ? sanitizeText(leadData.notes) : undefined,
       id: `lead-lv-${nextNumber}`,
+      // Enforce organization isolation: cannot inject another organization_id!
       organization_id: currentProfile.organization_id,
       lead_code: `LV-${nextNumber}`,
       status: leadData.assigned_to ? 'ASSIGNED' : 'NEW',
@@ -386,7 +436,6 @@ class LeadVaultDatabase {
     };
 
     this.leads.unshift(newLead);
-    this.save('leadvault_leads', this.leads);
 
     this.logActivity({
       organization_id: currentProfile.organization_id,
@@ -399,8 +448,128 @@ class LeadVaultDatabase {
       metadata: { leadCode: newLead.lead_code, name: newLead.name },
     });
 
-    this.emit('LEAD_CREATED', newLead);
+    this.emit('LEAD_CREATED', newLead, { organization_id: currentProfile.organization_id });
     return newLead;
+  }
+
+  public updateLead(
+    leadId: string,
+    updates: Partial<Lead>,
+    currentProfile: Profile
+  ): Lead {
+    this.ensureActive(currentProfile);
+    const index = this.leads.findIndex((l) => l.id === leadId);
+    if (index === -1) throw new Error('Lead not found.');
+
+    const lead = this.leads[index];
+
+    // Organization isolation
+    if (currentProfile.role !== 'ADMIN' && lead.organization_id !== currentProfile.organization_id) {
+      throw new Error('Forbidden: You do not have permission to modify this lead.');
+    }
+
+    // Telecaller field restriction & assignment check (Section 4)
+    if (currentProfile.role === 'TELECALLER') {
+      if (lead.assigned_to !== currentProfile.id) {
+        this.recordSecurityEvent(
+          {
+            event_type: 'UNAUTHORIZED_LEAD_UPDATE_ATTEMPT',
+            severity: 'HIGH',
+            description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to modify unassigned lead ${lead.lead_code}.`,
+            metadata: { targetLeadId: leadId, targetLeadCode: lead.lead_code },
+          },
+          currentProfile
+        );
+        throw new Error('Forbidden: You can only update leads assigned to you.');
+      }
+
+      // Telecaller may only update status and notes
+      const restrictedFields = ['phone', 'email', 'organization_id', 'assigned_to', 'lead_code', 'id'];
+      const hasRestricted = restrictedFields.some((field) => field in updates);
+      if (hasRestricted) {
+        this.recordSecurityEvent(
+          {
+            event_type: 'UNAUTHORIZED_FIELD_TAMPERING_ATTEMPT',
+            severity: 'HIGH',
+            description: `Telecaller ${currentProfile.full_name} attempted to modify restricted fields on lead ${lead.lead_code}.`,
+            metadata: { updates },
+          },
+          currentProfile
+        );
+        throw new Error('Forbidden: Telecallers are not authorized to modify sensitive lead fields.');
+      }
+    }
+
+    // Apply allowed sanitized updates
+    const updatedLead: Lead = {
+      ...lead,
+      status: updates.status || lead.status,
+      notes: updates.notes !== undefined ? sanitizeText(updates.notes) : lead.notes,
+      name: updates.name && currentProfile.role !== 'TELECALLER' ? sanitizeText(updates.name) : lead.name,
+      phone: updates.phone && currentProfile.role !== 'TELECALLER' ? updates.phone.trim() : lead.phone,
+      email: updates.email !== undefined && currentProfile.role !== 'TELECALLER' ? updates.email.trim() : lead.email,
+      priority: updates.priority || lead.priority,
+      assigned_to: updates.assigned_to !== undefined && currentProfile.role !== 'TELECALLER' ? updates.assigned_to : lead.assigned_to,
+      updated_at: new Date().toISOString(),
+    };
+
+    this.leads[index] = updatedLead;
+
+    this.logActivity({
+      organization_id: currentProfile.organization_id,
+      user_id: currentProfile.id,
+      user_name: currentProfile.full_name,
+      user_role: currentProfile.role,
+      action: 'LEAD_UPDATED',
+      entity_type: 'lead',
+      entity_id: leadId,
+      metadata: { leadCode: lead.lead_code, updates },
+    });
+
+    this.emit('LEAD_UPDATED', updatedLead, { organization_id: currentProfile.organization_id });
+    return sanitizeLeadForRole(updatedLead, currentProfile.role);
+  }
+
+  public deleteLead(leadId: string, currentProfile: Profile): boolean {
+    this.ensureActive(currentProfile);
+    const index = this.leads.findIndex((l) => l.id === leadId);
+    if (index === -1) throw new Error('Lead not found.');
+
+    const lead = this.leads[index];
+
+    // Telecaller deletion attempt trap
+    if (currentProfile.role === 'TELECALLER') {
+      this.recordSecurityEvent(
+        {
+          event_type: 'UNAUTHORIZED_LEAD_DELETION_ATTEMPT',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to delete lead ${lead.lead_code}. Blocked by RLS Guard.`,
+          metadata: { targetLeadId: leadId, targetLeadCode: lead.lead_code },
+        },
+        currentProfile
+      );
+      throw new Error('Forbidden: Telecallers cannot delete leads.');
+    }
+
+    if (currentProfile.role !== 'ADMIN' && lead.organization_id !== currentProfile.organization_id) {
+      throw new Error('Forbidden: You cannot delete leads from another organization.');
+    }
+
+    this.leads.splice(index, 1);
+
+    this.logActivity({
+      organization_id: currentProfile.organization_id,
+      user_id: currentProfile.id,
+      user_name: currentProfile.full_name,
+      user_role: currentProfile.role,
+      action: 'LEAD_UPDATED',
+      entity_type: 'lead',
+      entity_id: leadId,
+      metadata: { leadCode: lead.lead_code, action: 'DELETED' },
+    });
+
+    this.emit('LEAD_DELETED', { leadId }, { organization_id: currentProfile.organization_id });
+    return true;
   }
 
   public importLeads(
@@ -414,8 +583,13 @@ class LeadVaultDatabase {
     }>,
     currentProfile: Profile
   ): { imported: number; leads: Lead[] } {
+    this.ensureActive(currentProfile);
     if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
       throw new Error('Unauthorized: Only Owners can import leads.');
+    }
+
+    if (records.length > MAX_IMPORT_ROWS) {
+      throw new Error(`Batch size exceeds maximum limit of ${MAX_IMPORT_ROWS} rows.`);
     }
 
     const newLeads: Lead[] = [];
@@ -427,14 +601,14 @@ class LeadVaultDatabase {
         id: `lead-imp-${Date.now().toString(36)}-${index}`,
         organization_id: currentProfile.organization_id,
         lead_code: code,
-        name: rec.name,
-        phone: rec.phone,
-        email: rec.email,
-        source: rec.source || 'CSV Import',
+        name: sanitizeText(rec.name),
+        phone: rec.phone.trim(),
+        email: rec.email ? rec.email.trim() : undefined,
+        source: sanitizeText(rec.source || 'CSV Import'),
         priority: rec.priority || 'MEDIUM',
         status: 'NEW',
         assigned_to: null,
-        notes: rec.notes || 'Imported via CSV/XLSX wizard',
+        notes: rec.notes ? sanitizeText(rec.notes) : 'Imported via CSV/XLSX wizard',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         calls_count: 0,
@@ -443,7 +617,6 @@ class LeadVaultDatabase {
     });
 
     this.leads = [...newLeads, ...this.leads];
-    this.save('leadvault_leads', this.leads);
 
     this.logActivity({
       organization_id: currentProfile.organization_id,
@@ -455,8 +628,43 @@ class LeadVaultDatabase {
       metadata: { count: newLeads.length, source: 'CSV_IMPORT' },
     });
 
-    this.emit('LEADS_IMPORTED', { count: newLeads.length });
+    this.emit('LEADS_IMPORTED', { count: newLeads.length }, { organization_id: currentProfile.organization_id });
     return { imported: newLeads.length, leads: newLeads };
+  }
+
+  /**
+   * Secure Lead Export (Section 9)
+   * Telecallers are strictly prohibited from exporting.
+   * Owners/Admins receive data sanitized against spreadsheet formula injection.
+   */
+  public exportLeads(
+    currentProfile: Profile,
+    _format: 'csv' | 'json' = 'csv'
+  ): Lead[] {
+    this.ensureActive(currentProfile);
+
+    if (currentProfile.role === 'TELECALLER') {
+      this.recordSecurityEvent(
+        {
+          event_type: 'TELECALLER_EXPORT_BLOCKED',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to export master lead database via direct API. Blocked by LeadVault Export Guard.`,
+          metadata: { agent: currentProfile.full_name },
+        },
+        currentProfile
+      );
+      throw new Error('Forbidden: Telecallers are strictly prohibited from exporting lead databases.');
+    }
+
+    const orgLeads = this.getLeads(currentProfile);
+
+    // Sanitize exported fields to prevent CSV formula injection (Section 16)
+    return orgLeads.map((l) => ({
+      ...l,
+      name: sanitizeFormulaInjection(l.name),
+      notes: l.notes ? sanitizeFormulaInjection(l.notes) : l.notes,
+      source: sanitizeFormulaInjection(l.source),
+    }));
   }
 
   // ----------------------------------------------------
@@ -468,18 +676,36 @@ class LeadVaultDatabase {
     telecallerId: string,
     currentProfile: Profile
   ): number {
+    this.ensureActive(currentProfile);
     if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
       throw new Error('Unauthorized: Only Owners can assign leads.');
     }
 
     const telecaller = this.profiles.find((p) => p.id === telecallerId);
-    if (!telecaller || telecaller.organization_id !== currentProfile.organization_id) {
+    if (!telecaller || (telecaller.organization_id !== currentProfile.organization_id && currentProfile.role !== 'ADMIN')) {
       throw new Error('Invalid telecaller selected.');
+    }
+
+    // Verify all leads belong to this organization (Section 4 Cross-Tenant Assignment Check)
+    const unauthorizedLead = this.leads.find(
+      (l) => leadIds.includes(l.id) && l.organization_id !== currentProfile.organization_id && currentProfile.role !== 'ADMIN'
+    );
+    if (unauthorizedLead) {
+      this.recordSecurityEvent(
+        {
+          event_type: 'CROSS_TENANT_ASSIGNMENT_ATTEMPT',
+          severity: 'HIGH',
+          description: `Attempted to assign lead ${unauthorizedLead.lead_code} belonging to another organization.`,
+          metadata: { targetLeadId: unauthorizedLead.id },
+        },
+        currentProfile
+      );
+      throw new Error('Forbidden: Cannot assign leads belonging to another organization.');
     }
 
     let updatedCount = 0;
     this.leads = this.leads.map((l) => {
-      if (leadIds.includes(l.id) && l.organization_id === currentProfile.organization_id) {
+      if (leadIds.includes(l.id) && (l.organization_id === currentProfile.organization_id || currentProfile.role === 'ADMIN')) {
         updatedCount++;
         return {
           ...l,
@@ -490,8 +716,6 @@ class LeadVaultDatabase {
       }
       return l;
     });
-
-    this.save('leadvault_leads', this.leads);
 
     // Notify telecaller
     this.createNotification({
@@ -513,7 +737,7 @@ class LeadVaultDatabase {
       metadata: { count: updatedCount, assignedTo: telecaller.full_name },
     });
 
-    this.emit('LEADS_ASSIGNED', { leadIds, telecallerId });
+    this.emit('LEADS_ASSIGNED', { leadIds, telecallerId }, { organization_id: currentProfile.organization_id });
     return updatedCount;
   }
 
@@ -522,6 +746,7 @@ class LeadVaultDatabase {
     activeTelecallerIds: string[],
     currentProfile: Profile
   ): Record<string, number> {
+    this.ensureActive(currentProfile);
     if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
       throw new Error('Unauthorized: Only Owners can assign leads.');
     }
@@ -530,12 +755,20 @@ class LeadVaultDatabase {
       throw new Error('No active telecallers provided for round-robin assignment.');
     }
 
+    // Verify all leads belong to this organization
+    const unauthorizedLead = this.leads.find(
+      (l) => leadIds.includes(l.id) && l.organization_id !== currentProfile.organization_id && currentProfile.role !== 'ADMIN'
+    );
+    if (unauthorizedLead) {
+      throw new Error('Forbidden: Cannot assign leads belonging to another organization.');
+    }
+
     const distribution: Record<string, number> = {};
     activeTelecallerIds.forEach((id) => (distribution[id] = 0));
 
     let index = 0;
     this.leads = this.leads.map((lead) => {
-      if (leadIds.includes(lead.id) && lead.organization_id === currentProfile.organization_id) {
+      if (leadIds.includes(lead.id) && (lead.organization_id === currentProfile.organization_id || currentProfile.role === 'ADMIN')) {
         const assignedTc = activeTelecallerIds[index % activeTelecallerIds.length];
         distribution[assignedTc] = (distribution[assignedTc] || 0) + 1;
         index++;
@@ -549,8 +782,6 @@ class LeadVaultDatabase {
       }
       return lead;
     });
-
-    this.save('leadvault_leads', this.leads);
 
     // Send notifications to each assigned telecaller
     activeTelecallerIds.forEach((tcId) => {
@@ -581,7 +812,7 @@ class LeadVaultDatabase {
       },
     });
 
-    this.emit('LEADS_ASSIGNED_ROUND_ROBIN', distribution);
+    this.emit('LEADS_ASSIGNED_ROUND_ROBIN', distribution, { organization_id: currentProfile.organization_id });
     return distribution;
   }
 
@@ -590,16 +821,37 @@ class LeadVaultDatabase {
   // ----------------------------------------------------
 
   public getCalls(currentProfile: Profile): Call[] {
+    this.ensureActive(currentProfile);
+    if (currentProfile.role === 'ADMIN') {
+      return [...this.calls];
+    }
+
     const orgCalls = this.calls.filter(
       (c) => c.organization_id === currentProfile.organization_id
     );
 
-    if (currentProfile.role === 'OWNER' || currentProfile.role === 'ADMIN') {
+    if (currentProfile.role === 'OWNER') {
       return orgCalls;
     }
 
     // Telecaller only sees their own calls
     return orgCalls.filter((c) => c.telecaller_id === currentProfile.id);
+  }
+
+  public getCallById(callId: string, currentProfile: Profile): Call {
+    this.ensureActive(currentProfile);
+    const call = this.calls.find((c) => c.id === callId);
+    if (!call) throw new Error('Call record not found.');
+
+    if (currentProfile.role !== 'ADMIN' && call.organization_id !== currentProfile.organization_id) {
+      throw new Error('Forbidden: Access denied to call in another organization.');
+    }
+
+    if (currentProfile.role === 'TELECALLER' && call.telecaller_id !== currentProfile.id) {
+      throw new Error("Forbidden: Access denied to another telecaller's call.");
+    }
+
+    return call;
   }
 
   public recordCall(
@@ -611,8 +863,28 @@ class LeadVaultDatabase {
     },
     currentProfile: Profile
   ): Call {
+    this.ensureActive(currentProfile);
     const lead = this.leads.find((l) => l.id === data.lead_id);
     if (!lead) throw new Error('Lead not found');
+
+    // Organization Isolation (Section 3 & 4)
+    if (currentProfile.role !== 'ADMIN' && lead.organization_id !== currentProfile.organization_id) {
+      throw new Error("Forbidden: Cannot place calls on another organization's lead.");
+    }
+
+    // Telecaller Assignment Isolation (Section 4)
+    if (currentProfile.role === 'TELECALLER' && lead.assigned_to !== currentProfile.id) {
+      this.recordSecurityEvent(
+        {
+          event_type: 'UNAUTHORIZED_CALL_ATTEMPT',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to place call on unassigned lead ${lead.lead_code}.`,
+          metadata: { leadId: lead.id, leadCode: lead.lead_code },
+        },
+        currentProfile
+      );
+      throw new Error('Forbidden: Cannot place calls on leads not assigned to you.');
+    }
 
     const newCall: Call = {
       id: `call-${Date.now().toString(36)}`,
@@ -634,7 +906,6 @@ class LeadVaultDatabase {
     };
 
     this.calls.unshift(newCall);
-    this.save('leadvault_calls', this.calls);
 
     // Update lead calls count and last_contacted_at
     const leadIdx = this.leads.findIndex((l) => l.id === data.lead_id);
@@ -643,10 +914,16 @@ class LeadVaultDatabase {
         ...this.leads[leadIdx],
         calls_count: (this.leads[leadIdx].calls_count || 0) + 1,
         last_contacted_at: new Date().toISOString(),
-        status: this.leads[leadIdx].status === 'ASSIGNED' ? 'CONTACTED' : this.leads[leadIdx].status,
-        updated_at: new Date().toISOString(),
       };
-      this.save('leadvault_leads', this.leads);
+    }
+
+    // Update telecaller profile stats
+    const profIdx = this.profiles.findIndex((p) => p.id === currentProfile.id);
+    if (profIdx !== -1) {
+      this.profiles[profIdx] = {
+        ...this.profiles[profIdx],
+        calls_today: (this.profiles[profIdx].calls_today || 0) + 1,
+      };
     }
 
     this.logActivity({
@@ -664,7 +941,7 @@ class LeadVaultDatabase {
       },
     });
 
-    this.emit('CALL_RECORDED', newCall);
+    this.emit('CALL_RECORDED', newCall, { organization_id: currentProfile.organization_id });
     return newCall;
   }
 
@@ -682,8 +959,46 @@ class LeadVaultDatabase {
     },
     currentProfile: Profile
   ): CallOutcome {
+    this.ensureActive(currentProfile);
     const lead = this.leads.find((l) => l.id === data.lead_id);
     if (!lead) throw new Error('Lead not found.');
+
+    // Organization Isolation (Section 3 & 4)
+    if (currentProfile.role !== 'ADMIN' && lead.organization_id !== currentProfile.organization_id) {
+      throw new Error("Forbidden: Cannot record outcome on another organization's lead.");
+    }
+
+    // Telecaller Assignment Isolation (Section 4)
+    if (currentProfile.role === 'TELECALLER' && lead.assigned_to !== currentProfile.id) {
+      this.recordSecurityEvent(
+        {
+          event_type: 'UNAUTHORIZED_OUTCOME_MUTATION_ATTEMPT',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to record outcome on unassigned lead ${lead.lead_code}.`,
+          metadata: { leadId: lead.id, leadCode: lead.lead_code },
+        },
+        currentProfile
+      );
+      throw new Error('Forbidden: Cannot record outcomes on leads not assigned to you.');
+    }
+
+    // Check call ownership if modifying an existing call (Section 4)
+    const callIdx = this.calls.findIndex((c) => c.id === data.call_id);
+    if (callIdx !== -1) {
+      const existingCall = this.calls[callIdx];
+      if (currentProfile.role === 'TELECALLER' && existingCall.telecaller_id !== currentProfile.id) {
+        this.recordSecurityEvent(
+          {
+            event_type: 'UNAUTHORIZED_CALL_OUTCOME_OVERWRITE',
+            severity: 'HIGH',
+            description: `Telecaller ${currentProfile.full_name} attempted to modify another telecaller's call (${data.call_id}).`,
+            metadata: { callId: data.call_id },
+          },
+          currentProfile
+        );
+        throw new Error("Forbidden: Cannot modify another telecaller's call outcome.");
+      }
+    }
 
     const newOutcome: CallOutcome = {
       id: `out-${Date.now().toString(36)}`,
@@ -692,27 +1007,25 @@ class LeadVaultDatabase {
       lead_id: data.lead_id,
       telecaller_id: currentProfile.id,
       outcome: data.outcome,
-      reason: data.reason,
+      reason: data.reason ? sanitizeText(data.reason) : undefined,
       interest_level: data.interest_level,
-      requirement: data.requirement,
-      notes: data.notes,
+      requirement: data.requirement ? sanitizeText(data.requirement) : undefined,
+      notes: data.notes ? sanitizeText(data.notes) : undefined,
       created_at: new Date().toISOString(),
     };
 
     this.outcomes.push(newOutcome);
 
     // Update corresponding Call record
-    const callIdx = this.calls.findIndex((c) => c.id === data.call_id);
     if (callIdx !== -1) {
       this.calls[callIdx] = {
         ...this.calls[callIdx],
         outcome: data.outcome,
-        notes: data.notes,
+        notes: data.notes ? sanitizeText(data.notes) : this.calls[callIdx].notes,
       };
-      this.save('leadvault_calls', this.calls);
     }
 
-    // Determine new Lead status according to business logic in Sections 13, 23, 24:
+    // Determine new Lead status according to business logic
     let newStatus: LeadStatus = lead.status;
     if (data.outcome === 'POSITIVE') {
       newStatus = 'INTERESTED';
@@ -729,45 +1042,27 @@ class LeadVaultDatabase {
     }
 
     // Update lead in state
-    const leadIdx = this.leads.findIndex((l) => l.id === data.lead_id);
-    if (leadIdx !== -1) {
-      this.leads[leadIdx] = {
-        ...this.leads[leadIdx],
+    const leadIndex = this.leads.findIndex((l) => l.id === data.lead_id);
+    if (leadIndex !== -1) {
+      this.leads[leadIndex] = {
+        ...this.leads[leadIndex],
         status: newStatus,
-        notes: data.notes ? `${this.leads[leadIdx].notes || ''}\n[${new Date().toLocaleDateString()}]: ${data.notes}` : this.leads[leadIdx].notes,
+        notes: data.notes ? sanitizeText(data.notes) : this.leads[leadIndex].notes,
         updated_at: new Date().toISOString(),
       };
-      this.save('leadvault_leads', this.leads);
     }
 
-    // If follow-up date/time provided or outcome is POSITIVE/FOLLOW_UP, schedule follow-up
-    if (data.followUpDate && data.followUpTime) {
+    // Auto schedule follow-up if provided
+    if (data.followUpDate) {
       this.scheduleFollowUp(
         {
           lead_id: data.lead_id,
-          scheduled_at: `${data.followUpDate}T${data.followUpTime}:00`,
+          scheduled_at: `${data.followUpDate}T${data.followUpTime || '11:00'}:00Z`,
           priority: data.outcome === 'POSITIVE' ? 'HIGH' : 'MEDIUM',
-          notes: data.notes || `Follow-up after ${data.outcome} call`,
+          notes: data.notes,
         },
         currentProfile
       );
-    }
-
-    // Notify Owner if high-value positive lead or converted
-    if (data.outcome === 'POSITIVE' || data.outcome === 'CONVERTED') {
-      const owner = this.profiles.find(
-        (p) => p.organization_id === currentProfile.organization_id && p.role === 'OWNER'
-      );
-      if (owner) {
-        this.createNotification({
-          organization_id: currentProfile.organization_id,
-          user_id: owner.id,
-          type: 'CALL_OUTCOME',
-          title: `Lead Marked ${data.outcome}`,
-          message: `${currentProfile.full_name} marked ${lead.lead_code} (${lead.name}) as ${data.outcome}!`,
-          link: '/owner/leads',
-        });
-      }
     }
 
     this.logActivity({
@@ -776,8 +1071,8 @@ class LeadVaultDatabase {
       user_name: currentProfile.full_name,
       user_role: currentProfile.role,
       action: 'OUTCOME_CHANGED',
-      entity_type: 'lead',
-      entity_id: data.lead_id,
+      entity_type: 'call_outcome',
+      entity_id: newOutcome.id,
       metadata: {
         leadCode: lead.lead_code,
         outcome: data.outcome,
@@ -785,7 +1080,22 @@ class LeadVaultDatabase {
       },
     });
 
-    this.emit('CALL_OUTCOME_SAVED', { outcome: newOutcome, leadStatus: newStatus });
+    // Notify organization owner
+    const owner = this.profiles.find(
+      (p) => p.organization_id === currentProfile.organization_id && p.role === 'OWNER'
+    );
+    if (owner) {
+      this.createNotification({
+        organization_id: currentProfile.organization_id,
+        user_id: owner.id,
+        type: 'CALL_OUTCOME',
+        title: `Lead Marked ${data.outcome}`,
+        message: `${currentProfile.full_name} marked ${lead.lead_code} as ${data.outcome}!`,
+        link: '/owner/calls',
+      });
+    }
+
+    this.emit('CALL_OUTCOME_SAVED', newOutcome, { organization_id: currentProfile.organization_id });
     return newOutcome;
   }
 
@@ -794,20 +1104,25 @@ class LeadVaultDatabase {
   // ----------------------------------------------------
 
   public getFollowUps(currentProfile: Profile): FollowUp[] {
+    this.ensureActive(currentProfile);
+    if (currentProfile.role === 'ADMIN') {
+      return [...this.followUps];
+    }
+
     const orgFollowUps = this.followUps.filter(
       (f) => f.organization_id === currentProfile.organization_id
     );
 
-    if (currentProfile.role === 'OWNER' || currentProfile.role === 'ADMIN') {
+    if (currentProfile.role === 'OWNER') {
       return orgFollowUps;
     }
 
-    // Telecaller only sees their assigned follow-ups
+    // Telecaller only sees their assigned follow-ups with masked phone
     const myFollowUps = orgFollowUps.filter((f) => f.assigned_to === currentProfile.id);
     return myFollowUps.map((f) => ({
       ...f,
       lead_name: f.lead_name ? sanitizeLeadForRole({ ...f, name: f.lead_name } as unknown as Lead, 'TELECALLER').name : '—',
-      lead_phone: f.lead_phone ? sanitizeLeadForRole({ ...f, phone: f.lead_phone } as unknown as Lead, 'TELECALLER').phone : '—',
+      lead_phone: f.lead_phone ? maskPhoneNumber(f.lead_phone) : '—',
     }));
   }
 
@@ -820,8 +1135,19 @@ class LeadVaultDatabase {
     },
     currentProfile: Profile
   ): FollowUp {
+    this.ensureActive(currentProfile);
     const lead = this.leads.find((l) => l.id === data.lead_id);
     if (!lead) throw new Error('Lead not found.');
+
+    // Organization Isolation
+    if (currentProfile.role !== 'ADMIN' && lead.organization_id !== currentProfile.organization_id) {
+      throw new Error("Forbidden: Cannot schedule follow-ups on another organization's lead.");
+    }
+
+    // Telecaller Assignment Isolation
+    if (currentProfile.role === 'TELECALLER' && lead.assigned_to !== currentProfile.id) {
+      throw new Error('Forbidden: Cannot schedule follow-ups on leads not assigned to you.');
+    }
 
     const newFollowUp: FollowUp = {
       id: `fup-${Date.now().toString(36)}`,
@@ -834,13 +1160,12 @@ class LeadVaultDatabase {
       scheduled_at: data.scheduled_at,
       status: 'PENDING',
       priority: data.priority || 'MEDIUM',
-      notes: data.notes,
+      notes: data.notes ? sanitizeText(data.notes) : undefined,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
     this.followUps.unshift(newFollowUp);
-    this.save('leadvault_followups', this.followUps);
 
     this.logActivity({
       organization_id: currentProfile.organization_id,
@@ -850,20 +1175,25 @@ class LeadVaultDatabase {
       action: 'FOLLOWUP_CREATED',
       entity_type: 'follow_up',
       entity_id: newFollowUp.id,
-      metadata: { leadCode: lead.lead_code, scheduled_at: data.scheduled_at },
+      metadata: { leadCode: lead.lead_code, scheduledAt: data.scheduled_at },
     });
 
-    this.emit('FOLLOWUP_CREATED', newFollowUp);
+    this.emit('FOLLOWUP_CREATED', newFollowUp, { organization_id: currentProfile.organization_id });
     return newFollowUp;
   }
 
   public completeFollowUp(id: string, currentProfile: Profile): FollowUp {
+    this.ensureActive(currentProfile);
     const index = this.followUps.findIndex((f) => f.id === id);
     if (index === -1) throw new Error('Follow-up not found.');
 
     const fup = this.followUps[index];
-    if (fup.organization_id !== currentProfile.organization_id) {
+    if (currentProfile.role !== 'ADMIN' && fup.organization_id !== currentProfile.organization_id) {
       throw new Error('Forbidden: Follow-up belongs to another organization.');
+    }
+
+    if (currentProfile.role === 'TELECALLER' && fup.assigned_to !== currentProfile.id) {
+      throw new Error("Forbidden: Cannot complete another telecaller's follow-up.");
     }
 
     this.followUps[index] = {
@@ -871,9 +1201,8 @@ class LeadVaultDatabase {
       status: 'COMPLETED',
       updated_at: new Date().toISOString(),
     };
-    this.save('leadvault_followups', this.followUps);
 
-    this.emit('FOLLOWUP_UPDATED', this.followUps[index]);
+    this.emit('FOLLOWUP_UPDATED', this.followUps[index], { organization_id: currentProfile.organization_id });
     return this.followUps[index];
   }
 
@@ -882,6 +1211,7 @@ class LeadVaultDatabase {
   // ----------------------------------------------------
 
   public getNotifications(currentProfile: Profile): Notification[] {
+    this.ensureActive(currentProfile);
     return this.notifications.filter(
       (n) => n.organization_id === currentProfile.organization_id && n.user_id === currentProfile.id
     );
@@ -891,30 +1221,40 @@ class LeadVaultDatabase {
     const idx = this.notifications.findIndex((n) => n.id === id);
     if (idx !== -1) {
       this.notifications[idx].read = true;
-      this.emit('NOTIFICATION_READ', { id });
+      this.emit('NOTIFICATION_READ', { id }, { organization_id: this.notifications[idx].organization_id });
     }
   }
 
   public createNotification(data: Omit<Notification, 'id' | 'read' | 'created_at'>): Notification {
     const newNotif: Notification = {
       ...data,
+      title: sanitizeText(data.title),
+      message: sanitizeText(data.message),
       id: `notif-${Date.now().toString(36)}`,
       read: false,
       created_at: new Date().toISOString(),
     };
     this.notifications.unshift(newNotif);
-    this.emit('NEW_NOTIFICATION', newNotif);
+    this.emit('NEW_NOTIFICATION', newNotif, {
+      organization_id: data.organization_id,
+      target_user_id: data.user_id,
+    });
     return newNotif;
   }
 
   public getActivityLogs(currentProfile: Profile): ActivityLog[] {
+    this.ensureActive(currentProfile);
+    if (currentProfile.role === 'ADMIN') {
+      return [...this.activityLogs];
+    }
+
     if (currentProfile.role === 'TELECALLER') {
       // Telecallers only see their own activities
       return this.activityLogs.filter(
         (a) => a.organization_id === currentProfile.organization_id && a.user_id === currentProfile.id
       );
     }
-    // Owners/Admins see full org audit log
+    // Owners see full org audit log
     return this.activityLogs.filter(
       (a) => a.organization_id === currentProfile.organization_id
     );
@@ -927,14 +1267,29 @@ class LeadVaultDatabase {
       created_at: new Date().toISOString(),
     };
     this.activityLogs.unshift(log);
-    this.save('leadvault_activity_logs', this.activityLogs);
-    this.emit('ACTIVITY_LOGGED', log);
+    this.emit('ACTIVITY_LOGGED', log, { organization_id: data.organization_id });
     return log;
   }
 
+  /**
+   * SECURITY ENFORCEMENT (Section 19):
+   * Activity logs are append-only. Modifying or deleting logs is strictly prohibited.
+   */
+  public deleteActivityLog(): never {
+    throw new Error('Security Violation: Activity audit logs are append-only and cannot be deleted.');
+  }
+
+  public updateActivityLog(): never {
+    throw new Error('Security Violation: Activity audit logs are strictly immutable and cannot be modified.');
+  }
+
   public getSecurityEvents(currentProfile: Profile): SecurityEvent[] {
+    this.ensureActive(currentProfile);
     if (currentProfile.role === 'TELECALLER') {
       throw new Error('Forbidden: Telecallers cannot access security event records.');
+    }
+    if (currentProfile.role === 'ADMIN') {
+      return [...this.securityEvents];
     }
     return this.securityEvents.filter(
       (s) => s.organization_id === currentProfile.organization_id
@@ -947,6 +1302,7 @@ class LeadVaultDatabase {
   ): SecurityEvent {
     const event: SecurityEvent = {
       ...data,
+      description: sanitizeText(data.description),
       id: `sec-${Date.now().toString(36)}`,
       organization_id: currentProfile.organization_id,
       user_id: currentProfile.id,
@@ -955,7 +1311,6 @@ class LeadVaultDatabase {
     };
 
     this.securityEvents.unshift(event);
-    this.save('leadvault_security_events', this.securityEvents);
 
     // Notify organization owner
     const owner = this.profiles.find(
@@ -966,25 +1321,30 @@ class LeadVaultDatabase {
         organization_id: currentProfile.organization_id,
         user_id: owner.id,
         type: 'SECURITY_ALERT',
-        title: `Security Event: ${event.event_type}`,
+        title: `Security Alert: ${event.event_type}`,
         message: event.description,
         link: '/owner/security',
       });
     }
 
-    this.emit('SECURITY_EVENT_RAISED', event);
+    this.emit('SECURITY_EVENT_RAISED', event, { organization_id: currentProfile.organization_id });
     return event;
+  }
+
+  /**
+   * SECURITY ENFORCEMENT (Section 20):
+   * Security events are immutable tamper-evident logs. Deletion and updates are forbidden.
+   */
+  public deleteSecurityEvent(): never {
+    throw new Error('Security Violation: Security events are append-only and cannot be deleted.');
+  }
+
+  public updateSecurityEvent(): never {
+    throw new Error('Security Violation: Security events are strictly immutable and cannot be modified.');
   }
 
   // Reset sandbox back to clean demo data
   public resetSandbox() {
-    localStorage.removeItem('leadvault_leads');
-    localStorage.removeItem('leadvault_calls');
-    localStorage.removeItem('leadvault_followups');
-    localStorage.removeItem('leadvault_activity_logs');
-    localStorage.removeItem('leadvault_security_events');
-    localStorage.removeItem('leadvault_profiles');
-    localStorage.removeItem('leadvault_orgs');
     this.initialized = false;
     this.init();
     this.emit('SANDBOX_RESET', {});

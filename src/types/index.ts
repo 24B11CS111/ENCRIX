@@ -225,7 +225,8 @@ export interface TelephonySession {
   callId: string;
   leadId: string;
   telecallerId: string;
-  phoneNumber: string;
+  phoneNumber?: string; // Server/provider internal; masked for telecaller client
+  maskedPhoneNumber?: string;
   status: CallStatus;
   startedAt: Date;
   durationSeconds: number;
@@ -235,7 +236,7 @@ export interface TelephonySession {
 
 export interface TelephonyProvider {
   name: string;
-  initiateCall(params: { leadId: string; telecallerId: string; phoneNumber: string }): Promise<TelephonySession>;
+  initiateCall(params: { leadId: string; telecallerId: string; phoneNumber?: string }): Promise<TelephonySession>;
   endCall(callId: string): Promise<{ durationSeconds: number; recordingUrl: string }>;
   getCallStatus(callId: string): Promise<CallStatus>;
   toggleMute(callId: string, isMuted: boolean): Promise<boolean>;

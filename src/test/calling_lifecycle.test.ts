@@ -39,7 +39,8 @@ describe('LEADVAULT Telephony Calling & Outcome Workflow', () => {
 
     expect(session.callId).toBeDefined();
     expect(session.status).toBe('INITIATED');
-    expect(session.phoneNumber).toBe('+91 9876543210');
+    expect(session.maskedPhoneNumber).toBe('+91 ******3210');
+    expect(session.phoneNumber).toBeUndefined();
 
     // Test mute toggle
     const muted = await telephonyService.toggleMute(session.callId, true);

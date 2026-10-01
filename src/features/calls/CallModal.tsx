@@ -45,13 +45,11 @@ export const CallModal: React.FC<CallModalProps> = ({
         setDuration(0);
         setIsMuted(false);
 
-        // Telecaller calls through secure gateway; actual phone retrieved securely server-side
-        const secureNumber = db.getAuthorizedCallingNumber(lead.id, profile);
-
+        // Secure call placement: caller client only provides leadId and caller profile.
+        // Raw customer phone is never retrieved into client component memory.
         const session = await telephonyService.initiateCall({
           leadId: lead.id,
           telecallerId: profile.id,
-          phoneNumber: secureNumber,
         });
 
         activeCallId = session.callId;
