@@ -408,6 +408,27 @@ class LeadVaultDatabase {
     return lead.phone;
   }
 
+  /**
+   * Internal Server-Side Telephony Gateway phone number resolution.
+   * Only called by server-side CallService to dispatch Twilio/telephony calls.
+   * Telecaller client never receives raw customer phone numbers.
+   */
+  public getRawPhoneNumberForCall(leadId: string, currentProfile: Profile): string {
+    this.ensureActive(currentProfile);
+    const lead = this.leads.find((l) => l.id === leadId);
+    if (!lead) throw new Error('Lead not found');
+
+    if (currentProfile.role !== 'ADMIN' && lead.organization_id !== currentProfile.organization_id) {
+      throw new Error('Forbidden: Lead belongs to another organization.');
+    }
+
+    if (currentProfile.role === 'TELECALLER' && lead.assigned_to !== currentProfile.id) {
+      throw new Error('Forbidden: Telecaller cannot call unassigned lead.');
+    }
+
+    return lead.phone;
+  }
+
   public createLead(
     leadData: Omit<Lead, 'id' | 'organization_id' | 'lead_code' | 'created_at' | 'updated_at'>,
     currentProfile: Profile
@@ -943,6 +964,31 @@ class LeadVaultDatabase {
 
     this.emit('CALL_RECORDED', newCall, { organization_id: currentProfile.organization_id });
     return newCall;
+  }
+
+  public updateCall(
+    callId: string,
+    updates: Partial<Call>,
+    currentProfile: Profile
+  ): Call {
+    this.ensureActive(currentProfile);
+    const callIdx = this.calls.findIndex((c) => c.id === callId);
+    if (callIdx === -1) {
+      throw new Error('Call record not found');
+    }
+
+    const currentCall = this.calls[callIdx];
+    if (currentProfile.role !== 'ADMIN' && currentCall.organization_id !== currentProfile.organization_id) {
+      throw new Error('Forbidden: Cannot update call record belonging to another organization');
+    }
+
+    this.calls[callIdx] = {
+      ...currentCall,
+      ...updates,
+    };
+
+    this.emit('CALL_RECORDED', this.calls[callIdx], { organization_id: currentCall.organization_id });
+    return this.calls[callIdx];
   }
 
   public recordCallOutcome(
