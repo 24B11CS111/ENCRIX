@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Lead } from '@/types';
-import { telephonyService } from '@/services/telephony';
+import { callService, telephonyService } from '@/services/telephony';
 import { db } from '@/services/supabase/db';
 import { useAuth } from '@/features/auth/AuthContext';
 import { formatDuration } from '@/lib/utils';
@@ -45,12 +45,12 @@ export const CallModal: React.FC<CallModalProps> = ({
 
         // Secure call placement: caller client only provides leadId and caller profile.
         // Raw customer phone is never retrieved into client component memory.
-        const session = await telephonyService.initiateCall({
+        const dispatchResult = await callService.dispatchCall({
           leadId: lead.id,
-          telecallerId: profile.id,
+          callerProfile: profile,
         });
 
-        setCallId(session.callId);
+        setCallId(dispatchResult.session.callId);
 
         // Progress ringing -> connected
         setTimeout(() => {
@@ -88,11 +88,31 @@ export const CallModal: React.FC<CallModalProps> = ({
     setCallStatus('ENDING');
     if (timerRef.current) clearInterval(timerRef.current);
 
-    const result = await telephonyService.endCall(callId);
+    if (!profile) return;
+
+    const result = await callService.endCall(callId, profile);
     const finalDuration = Math.max(duration, 3);
 
-    // Persist call to ENCRIX Database
-    if (profile) {
+    // Persist completed call state to ENCRIX Database
+    const existingCalls = db.getCalls(profile);
+    const initiatedCall = existingCalls.find(
+      (c) => (c.lead_id === lead.id || c.id === callId) && c.status === 'INITIATED'
+    );
+
+    let recordedId = callId;
+    if (initiatedCall) {
+      db.updateCall(
+        initiatedCall.id,
+        {
+          status: 'COMPLETED',
+          duration_seconds: finalDuration,
+          recording_url: result.recordingUrl,
+          ended_at: new Date().toISOString(),
+        },
+        profile
+      );
+      recordedId = initiatedCall.id;
+    } else {
       const recorded = db.recordCall(
         {
           lead_id: lead.id,
@@ -102,9 +122,10 @@ export const CallModal: React.FC<CallModalProps> = ({
         },
         profile
       );
-
-      onCallCompleted(recorded.id, finalDuration, result.recordingUrl);
+      recordedId = recorded.id;
     }
+
+    onCallCompleted(recordedId, finalDuration, result.recordingUrl);
   };
 
   return (

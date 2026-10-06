@@ -9,17 +9,27 @@ export interface WebhookResult {
   status?: CallStatus;
   callId?: string;
   error?: string;
+  isDuplicate?: boolean;
 }
 
 export class TelephonyWebhookHandler {
   private provider: ITelephonyProvider;
+  private processedEvents: Set<string> = new Set();
 
   constructor(provider?: ITelephonyProvider) {
     this.provider = provider || new TwilioTelephonyProvider();
   }
 
+  public isEventProcessed(eventKey: string): boolean {
+    return this.processedEvents.has(eventKey);
+  }
+
+  public resetProcessedEvents(): void {
+    this.processedEvents.clear();
+  }
+
   /**
-   * Maps Twilio call status strings to LEADVAULT CallStatus
+   * Maps Twilio call status strings to ENCRIX CallStatus
    */
   public mapTwilioStatus(twilioStatus: string): CallStatus {
     const s = twilioStatus.toLowerCase().trim();
@@ -37,9 +47,10 @@ export class TelephonyWebhookHandler {
       case 'busy':
         return 'BUSY';
       case 'no-answer':
-        return 'MISSED';
-      case 'failed':
+        return 'NO_ANSWER';
       case 'canceled':
+        return 'CANCELED';
+      case 'failed':
         return 'FAILED';
       default:
         return 'COMPLETED';
@@ -47,7 +58,7 @@ export class TelephonyWebhookHandler {
   }
 
   /**
-   * Handles incoming Twilio StatusCallback webhooks with signature verification
+   * Handles incoming Twilio StatusCallback webhooks with signature verification and idempotency check
    */
   public async handleStatusCallback(
     signature: string,
@@ -87,20 +98,36 @@ export class TelephonyWebhookHandler {
       };
     }
 
-    // 3. Extract and map status
+    // 3. Webhook Idempotency & Duplicate Check
     const callSid = params.CallSid;
     const mappedStatus = this.mapTwilioStatus(params.CallStatus || 'completed');
+    const eventKey = `${callSid}:${params.SequenceNumber || params.CallStatus}:${params.CallDuration || '0'}`;
+
+    if (this.processedEvents.has(eventKey)) {
+      return {
+        success: true,
+        statusCode: 200,
+        status: mappedStatus,
+        callId: callSid,
+        isDuplicate: true,
+      };
+    }
+    this.processedEvents.add(eventKey);
+
+    // 4. Extract parameters
     const duration = params.CallDuration ? parseInt(params.CallDuration, 10) : undefined;
     const recordingUrl = params.RecordingUrl;
 
-    // 4. Update status in provider if applicable
+    // 5. Update status in provider if applicable
     if (this.provider instanceof TwilioTelephonyProvider) {
       this.provider.updateCallStatus(callSid, mappedStatus, duration);
     }
 
-    // 5. Update call record in database if present
+    // 6. Update call record in database if present
     const existingCalls = db.getCalls({ role: 'ADMIN', organization_id: '' } as Profile);
-    const targetCall = existingCalls.find((c) => c.id === callSid || c.lead_id === params.leadId);
+    const targetCall = existingCalls.find(
+      (c) => c.id === callSid || c.provider_call_id === callSid || (params.leadId && c.lead_id === params.leadId)
+    );
 
     if (targetCall) {
       db.updateCall(

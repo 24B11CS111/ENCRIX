@@ -23,9 +23,12 @@ export type CallStatus =
   | 'INITIATED'
   | 'RINGING'
   | 'CONNECTED'
+  | 'IN_PROGRESS'
   | 'COMPLETED'
   | 'MISSED'
+  | 'NO_ANSWER'
   | 'BUSY'
+  | 'CANCELED'
   | 'FAILED';
 
 export type CallOutcomeType =

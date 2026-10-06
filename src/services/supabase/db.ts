@@ -1033,6 +1033,8 @@ class LeadVaultDatabase {
       duration_seconds: number;
       status: Call['status'];
       recording_url?: string;
+      provider?: Call['provider'];
+      provider_call_id?: string;
     },
     currentProfile: Profile
   ): Call {
@@ -1067,8 +1069,8 @@ class LeadVaultDatabase {
       lead_name: currentProfile.role === 'TELECALLER' ? sanitizeLeadForRole(lead, 'TELECALLER').name : lead.name,
       telecaller_id: currentProfile.id,
       telecaller_name: currentProfile.full_name,
-      provider: 'MOCK',
-      provider_call_id: `CALL_REF_${Date.now()}`,
+      provider: data.provider || 'MOCK',
+      provider_call_id: data.provider_call_id || `CALL_REF_${Date.now()}`,
       started_at: new Date(Date.now() - data.duration_seconds * 1000).toISOString(),
       ended_at: new Date().toISOString(),
       duration_seconds: data.duration_seconds,

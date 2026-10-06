@@ -80,6 +80,8 @@ export class CallService {
         lead_id: lead.id,
         duration_seconds: 0,
         status: 'INITIATED',
+        provider: 'TWILIO',
+        provider_call_id: session.callId,
       },
       callerProfile
     );

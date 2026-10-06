@@ -69,21 +69,67 @@ export class TwilioTelephonyProvider implements ITelephonyProvider {
       internalResolvedPhone: params.customerPhone,
     });
 
-    // In a live environment with valid credentials, this executes:
-    // fetch(`https://api.twilio.com/2010-04-01/Accounts/${this.accountSid}/Calls.json`, {
-    //   method: 'POST',
-    //   headers: {
-    //     'Authorization': 'Basic ' + Buffer.from(`${this.accountSid}:${this.authToken}`).toString('base64'),
-    //     'Content-Type': 'application/x-www-form-urlencoded'
-    //   },
-    //   body: new URLSearchParams({
-    //     To: params.customerPhone,
-    //     From: this.callerId,
-    //     Url: this.voiceWebhookUrl,
-    //     StatusCallback: params.statusCallbackUrl || this.statusCallbackUrl,
-    //     StatusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'].join(' ')
-    //   })
-    // });
+    // In a live production environment with valid credentials, execute live HTTP call to Twilio REST API
+    const isLiveTwilioConfig =
+      Boolean(this.accountSid) &&
+      Boolean(this.authToken) &&
+      !this.accountSid.includes('test') &&
+      !this.accountSid.includes('mock') &&
+      !this.accountSid.includes('placeholder') &&
+      !this.authToken.includes('test') &&
+      !this.authToken.includes('mock') &&
+      !this.authToken.includes('placeholder');
+
+    if (isLiveTwilioConfig && typeof fetch !== 'undefined') {
+      try {
+        const authHeader =
+          'Basic ' +
+          (typeof Buffer !== 'undefined'
+            ? Buffer.from(`${this.accountSid}:${this.authToken}`).toString('base64')
+            : btoa(`${this.accountSid}:${this.authToken}`));
+
+        const bodyParams = new URLSearchParams({
+          To: params.customerPhone,
+          From: params.callerId || this.callerId,
+          Url: this.voiceWebhookUrl,
+          StatusCallback: params.statusCallbackUrl || this.statusCallbackUrl,
+          StatusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'].join(' '),
+          Record: 'record-from-answer-dual',
+        });
+
+        const response = await fetch(
+          `https://api.twilio.com/2010-04-01/Accounts/${this.accountSid}/Calls.json`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: authHeader,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: bodyParams.toString(),
+          }
+        );
+
+        if (!response.ok) {
+          const errBody = (await response.json().catch(() => ({}))) as Record<string, any>;
+          throw new Error(
+            `Twilio API error (${response.status}): ${errBody.message || response.statusText || 'Call dispatch failed'}`
+          );
+        }
+
+        const data = (await response.json()) as { sid?: string };
+        if (data.sid) {
+          session.callId = data.sid;
+          this.sessions.delete(callSid);
+          this.sessions.set(data.sid, {
+            ...session,
+            callId: data.sid,
+            internalResolvedPhone: params.customerPhone,
+          });
+        }
+      } catch (err: any) {
+        throw new Error(`Outbound telephony dispatch failed: ${err.message}`);
+      }
+    }
 
     return session;
   }
