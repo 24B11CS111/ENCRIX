@@ -22,6 +22,8 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { formatRelativeTime } from '@/lib/utils';
+import { EmptyState } from '@/components/common/EmptyState';
+import { Users } from 'lucide-react';
 
 export const OwnerLeadsPage: React.FC = () => {
   const { profile } = useAuth();
@@ -288,8 +290,19 @@ export const OwnerLeadsPage: React.FC = () => {
             <tbody className="divide-y divide-[#DCE4EE]">
               {paginatedLeads.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-[#94A3B8]">
-                    No leads found matching current search & filters.
+                  <td colSpan={10} className="py-12 text-center">
+                    <EmptyState
+                      icon={Users}
+                      title="No leads yet"
+                      description={
+                        leads.length === 0
+                          ? 'Import your first lead list or create leads to get started.'
+                          : 'No leads found matching current search & filters.'
+                      }
+                      actionText={leads.length === 0 ? 'Import Leads' : undefined}
+                      onAction={leads.length === 0 ? () => navigate('/owner/import') : undefined}
+                      className="border-none shadow-none"
+                    />
                   </td>
                 </tr>
               ) : (

@@ -4,6 +4,7 @@ import { db } from '@/services/supabase/db';
 import { Organization } from '@/types';
 import { Building2, Plus, Ban, CheckCircle, Shield } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const AdminOrganizationsPage: React.FC = () => {
   const { profile } = useAuth();
@@ -70,7 +71,20 @@ export const AdminOrganizationsPage: React.FC = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-[#DCE4EE]">
-            {orgs.map((org) => (
+            {orgs.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="py-12 text-center">
+                  <EmptyState
+                    icon={Building2}
+                    title="No Organizations Created"
+                    description="Provision your first enterprise tenant to configure tenant workspaces."
+                    actionText="Provision Tenant"
+                    onAction={() => setIsModalOpen(true)}
+                  />
+                </td>
+              </tr>
+            ) : (
+              orgs.map((org) => (
               <tr key={org.id} className="hover:bg-[#F6F8FB]/60 transition-colors">
                 <td className="py-3 px-4">
                   <div className="flex items-center gap-2.5">
@@ -87,8 +101,9 @@ export const AdminOrganizationsPage: React.FC = () => {
                 </td>
                 <td className="py-3 px-3 text-[#64748B] font-mono text-[11px]">{formatDate(org.created_at)}</td>
               </tr>
-            ))}
-          </tbody>
+            ))
+          )}
+        </tbody>
         </table>
       </div>
 

@@ -12,6 +12,7 @@ import {
   User,
 } from 'lucide-react';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const OwnerFollowUpsPage: React.FC = () => {
   const { profile } = useAuth();
@@ -150,8 +151,16 @@ export const OwnerFollowUpsPage: React.FC = () => {
       <div className="rounded-[12px] border border-[#DCE4EE] bg-white overflow-hidden shadow-sm">
         <div className="divide-y divide-[#DCE4EE]">
           {currentList.length === 0 ? (
-            <div className="py-12 text-center text-xs text-[#64748B]">
-              No follow-ups in this category.
+            <div className="p-8">
+              <EmptyState
+                icon={Calendar}
+                title={followUps.length === 0 ? "No follow-up tasks scheduled" : `No ${activeTab.toLowerCase()} follow-ups`}
+                description={
+                  followUps.length === 0
+                    ? "Callbacks and scheduled follow-ups created by telecallers will appear here in real-time."
+                    : `No tasks found under the ${activeTab.toLowerCase()} filter.`
+                }
+              />
             </div>
           ) : (
             currentList.map((fup) => (

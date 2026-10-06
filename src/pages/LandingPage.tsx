@@ -22,6 +22,10 @@ export const LandingPage: React.FC = () => {
   const navigate = useNavigate();
 
   const handleLaunchDemo = (role: 'owner' | 'telecaller' | 'admin') => {
+    if (!isDemoMode) {
+      navigate('/login');
+      return;
+    }
     quickLogin(role);
     if (role === 'owner') navigate('/owner');
     else if (role === 'telecaller') navigate('/telecaller');
@@ -106,13 +110,23 @@ export const LandingPage: React.FC = () => {
               GET STARTED
             </Link>
 
-            <button
-              onClick={() => handleLaunchDemo('owner')}
-              className="w-full sm:w-auto px-7 py-3.5 bg-white hover:bg-[#F6F8FB] text-[#0B1F3A] font-semibold text-sm rounded-[10px] border border-[#DCE4EE] shadow-subtle transition-all flex items-center justify-center gap-2"
-            >
-              <Play className="w-4 h-4 text-[#1E4D8F] fill-[#1E4D8F]" />
-              <span>VIEW PLATFORM</span>
-            </button>
+            {isDemoMode ? (
+              <button
+                onClick={() => handleLaunchDemo('owner')}
+                className="w-full sm:w-auto px-7 py-3.5 bg-white hover:bg-[#F6F8FB] text-[#0B1F3A] font-semibold text-sm rounded-[10px] border border-[#DCE4EE] shadow-subtle transition-all flex items-center justify-center gap-2"
+              >
+                <Play className="w-4 h-4 text-[#1E4D8F] fill-[#1E4D8F]" />
+                <span>VIEW PLATFORM</span>
+              </button>
+            ) : (
+              <Link
+                to="/login"
+                className="w-full sm:w-auto px-7 py-3.5 bg-white hover:bg-[#F6F8FB] text-[#0B1F3A] font-semibold text-sm rounded-[10px] border border-[#DCE4EE] shadow-subtle transition-all flex items-center justify-center gap-2"
+              >
+                <span>SIGN IN</span>
+                <ArrowRight className="w-4 h-4 text-[#1E4D8F]" />
+              </Link>
+            )}
           </div>
 
           {/* Quick Demo Persona Badges */}
@@ -521,12 +535,21 @@ export const LandingPage: React.FC = () => {
             >
               START PROTECTING YOUR LEADS
             </Link>
-            <button
-              onClick={() => handleLaunchDemo('owner')}
-              className="px-8 py-3.5 bg-[#071A33] hover:bg-[#1E4D8F] text-white text-xs font-semibold rounded-[10px] border border-slate-700 transition-colors"
-            >
-              TRY WITH DEMO DATA
-            </button>
+            {isDemoMode ? (
+              <button
+                onClick={() => handleLaunchDemo('owner')}
+                className="px-8 py-3.5 bg-[#071A33] hover:bg-[#1E4D8F] text-white text-xs font-semibold rounded-[10px] border border-slate-700 transition-colors"
+              >
+                TRY WITH DEMO DATA
+              </button>
+            ) : (
+              <Link
+                to="/login"
+                className="px-8 py-3.5 bg-[#071A33] hover:bg-[#1E4D8F] text-white text-xs font-semibold rounded-[10px] border border-slate-700 transition-colors"
+              >
+                SIGN IN TO WORKSPACE
+              </Link>
+            )}
           </div>
         </div>
       </section>

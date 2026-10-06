@@ -25,6 +25,7 @@ import {
 } from 'recharts';
 import { useNavigate } from 'react-router-dom';
 import { StatusBadge } from '@/components/common/StatusBadge';
+import { EmptyState } from '@/components/common/EmptyState';
 import { formatRelativeTime } from '@/lib/utils';
 
 export const OwnerDashboard: React.FC = () => {
@@ -211,19 +212,30 @@ export const OwnerDashboard: React.FC = () => {
             </button>
           </div>
 
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={telecallerData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <XAxis dataKey="name" stroke="#64748B" fontSize={11} tickLine={false} />
-                <YAxis stroke="#64748B" fontSize={11} tickLine={false} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '10px', fontSize: '12px', boxShadow: '0 4px 16px rgba(11, 31, 58, 0.08)', color: '#172B4D' }}
-                />
-                <Bar dataKey="assigned" fill="#0B1F3A" name="Assigned" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="calls" fill="#1E4D8F" name="Calls" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="positive" fill="#16845B" name="Positive" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+          <div className="h-64 w-full flex items-center justify-center">
+            {telecallerData.length === 0 ? (
+              <EmptyState
+                icon={Users}
+                title="No telecallers yet"
+                description="Add team members to see queue and performance metrics."
+                actionText="Manage Team"
+                onAction={() => navigate('/owner/team')}
+                className="w-full border-none shadow-none p-4"
+              />
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={telecallerData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="name" stroke="#64748B" fontSize={11} tickLine={false} />
+                  <YAxis stroke="#64748B" fontSize={11} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '10px', fontSize: '12px', boxShadow: '0 4px 16px rgba(11, 31, 58, 0.08)', color: '#172B4D' }}
+                  />
+                  <Bar dataKey="assigned" fill="#0B1F3A" name="Assigned" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="calls" fill="#1E4D8F" name="Calls" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="positive" fill="#16845B" name="Positive" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 
@@ -234,28 +246,37 @@ export const OwnerDashboard: React.FC = () => {
             <p className="text-[11px] text-[#64748B]">Status breakdown across active database</p>
           </div>
 
-          <div className="h-44 w-full my-auto">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={outcomeStats}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={45}
-                  outerRadius={68}
-                  paddingAngle={3}
-                >
-                  {outcomeStats.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '10px', fontSize: '12px', boxShadow: '0 4px 16px rgba(11, 31, 58, 0.08)', color: '#172B4D' }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+          <div className="h-44 w-full my-auto flex items-center justify-center">
+            {totalLeads === 0 ? (
+              <EmptyState
+                icon={TrendingUp}
+                title="No pipeline data"
+                description="Status breakdown will appear when leads are ingested."
+                className="w-full border-none shadow-none p-2"
+              />
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={outcomeStats}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={45}
+                    outerRadius={68}
+                    paddingAngle={3}
+                  >
+                    {outcomeStats.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '10px', fontSize: '12px', boxShadow: '0 4px 16px rgba(11, 31, 58, 0.08)', color: '#172B4D' }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </div>
 
           <div className="space-y-1.5 pt-2 border-t border-[#DCE4EE]">
@@ -286,20 +307,30 @@ export const OwnerDashboard: React.FC = () => {
             </button>
           </div>
 
-          <div className="divide-y divide-[#DCE4EE]">
-            {leads.slice(0, 5).map((lead) => (
-              <div key={lead.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-semibold text-[#0B1F3A]">{lead.lead_code}</span>
-                    <span className="text-[#172B4D] font-medium">{lead.name}</span>
+          {leads.length === 0 ? (
+            <EmptyState
+              icon={Users}
+              title="No leads yet"
+              description="Import your first lead list to start assigning leads."
+              actionText="Import Leads"
+              onAction={() => navigate('/owner/import')}
+            />
+          ) : (
+            <div className="divide-y divide-[#DCE4EE]">
+              {leads.slice(0, 5).map((lead) => (
+                <div key={lead.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-semibold text-[#0B1F3A]">{lead.lead_code}</span>
+                      <span className="text-[#172B4D] font-medium">{lead.name}</span>
+                    </div>
+                    <div className="text-[11px] text-[#64748B] font-mono mt-0.5">{lead.phone} • {lead.source}</div>
                   </div>
-                  <div className="text-[11px] text-[#64748B] font-mono mt-0.5">{lead.phone} • {lead.source}</div>
+                  <StatusBadge status={lead.status} />
                 </div>
-                <StatusBadge status={lead.status} />
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Live Call Activity */}
@@ -314,28 +345,36 @@ export const OwnerDashboard: React.FC = () => {
             </button>
           </div>
 
-          <div className="divide-y divide-[#DCE4EE]">
-            {calls.slice(0, 5).map((call) => (
-              <div key={call.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-full bg-[#EAF2FB] border border-[#C7DCF3] flex items-center justify-center text-[#1E4D8F]">
-                    <PhoneCall className="w-3.5 h-3.5" />
-                  </div>
-                  <div>
-                    <div className="text-[#0B1F3A] font-medium">
-                      {call.telecaller_name || 'Telecaller'} called {call.lead_name || 'Customer'}
+          {calls.length === 0 ? (
+            <EmptyState
+              icon={PhoneCall}
+              title="No calls yet"
+              description="Call activity will appear here once your telecallers begin outreach."
+            />
+          ) : (
+            <div className="divide-y divide-[#DCE4EE]">
+              {calls.slice(0, 5).map((call) => (
+                <div key={call.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-full bg-[#EAF2FB] border border-[#C7DCF3] flex items-center justify-center text-[#1E4D8F]">
+                      <PhoneCall className="w-3.5 h-3.5" />
                     </div>
-                    <div className="text-[11px] text-[#64748B]">
-                      Duration: {Math.floor(call.duration_seconds / 60)}m {call.duration_seconds % 60}s • {call.outcome || 'Logged'}
+                    <div>
+                      <div className="text-[#0B1F3A] font-medium">
+                        {call.telecaller_name || 'Telecaller'} called {call.lead_name || 'Customer'}
+                      </div>
+                      <div className="text-[11px] text-[#64748B]">
+                        Duration: {Math.floor(call.duration_seconds / 60)}m {call.duration_seconds % 60}s • {call.outcome || 'Logged'}
+                      </div>
                     </div>
                   </div>
+                  <span className="text-[10px] text-[#94A3B8] whitespace-nowrap">
+                    {formatRelativeTime(call.created_at)}
+                  </span>
                 </div>
-                <span className="text-[10px] text-[#94A3B8] whitespace-nowrap">
-                  {formatRelativeTime(call.created_at)}
-                </span>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

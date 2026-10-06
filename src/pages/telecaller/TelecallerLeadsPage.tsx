@@ -15,7 +15,9 @@ import {
   Eye,
   Download,
   ShieldAlert,
+  Users,
 } from 'lucide-react';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const TelecallerLeadsPage: React.FC = () => {
   const { profile } = useAuth();
@@ -192,8 +194,16 @@ export const TelecallerLeadsPage: React.FC = () => {
             <tbody className="divide-y divide-[#DCE4EE]">
               {paginatedLeads.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-[#94A3B8]">
-                    No leads found in your queue.
+                  <td colSpan={6} className="py-12 text-center">
+                    <EmptyState
+                      icon={Users}
+                      title={leads.length === 0 ? "No Leads Assigned Yet" : "No Leads Found"}
+                      description={
+                        leads.length === 0
+                          ? "When leads are assigned to your shift, they will immediately appear here with contact actions ready."
+                          : "Try adjusting your search criteria or filters."
+                      }
+                    />
                   </td>
                 </tr>
               ) : (

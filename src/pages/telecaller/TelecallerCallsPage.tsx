@@ -4,6 +4,7 @@ import { db } from '@/services/supabase/db';
 import { Call } from '@/types';
 import { formatDuration, formatDateTime } from '@/lib/utils';
 import { PhoneCall, Play, Volume2 } from 'lucide-react';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const TelecallerCallsPage: React.FC = () => {
   const { profile } = useAuth();
@@ -50,8 +51,12 @@ export const TelecallerCallsPage: React.FC = () => {
             <tbody className="divide-y divide-[#DCE4EE]">
               {calls.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-[#64748B]">
-                    No calls recorded yet for your account.
+                  <td colSpan={6} className="py-12 text-center">
+                    <EmptyState
+                      icon={PhoneCall}
+                      title="No Calls Recorded Yet"
+                      description="Outbound calls and durations will appear here automatically when you call assigned leads."
+                    />
                   </td>
                 </tr>
               ) : (

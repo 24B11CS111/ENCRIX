@@ -4,6 +4,7 @@ import { db } from '@/services/supabase/db';
 import { DEMO_PROFILES, DEMO_ORGS } from '@/services/supabase/demoData';
 import { IS_DEMO_MODE } from '@/lib/config';
 import { rateLimiter } from '@/lib/rateLimiter';
+import { supabase, isRealSupabaseConfigured } from '@/services/supabase/client';
 
 interface AuthContextType {
   user: { id: string; email: string } | null;
@@ -33,15 +34,79 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Initialize from saved session or default in demo sandbox
+  const loadSupabaseProfile = async (
+    userId: string
+  ): Promise<{ success: boolean; role?: UserRole; error?: string }> => {
+    try {
+      const { data: userProfile, error: profErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+
+      if (profErr || !userProfile) {
+        await supabase.auth.signOut();
+        setProfile(null);
+        setOrganization(null);
+        return { success: false, error: 'User profile not found in organization.' };
+      }
+
+      if (userProfile.status === 'DISABLED') {
+        await supabase.auth.signOut();
+        setProfile(null);
+        setOrganization(null);
+        return { success: false, error: 'Your account has been suspended. Please contact your organization owner.' };
+      }
+
+      const { data: orgData } = await supabase
+        .from('organizations')
+        .select('*')
+        .eq('id', userProfile.organization_id)
+        .single();
+
+      setProfile(userProfile);
+      setOrganization(orgData || null);
+      return { success: true, role: userProfile.role };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to resolve user identity.' };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Initialize from Supabase Auth session or saved session
   useEffect(() => {
+    if (isRealSupabaseConfigured()) {
+      supabase.auth.getSession().then(async ({ data: { session } }) => {
+        if (session?.user) {
+          await loadSupabaseProfile(session.user.id);
+        } else {
+          setIsLoading(false);
+        }
+      });
+
+      const {
+        data: { subscription },
+      } = supabase.auth.onAuthStateChange(async (_event, session) => {
+        if (session?.user) {
+          await loadSupabaseProfile(session.user.id);
+        } else {
+          setProfile(null);
+          setOrganization(null);
+          setIsLoading(false);
+        }
+      });
+
+      return () => subscription.unsubscribe();
+    }
+
     try {
       const savedUser = localStorage.getItem('leadvault_session');
       if (savedUser) {
         const parsed = JSON.parse(savedUser);
         const allProfiles = db.getProfiles({ role: 'ADMIN', organization_id: '' } as Profile);
         const found = allProfiles.find((p) => p.id === parsed.profileId);
-        
+
         // Ensure account is active and not disabled
         if (found && found.status !== 'DISABLED') {
           setProfile(found);
@@ -91,6 +156,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setIsLoading(true);
     try {
+      if (isRealSupabaseConfigured()) {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password: password || '',
+        });
+        if (error) {
+          return { success: false, error: error.message };
+        }
+        const loaded = await loadSupabaseProfile(data.user.id);
+        if (!loaded.success) {
+          return { success: false, error: loaded.error };
+        }
+        rateLimiter.reset(`login:${email.toLowerCase().trim()}`);
+        return { success: true, role: loaded.role };
+      }
+
       const allProfiles = db.getProfiles({ role: 'ADMIN', organization_id: '' } as Profile);
       let matchedProfile: Profile | undefined;
 
@@ -116,14 +197,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           matchedProfile = allProfiles.find((p) => p.id === 'tc-priya-03');
         }
       } else {
-        // PRODUCTION: Strict email lookup, password required
+        // PRODUCTION: Strict email/phone lookup, password required
         if (!password || password.length < 6) {
           return { success: false, error: 'Password is required and must be at least 6 characters.' };
         }
         matchedProfile = allProfiles.find(
           (p) =>
             p.phone === email ||
-            p.full_name.toLowerCase() === email.toLowerCase().split('@')[0]
+            p.full_name.toLowerCase() === email.toLowerCase().split('@')[0] ||
+            `${p.full_name.toLowerCase().replace(/\s+/g, '.')}@leadvault.io` === email.toLowerCase() ||
+            `${p.full_name.toLowerCase().replace(/\s+/g, '.')}@encrix.com` === email.toLowerCase()
         );
       }
 
@@ -148,7 +231,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       rateLimiter.reset(`login:${email.toLowerCase().trim()}`);
       setProfile(matchedProfile);
       const orgs = db.getOrganizations(matchedProfile);
-      const org = orgs.find((o) => o.id === matchedProfile!.organization_id) || DEMO_ORGS[0];
+      const org = orgs.find((o) => o.id === matchedProfile!.organization_id) || null;
       setOrganization(org);
 
       localStorage.setItem('leadvault_session', JSON.stringify({ profileId: matchedProfile.id }));
@@ -181,7 +264,56 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }) => {
     setIsLoading(true);
     try {
-      // 1. Create Organization
+      if (isRealSupabaseConfigured()) {
+        const generatedPass = `Encrix_${Date.now()}_Pass!`;
+        const { data: authData, error: authErr } = await supabase.auth.signUp({
+          email: data.email,
+          password: generatedPass,
+        });
+        if (authErr || !authData.user) {
+          return { success: false, error: authErr?.message || 'Failed to create authentication user.' };
+        }
+
+        const { data: orgData, error: orgErr } = await supabase
+          .from('organizations')
+          .insert({
+            name: data.companyName,
+            industry: data.industry,
+            company_size: data.companySize,
+            slug: data.companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+            owner_id: authData.user.id,
+            status: 'ACTIVE',
+          })
+          .select('*')
+          .single();
+
+        if (orgErr || !orgData) {
+          return { success: false, error: orgErr?.message || 'Failed to create organization record.' };
+        }
+
+        const { data: profData, error: profErr } = await supabase
+          .from('profiles')
+          .insert({
+            user_id: authData.user.id,
+            organization_id: orgData.id,
+            full_name: data.ownerName,
+            phone: data.phone,
+            role: 'OWNER',
+            status: 'ACTIVE',
+          })
+          .select('*')
+          .single();
+
+        if (profErr || !profData) {
+          return { success: false, error: profErr?.message || 'Failed to create owner profile.' };
+        }
+
+        setProfile(profData);
+        setOrganization(orgData);
+        return { success: true };
+      }
+
+      // 1. Create Organization in Database
       const newOrg = db.createOrganization({
         name: data.companyName,
         industry: data.industry,
@@ -189,22 +321,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         owner_id: `user-${Date.now().toString(36)}`,
       });
 
-      // 2. Create Owner Profile
-      const newOwner: Profile = {
-        id: `prof-${Date.now().toString(36)}`,
+      // 2. Create Owner Profile via db.createProfile
+      const newOwner = db.createProfile({
         user_id: newOrg.owner_id,
         organization_id: newOrg.id,
         full_name: data.ownerName,
         phone: data.phone,
         role: 'OWNER',
         status: 'ACTIVE',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        assigned_count: 0,
-        calls_today: 0,
-        positive_count: 0,
-        conversion_rate: 0,
-      };
+      });
 
       setProfile(newOwner);
       setOrganization(newOrg);
@@ -230,6 +355,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
+    if (isRealSupabaseConfigured()) {
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // Fallback
+      }
+    }
     if (profile) {
       db.logActivity({
         organization_id: profile.organization_id,

@@ -14,6 +14,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const OwnerAssignmentsPage: React.FC = () => {
   const { profile } = useAuth();
@@ -91,31 +92,37 @@ export const OwnerAssignmentsPage: React.FC = () => {
         <h2 className="text-xs font-semibold text-[#64748B] uppercase tracking-wider mb-3">
           Active Telecallers Workload ({telecallers.length})
         </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          {telecallers.map((tc) => {
-            const count = leads.filter((l) => l.assigned_to === tc.id).length;
-            const positive = leads.filter(
-              (l) => l.assigned_to === tc.id && (l.status === 'INTERESTED' || l.status === 'CONVERTED')
-            ).length;
+        {telecallers.length === 0 ? (
+          <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] text-center text-xs text-[#64748B]">
+            No telecallers registered yet. Add telecaller team members to distribute leads.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            {telecallers.map((tc) => {
+              const count = leads.filter((l) => l.assigned_to === tc.id).length;
+              const positive = leads.filter(
+                (l) => l.assigned_to === tc.id && (l.status === 'INTERESTED' || l.status === 'CONVERTED')
+              ).length;
 
-            return (
-              <div key={tc.id} className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs font-bold text-[#0B1F3A] truncate">{tc.full_name}</div>
-                  <span className="w-2 h-2 rounded-full bg-[#16845B]" />
+              return (
+                <div key={tc.id} className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-bold text-[#0B1F3A] truncate">{tc.full_name}</div>
+                    <span className="w-2 h-2 rounded-full bg-[#16845B]" />
+                  </div>
+                  <div className="flex items-baseline justify-between pt-1">
+                    <span className="text-[11px] text-[#64748B]">Assigned Queue:</span>
+                    <span className="text-base font-bold text-[#1E4D8F]">{count} leads</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-[#64748B]">
+                    <span>Positive outcomes:</span>
+                    <span className="text-[#172B4D] font-medium">{positive}</span>
+                  </div>
                 </div>
-                <div className="flex items-baseline justify-between pt-1">
-                  <span className="text-[11px] text-[#64748B]">Assigned Queue:</span>
-                  <span className="text-base font-bold text-[#1E4D8F]">{count} leads</span>
-                </div>
-                <div className="flex items-center justify-between text-[10px] text-[#64748B]">
-                  <span>Positive outcomes:</span>
-                  <span className="text-[#172B4D] font-medium">{positive}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* UNASSIGNED LEADS TABLE */}
@@ -165,9 +172,16 @@ export const OwnerAssignmentsPage: React.FC = () => {
             <tbody className="divide-y divide-[#DCE4EE]">
               {unassignedLeads.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-[#64748B]">
-                    <CheckCircle className="w-6 h-6 text-[#16845B] mx-auto mb-2" />
-                    All leads are currently assigned! New imported leads will appear here.
+                  <td colSpan={7} className="py-12 text-center">
+                    <EmptyState
+                      icon={CheckCircle}
+                      title={leads.length === 0 ? "No Leads in Pool" : "All Leads Assigned"}
+                      description={
+                        leads.length === 0
+                          ? "Import or create leads to start assigning them to telecallers."
+                          : "All available leads have been allocated to telecallers. New unassigned leads will appear here."
+                      }
+                    />
                   </td>
                 </tr>
               ) : (

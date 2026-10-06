@@ -5,6 +5,8 @@ import { ActivityLog } from '@/types';
 import { formatDateTime } from '@/lib/utils';
 import { SearchBar } from '@/components/common/SearchBar';
 import { Pagination } from '@/components/common/Pagination';
+import { Activity } from 'lucide-react';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const AdminActivityPage: React.FC = () => {
   const { profile } = useAuth();
@@ -56,7 +58,18 @@ export const AdminActivityPage: React.FC = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-[#DCE4EE]">
-            {paginatedLogs.map((log) => (
+            {paginatedLogs.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="py-12 text-center">
+                  <EmptyState
+                    icon={Activity}
+                    title="No Platform Activity"
+                    description="Cross-tenant audit events and user interactions will stream here in real-time."
+                  />
+                </td>
+              </tr>
+            ) : (
+              paginatedLogs.map((log) => (
               <tr key={log.id} className="hover:bg-[#F6F8FB]/60 transition-colors">
                 <td className="py-3 px-4 text-[#64748B] font-mono text-[11px] whitespace-nowrap">
                   {formatDateTime(log.created_at)}
@@ -68,8 +81,9 @@ export const AdminActivityPage: React.FC = () => {
                   {JSON.stringify(log.metadata)}
                 </td>
               </tr>
-            ))}
-          </tbody>
+            ))
+          )}
+        </tbody>
         </table>
 
         <Pagination

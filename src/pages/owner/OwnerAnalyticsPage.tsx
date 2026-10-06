@@ -26,6 +26,7 @@ import {
   Users,
   PhoneCall,
 } from 'lucide-react';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const OwnerAnalyticsPage: React.FC = () => {
   const { profile } = useAuth();
@@ -128,42 +129,62 @@ export const OwnerAnalyticsPage: React.FC = () => {
       </div>
 
       {/* CHARTS GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Source acquisition */}
-        <div className="p-5 rounded-[16px] bg-white border border-[#DCE4EE] shadow-sm space-y-4">
-          <h2 className="text-sm font-semibold text-[#0B1F3A]">Lead Acquisition Sources</h2>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={sourceData} layout="vertical" margin={{ left: 20, right: 20 }}>
-                <XAxis type="number" stroke="#64748B" fontSize={11} />
-                <YAxis dataKey="name" type="category" stroke="#64748B" fontSize={11} width={90} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '8px', fontSize: '12px', color: '#172B4D', boxShadow: '0 4px 12px rgba(11,31,58,0.08)' }}
-                />
-                <Bar dataKey="count" fill="#1E4D8F" radius={[0, 4, 4, 0]} name="Leads" />
-              </BarChart>
-            </ResponsiveContainer>
+      {totalLeads === 0 && totalCalls === 0 ? (
+        <EmptyState
+          icon={BarChart3}
+          title="No Analytics Data Yet"
+          description="Analytics, conversion funnels, and agent productivity charts will populate automatically once leads are added and calls are conducted."
+        />
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {/* Source acquisition */}
+          <div className="p-5 rounded-[16px] bg-white border border-[#DCE4EE] shadow-sm space-y-4">
+            <h2 className="text-sm font-semibold text-[#0B1F3A]">Lead Acquisition Sources</h2>
+            <div className="h-64 w-full">
+              {sourceData.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-xs text-[#64748B]">
+                  No lead sources recorded yet.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={sourceData} layout="vertical" margin={{ left: 20, right: 20 }}>
+                    <XAxis type="number" stroke="#64748B" fontSize={11} />
+                    <YAxis dataKey="name" type="category" stroke="#64748B" fontSize={11} width={90} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '8px', fontSize: '12px', color: '#172B4D', boxShadow: '0 4px 12px rgba(11,31,58,0.08)' }}
+                    />
+                    <Bar dataKey="count" fill="#1E4D8F" radius={[0, 4, 4, 0]} name="Leads" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
           </div>
-        </div>
 
-        {/* Telecaller Activity Chart */}
-        <div className="p-5 rounded-[16px] bg-white border border-[#DCE4EE] shadow-sm space-y-4">
-          <h2 className="text-sm font-semibold text-[#0B1F3A]">Telecaller Productive Output</h2>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={telecallerActivityData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <XAxis dataKey="name" stroke="#64748B" fontSize={11} />
-                <YAxis stroke="#64748B" fontSize={11} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '8px', fontSize: '12px', color: '#172B4D', boxShadow: '0 4px 12px rgba(11,31,58,0.08)' }}
-                />
-                <Bar dataKey="calls" fill="#1E4D8F" name="Calls Placed" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="positive" fill="#16845B" name="Positive Leads" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+          {/* Telecaller Activity Chart */}
+          <div className="p-5 rounded-[16px] bg-white border border-[#DCE4EE] shadow-sm space-y-4">
+            <h2 className="text-sm font-semibold text-[#0B1F3A]">Telecaller Productive Output</h2>
+            <div className="h-64 w-full">
+              {telecallerActivityData.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-xs text-[#64748B]">
+                  No telecaller activity recorded yet.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={telecallerActivityData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <XAxis dataKey="name" stroke="#64748B" fontSize={11} />
+                    <YAxis stroke="#64748B" fontSize={11} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '8px', fontSize: '12px', color: '#172B4D', boxShadow: '0 4px 12px rgba(11,31,58,0.08)' }}
+                    />
+                    <Bar dataKey="calls" fill="#1E4D8F" name="Calls Placed" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="positive" fill="#16845B" name="Positive Leads" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

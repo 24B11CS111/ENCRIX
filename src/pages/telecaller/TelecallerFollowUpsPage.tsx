@@ -7,6 +7,7 @@ import { PriorityBadge } from '@/components/common/PriorityBadge';
 import { CallModal } from '@/features/calls/CallModal';
 import { OutcomeModal } from '@/features/calls/OutcomeModal';
 import { Calendar, Clock, CheckCircle, Phone } from 'lucide-react';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const TelecallerFollowUpsPage: React.FC = () => {
   const { profile } = useAuth();
@@ -62,8 +63,12 @@ export const TelecallerFollowUpsPage: React.FC = () => {
       <div className="rounded-[12px] border border-[#DCE4EE] bg-white overflow-hidden shadow-sm">
         <div className="divide-y divide-[#DCE4EE]">
           {followUps.length === 0 ? (
-            <div className="py-12 text-center text-xs text-[#64748B]">
-              No follow-ups scheduled in your queue.
+            <div className="p-8">
+              <EmptyState
+                icon={Calendar}
+                title="No Follow-Ups Scheduled"
+                description="Follow-up callbacks scheduled after your calls will appear here in chronological order."
+              />
             </div>
           ) : (
             followUps.map((fup) => (

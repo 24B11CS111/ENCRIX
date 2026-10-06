@@ -15,6 +15,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const OwnerTeamPage: React.FC = () => {
   const { profile } = useAuth();
@@ -117,7 +118,20 @@ export const OwnerTeamPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#DCE4EE]">
-              {telecallers.map((tc) => {
+              {telecallers.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center">
+                    <EmptyState
+                      icon={Headphones}
+                      title="No Telecallers Added Yet"
+                      description="Create telecaller accounts to start assigning leads and monitoring outbound calling performance."
+                      actionText="Add Telecaller"
+                      onAction={() => setIsAddOpen(true)}
+                    />
+                  </td>
+                </tr>
+              ) : (
+                telecallers.map((tc) => {
                 const assigned = leads.filter((l) => l.assigned_to === tc.id).length;
                 const tcCalls = calls.filter((c) => c.telecaller_id === tc.id).length;
                 const positive = leads.filter(
@@ -185,7 +199,7 @@ export const OwnerTeamPage: React.FC = () => {
                     </td>
                   </tr>
                 );
-              })}
+              }))}
             </tbody>
           </table>
         </div>

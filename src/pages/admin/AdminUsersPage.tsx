@@ -4,8 +4,9 @@ import { db } from '@/services/supabase/db';
 import { Profile, Organization } from '@/types';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { SearchBar } from '@/components/common/SearchBar';
-import { Users, Ban, RotateCcw, Building } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
+import { Users, Ban, RotateCcw, Building } from 'lucide-react';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const AdminUsersPage: React.FC = () => {
   const { profile } = useAuth();
@@ -105,7 +106,22 @@ export const AdminUsersPage: React.FC = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-[#DCE4EE]">
-            {filteredUsers.map((u) => {
+            {filteredUsers.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="py-12 text-center">
+                  <EmptyState
+                    icon={Users}
+                    title="No Users Found"
+                    description={
+                      users.length === 0
+                        ? "Registered system users and telecallers will appear here."
+                        : "No users matched your search and filter criteria."
+                    }
+                  />
+                </td>
+              </tr>
+            ) : (
+              filteredUsers.map((u) => {
               const org = orgs.find((o) => o.id === u.organization_id);
               return (
                 <tr key={u.id} className="hover:bg-[#F6F8FB]/60 transition-colors">
@@ -166,7 +182,7 @@ export const AdminUsersPage: React.FC = () => {
                   </td>
                 </tr>
               );
-            })}
+            }))}
           </tbody>
         </table>
       </div>

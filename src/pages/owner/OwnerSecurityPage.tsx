@@ -13,6 +13,7 @@ import {
   UserX,
   FileCheck,
 } from 'lucide-react';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const OwnerSecurityPage: React.FC = () => {
   const { profile, organization } = useAuth();
@@ -191,8 +192,12 @@ export const OwnerSecurityPage: React.FC = () => {
 
         <div className="divide-y divide-[#DCE4EE]">
           {securityEvents.length === 0 ? (
-            <div className="py-12 text-center text-xs text-[#64748B]">
-              No security anomalies detected. System posture is optimal.
+            <div className="p-8">
+              <EmptyState
+                icon={ShieldCheck}
+                title="No Security Incidents Detected"
+                description="Your organization's security posture is optimal. Access control, RLS policies, and anomaly detectors are actively monitoring."
+              />
             </div>
           ) : (
             securityEvents.map((evt) => (

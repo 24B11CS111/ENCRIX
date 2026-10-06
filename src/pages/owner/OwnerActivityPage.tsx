@@ -4,8 +4,9 @@ import { db } from '@/services/supabase/db';
 import { ActivityLog } from '@/types';
 import { SearchBar } from '@/components/common/SearchBar';
 import { Pagination } from '@/components/common/Pagination';
-import { formatDateTime, formatRelativeTime } from '@/lib/utils';
+import { formatDateTime } from '@/lib/utils';
 import { Activity, Shield, User, FileText, Phone, Key } from 'lucide-react';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const OwnerActivityPage: React.FC = () => {
   const { profile } = useAuth();
@@ -107,7 +108,22 @@ export const OwnerActivityPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#DCE4EE]">
-              {paginatedLogs.map((log) => (
+              {paginatedLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center">
+                    <EmptyState
+                      icon={Activity}
+                      title={logs.length === 0 ? "No Activity Logged Yet" : "No Activity Records Found"}
+                      description={
+                        logs.length === 0
+                          ? "Audit log events such as logins, lead assignments, calls, and updates will be recorded here in real-time."
+                          : "Try adjusting your search query or action filter."
+                      }
+                    />
+                  </td>
+                </tr>
+              ) : (
+                paginatedLogs.map((log) => (
                 <tr key={log.id} className="hover:bg-[#F6F8FB]/60 transition-colors">
                   <td className="py-3 px-4 text-[#64748B] font-mono text-[11px] whitespace-nowrap">
                     {formatDateTime(log.created_at)}
@@ -141,7 +157,7 @@ export const OwnerActivityPage: React.FC = () => {
                     {log.metadata ? JSON.stringify(log.metadata) : '—'}
                   </td>
                 </tr>
-              ))}
+              )))}
             </tbody>
           </table>
         </div>

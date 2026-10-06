@@ -9,10 +9,13 @@ import {
   SecurityEvent,
   Organization,
   LeadStatus,
+  UserRole,
+  LeadAssignment,
 } from '@/types';
 import { sanitizeLeadForRole, sanitizeLeadsForRole, maskPhoneNumber } from '@/lib/dataMasking';
 import { sanitizeFormulaInjection, sanitizeText } from '@/lib/validation';
-import { MAX_IMPORT_ROWS } from '@/lib/config';
+import { MAX_IMPORT_ROWS, IS_DEMO_MODE } from '@/lib/config';
+import { supabase, isRealSupabaseConfigured } from './client';
 import {
   DEMO_ORGS,
   DEMO_PROFILES,
@@ -39,26 +42,28 @@ interface SubscriptionEntry {
 }
 
 class LeadVaultDatabase {
-  private orgs: Organization[] = [...DEMO_ORGS];
-  private profiles: Profile[] = [...DEMO_PROFILES];
+  private orgs: Organization[] = [];
+  private profiles: Profile[] = [];
   // In-memory persistent master state (never dumped as raw unmasked leads into browser localStorage)
   private leads: Lead[] = [];
   private calls: Call[] = [];
   private outcomes: CallOutcome[] = [];
-  private followUps: FollowUp[] = [...DEMO_FOLLOWUPS];
-  private notifications: Notification[] = [...DEMO_NOTIFICATIONS];
-  private securityEvents: SecurityEvent[] = [...DEMO_SECURITY_EVENTS];
-  private activityLogs: ActivityLog[] = [...DEMO_ACTIVITY_LOGS];
+  private followUps: FollowUp[] = [];
+  private notifications: Notification[] = [];
+  private securityEvents: SecurityEvent[] = [];
+  private activityLogs: ActivityLog[] = [];
+  private leadAssignments: LeadAssignment[] = [];
 
   private subscriptions: Set<SubscriptionEntry> = new Set();
   private broadcastChannel: BroadcastChannel | null = null;
+  private supabaseChannels: Map<string, any> = new Map();
   private initialized = false;
 
   constructor() {
     this.init();
   }
 
-  private init() {
+  private init(forceDemo?: boolean) {
     if (this.initialized) return;
 
     // SECURITY COMPLIANCE (Section 12):
@@ -72,9 +77,31 @@ class LeadVaultDatabase {
       }
     }
 
-    // Seed in-memory demo datasets
-    this.leads = generateDemoLeads();
-    this.calls = generateDemoCalls(this.leads);
+    const shouldSeed = forceDemo ?? IS_DEMO_MODE;
+    if (shouldSeed) {
+      // Seed in-memory demo datasets only when in demo mode or explicitly requested
+      this.orgs = [...DEMO_ORGS];
+      this.profiles = [...DEMO_PROFILES];
+      this.leads = generateDemoLeads();
+      this.calls = generateDemoCalls(this.leads);
+      this.followUps = [...DEMO_FOLLOWUPS];
+      this.notifications = [...DEMO_NOTIFICATIONS];
+      this.securityEvents = [...DEMO_SECURITY_EVENTS];
+      this.activityLogs = [...DEMO_ACTIVITY_LOGS];
+      this.leadAssignments = [];
+    } else {
+      // Production / Staging: 100% clean state, zero fake data
+      this.orgs = [];
+      this.profiles = [];
+      this.leads = [];
+      this.calls = [];
+      this.outcomes = [];
+      this.followUps = [];
+      this.notifications = [];
+      this.securityEvents = [];
+      this.activityLogs = [];
+      this.leadAssignments = [];
+    }
 
     // Cross-tab real-time sync with tenant context
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -161,9 +188,66 @@ class LeadVaultDatabase {
   public subscribe(listener: RealtimeListener, userProfile?: Profile): () => void {
     const entry: SubscriptionEntry = { listener, profile: userProfile };
     this.subscriptions.add(entry);
+
+    // If real Supabase is configured and profile has organization_id, connect scoped Supabase Realtime channel
+    if (isRealSupabaseConfigured() && userProfile?.organization_id) {
+      const orgId = userProfile.organization_id;
+      if (!this.supabaseChannels.has(orgId)) {
+        try {
+          const channel = supabase
+            .channel(`encrix_org_${orgId}`)
+            .on(
+              'postgres_changes',
+              {
+                event: '*',
+                schema: 'public',
+                filter: `organization_id=eq.${orgId}`,
+              },
+              (payload) => {
+                this.notifyListeners({
+                  type:
+                    payload.eventType === 'INSERT'
+                      ? 'RECORD_INSERTED'
+                      : payload.eventType === 'UPDATE'
+                      ? 'RECORD_UPDATED'
+                      : 'RECORD_DELETED',
+                  payload,
+                  organization_id: orgId,
+                });
+              }
+            )
+            .subscribe();
+          this.supabaseChannels.set(orgId, channel);
+        } catch {
+          // Channel fallback
+        }
+      }
+    }
+
     return () => {
       this.subscriptions.delete(entry);
     };
+  }
+
+  /**
+   * Seed an isolated tenant for multi-tenant testing and staging
+   */
+  public seedTestTenant(org: Organization, tenantProfiles: Profile[], tenantLeads?: Lead[]) {
+    if (!this.orgs.some((o) => o.id === org.id)) {
+      this.orgs.push(org);
+    }
+    tenantProfiles.forEach((p) => {
+      if (!this.profiles.some((existing) => existing.id === p.id)) {
+        this.profiles.push(p);
+      }
+    });
+    if (tenantLeads) {
+      tenantLeads.forEach((l) => {
+        if (!this.leads.some((existing) => existing.id === l.id)) {
+          this.leads.push(l);
+        }
+      });
+    }
   }
 
   // ----------------------------------------------------
@@ -255,6 +339,41 @@ class LeadVaultDatabase {
     });
 
     this.emit('TEAM_UPDATED', newProfile, { organization_id: currentProfile.organization_id });
+    return newProfile;
+  }
+
+  public createProfile(
+    profileData: Partial<Profile> & { full_name: string; role: UserRole; organization_id: string },
+    currentProfile?: Profile
+  ): Profile {
+    if (currentProfile) {
+      this.ensureActive(currentProfile);
+      if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
+        throw new Error('Unauthorized: Only Owners or Admins can create user profiles.');
+      }
+    }
+
+    const newProfile: Profile = {
+      id: profileData.id || `prof-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 5)}`,
+      user_id: profileData.user_id || `user-${Date.now().toString(36)}`,
+      organization_id: profileData.organization_id,
+      full_name: sanitizeText(profileData.full_name),
+      phone: (profileData.phone || '').trim(),
+      role: profileData.role,
+      status: profileData.status || 'ACTIVE',
+      avatar_url:
+        profileData.avatar_url ||
+        `https://images.unsplash.com/photo-${1530000000000 + Math.floor(Math.random() * 100000)}?w=120&auto=format&fit=crop&q=80`,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      assigned_count: 0,
+      calls_today: 0,
+      positive_count: 0,
+      conversion_rate: 0,
+    };
+
+    this.profiles.push(newProfile);
+    this.emit('TEAM_UPDATED', newProfile, { organization_id: newProfile.organization_id });
     return newProfile;
   }
 
@@ -758,6 +877,17 @@ class LeadVaultDatabase {
       metadata: { count: updatedCount, assignedTo: telecaller.full_name },
     });
 
+    leadIds.forEach((leadId) => {
+      this.leadAssignments.push({
+        id: `asgn-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+        organization_id: currentProfile.organization_id,
+        lead_id: leadId,
+        user_id: telecallerId,
+        assigned_by: currentProfile.id,
+        assigned_at: new Date().toISOString(),
+      });
+    });
+
     this.emit('LEADS_ASSIGNED', { leadIds, telecallerId }, { organization_id: currentProfile.organization_id });
     return updatedCount;
   }
@@ -793,6 +923,15 @@ class LeadVaultDatabase {
         const assignedTc = activeTelecallerIds[index % activeTelecallerIds.length];
         distribution[assignedTc] = (distribution[assignedTc] || 0) + 1;
         index++;
+
+        this.leadAssignments.push({
+          id: `asgn-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+          organization_id: currentProfile.organization_id,
+          lead_id: lead.id,
+          user_id: assignedTc,
+          assigned_by: currentProfile.id,
+          assigned_at: new Date().toISOString(),
+        });
 
         return {
           ...lead,
@@ -835,6 +974,19 @@ class LeadVaultDatabase {
 
     this.emit('LEADS_ASSIGNED_ROUND_ROBIN', distribution, { organization_id: currentProfile.organization_id });
     return distribution;
+  }
+
+  public getLeadAssignments(currentProfile: Profile): LeadAssignment[] {
+    this.ensureActive(currentProfile);
+    if (currentProfile.role === 'ADMIN') {
+      return [...this.leadAssignments];
+    }
+    if (currentProfile.role === 'TELECALLER') {
+      return this.leadAssignments.filter(
+        (a) => a.organization_id === currentProfile.organization_id && a.user_id === currentProfile.id
+      );
+    }
+    return this.leadAssignments.filter((a) => a.organization_id === currentProfile.organization_id);
   }
 
   // ----------------------------------------------------
@@ -1389,10 +1541,10 @@ class LeadVaultDatabase {
     throw new Error('Security Violation: Security events are strictly immutable and cannot be modified.');
   }
 
-  // Reset sandbox back to clean demo data
-  public resetSandbox() {
+  // Reset sandbox back to clean state or demo data
+  public resetSandbox(forceDemo?: boolean) {
     this.initialized = false;
-    this.init();
+    this.init(forceDemo);
     this.emit('SANDBOX_RESET', {});
   }
 }

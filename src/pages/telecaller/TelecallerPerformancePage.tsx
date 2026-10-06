@@ -12,6 +12,7 @@ import {
   TrendingUp,
   Award,
 } from 'lucide-react';
+import { EmptyState } from '@/components/common/EmptyState';
 import {
   ResponsiveContainer,
   PieChart,
@@ -111,41 +112,49 @@ export const TelecallerPerformancePage: React.FC = () => {
       </div>
 
       {/* Outcome Breakdown Chart */}
-      <div className="p-5 rounded-[16px] bg-white border border-[#DCE4EE] shadow-sm space-y-4">
-        <h2 className="text-sm font-semibold text-[#0B1F3A]">Lead Outcomes Breakdown</h2>
-        <div className="h-52 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={pieData}
-                dataKey="value"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                innerRadius={50}
-                outerRadius={75}
-                paddingAngle={4}
-              >
-                {pieData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip
-                contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '8px', fontSize: '12px', color: '#172B4D', boxShadow: '0 4px 12px rgba(11,31,58,0.08)' }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
+      {totalCalls === 0 && totalAssigned === 0 ? (
+        <EmptyState
+          icon={TrendingUp}
+          title="No Performance Data Yet"
+          description="Your personal calling metrics, conversion rates, and outcome distribution will appear here once leads are assigned and calls are conducted."
+        />
+      ) : (
+        <div className="p-5 rounded-[16px] bg-white border border-[#DCE4EE] shadow-sm space-y-4">
+          <h2 className="text-sm font-semibold text-[#0B1F3A]">Lead Outcomes Breakdown</h2>
+          <div className="h-52 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={50}
+                  outerRadius={75}
+                  paddingAngle={4}
+                >
+                  {pieData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '8px', fontSize: '12px', color: '#172B4D', boxShadow: '0 4px 12px rgba(11,31,58,0.08)' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
 
-        <div className="flex items-center justify-center gap-6 text-xs pt-2 border-t border-[#DCE4EE]">
-          {pieData.map((item) => (
-            <div key={item.name} className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-              <span className="text-[#172B4D] font-medium">{item.name}: {item.value}</span>
-            </div>
-          ))}
+          <div className="flex items-center justify-center gap-6 text-xs pt-2 border-t border-[#DCE4EE]">
+            {pieData.map((item) => (
+              <div key={item.name} className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                <span className="text-[#172B4D] font-medium">{item.name}: {item.value}</span>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

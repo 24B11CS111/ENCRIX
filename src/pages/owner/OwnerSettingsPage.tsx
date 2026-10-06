@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 
 export const OwnerSettingsPage: React.FC = () => {
-  const { profile, organization } = useAuth();
+  const { profile, organization, isDemoMode } = useAuth();
   const [provider, setProvider] = useState('MOCK');
   const [consentPolicy, setConsentPolicy] = useState(true);
   const [savedNotice, setSavedNotice] = useState(false);
@@ -116,14 +116,18 @@ export const OwnerSettingsPage: React.FC = () => {
 
         {/* Actions */}
         <div className="flex items-center justify-between pt-2">
-          <button
-            type="button"
-            onClick={handleResetSandbox}
-            className="flex items-center gap-1.5 px-3 py-2 text-[#C53030] hover:bg-rose-50 rounded-[10px] text-xs font-medium border border-rose-200 transition-colors shadow-sm"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Demo Sandbox</span>
-          </button>
+          {isDemoMode ? (
+            <button
+              type="button"
+              onClick={handleResetSandbox}
+              className="flex items-center gap-1.5 px-3 py-2 text-[#C53030] hover:bg-rose-50 rounded-[10px] text-xs font-medium border border-rose-200 transition-colors shadow-sm"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Demo Sandbox</span>
+            </button>
+          ) : (
+            <div />
+          )}
 
           <button
             type="submit"

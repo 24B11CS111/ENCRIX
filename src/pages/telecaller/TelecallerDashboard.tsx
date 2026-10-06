@@ -19,6 +19,7 @@ import {
   Shield,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const TelecallerDashboard: React.FC = () => {
   const { profile } = useAuth();
@@ -171,64 +172,72 @@ export const TelecallerDashboard: React.FC = () => {
         </div>
 
         {/* Lead Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-          {assignedLeads.slice(0, 8).map((lead) => (
-            <div
-              key={lead.id}
-              className="p-4 rounded-[12px] border border-[#DCE4EE] bg-white hover:border-[#1E4D8F] shadow-card transition-all flex flex-col justify-between space-y-3"
-            >
-              <div>
-                <div className="flex items-center justify-between gap-2 mb-1.5">
-                  <span className="font-mono text-xs font-bold text-[#1E4D8F]">
-                    {lead.lead_code}
+        {assignedLeads.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title="No Leads Assigned Yet"
+            description="Leads assigned to you by your team manager will appear here in real-time ready to call."
+          />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            {assignedLeads.slice(0, 8).map((lead) => (
+              <div
+                key={lead.id}
+                className="p-4 rounded-[12px] border border-[#DCE4EE] bg-white hover:border-[#1E4D8F] shadow-card transition-all flex flex-col justify-between space-y-3"
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <span className="font-mono text-xs font-bold text-[#1E4D8F]">
+                      {lead.lead_code}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <PriorityBadge priority={lead.priority} />
+                      <StatusBadge status={lead.status} />
+                    </div>
+                  </div>
+
+                  {/* Masked Name & Phone */}
+                  <h3 className="text-base font-bold text-[#0B1F3A] tracking-tight">{lead.name}</h3>
+                  <div className="flex items-center gap-3 text-xs text-[#64748B] font-mono mt-1">
+                    <span>{lead.phone}</span>
+                    <span className="text-[#DCE4EE]">•</span>
+                    <span>{lead.source}</span>
+                  </div>
+
+                  {lead.notes && (
+                    <p className="text-xs text-[#172B4D] line-clamp-2 mt-2 bg-[#F6F8FB] p-2.5 rounded-[8px] border border-[#DCE4EE]">
+                      {lead.notes}
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between pt-3 border-t border-[#DCE4EE]">
+                  <span className="text-[11px] text-[#64748B]">
+                    Last: {formatRelativeTime(lead.last_contacted_at || undefined)}
                   </span>
-                  <div className="flex items-center gap-1.5">
-                    <PriorityBadge priority={lead.priority} />
-                    <StatusBadge status={lead.status} />
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setDrawerLead(lead)}
+                      className="p-2 rounded-[8px] bg-white border border-[#DCE4EE] hover:bg-[#F6F8FB] text-[#172B4D] text-xs transition-colors shadow-subtle"
+                      title="View Lead Details"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      onClick={() => setCallingLead(lead)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white text-xs font-semibold rounded-[8px] shadow-subtle transition-all"
+                    >
+                      <Phone className="w-3.5 h-3.5" />
+                      <span>Call Now</span>
+                    </button>
                   </div>
                 </div>
-
-                {/* Masked Name & Phone */}
-                <h3 className="text-base font-bold text-[#0B1F3A] tracking-tight">{lead.name}</h3>
-                <div className="flex items-center gap-3 text-xs text-[#64748B] font-mono mt-1">
-                  <span>{lead.phone}</span>
-                  <span className="text-[#DCE4EE]">•</span>
-                  <span>{lead.source}</span>
-                </div>
-
-                {lead.notes && (
-                  <p className="text-xs text-[#172B4D] line-clamp-2 mt-2 bg-[#F6F8FB] p-2.5 rounded-[8px] border border-[#DCE4EE]">
-                    {lead.notes}
-                  </p>
-                )}
               </div>
-
-              <div className="flex items-center justify-between pt-3 border-t border-[#DCE4EE]">
-                <span className="text-[11px] text-[#64748B]">
-                  Last: {formatRelativeTime(lead.last_contacted_at || undefined)}
-                </span>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setDrawerLead(lead)}
-                    className="p-2 rounded-[8px] bg-white border border-[#DCE4EE] hover:bg-[#F6F8FB] text-[#172B4D] text-xs transition-colors shadow-subtle"
-                    title="View Lead Details"
-                  >
-                    <Eye className="w-4 h-4" />
-                  </button>
-
-                  <button
-                    onClick={() => setCallingLead(lead)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white text-xs font-semibold rounded-[8px] shadow-subtle transition-all"
-                  >
-                    <Phone className="w-3.5 h-3.5" />
-                    <span>Call Now</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ACTIVE CALL MODAL */}

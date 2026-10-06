@@ -4,6 +4,7 @@ import { db } from '@/services/supabase/db';
 import { SecurityEvent } from '@/types';
 import { formatDateTime, formatRelativeTime } from '@/lib/utils';
 import { ShieldAlert, ShieldCheck } from 'lucide-react';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const AdminSecurityPage: React.FC = () => {
   const { profile } = useAuth();
@@ -24,7 +25,16 @@ export const AdminSecurityPage: React.FC = () => {
       </div>
 
       <div className="rounded-[12px] border border-[#DCE4EE] bg-white overflow-hidden divide-y divide-[#DCE4EE] shadow-sm">
-        {events.map((evt) => (
+        {events.length === 0 ? (
+          <div className="p-8">
+            <EmptyState
+              icon={ShieldCheck}
+              title="No Security Incidents Detected"
+              description="Platform-wide threat monitoring and anomaly detection report zero incidents."
+            />
+          </div>
+        ) : (
+          events.map((evt) => (
           <div key={evt.id} className="p-4 hover:bg-[#F6F8FB]/60 transition-colors space-y-1 text-xs">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -44,7 +54,7 @@ export const AdminSecurityPage: React.FC = () => {
             </div>
             <p className="text-[#64748B]">{evt.description}</p>
           </div>
-        ))}
+        )))}
       </div>
     </div>
   );

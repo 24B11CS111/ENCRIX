@@ -14,6 +14,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const AdminDashboard: React.FC = () => {
   const { profile } = useAuth();
@@ -125,46 +126,58 @@ export const AdminDashboard: React.FC = () => {
         </div>
 
         <div className="divide-y divide-[#DCE4EE]">
-          {orgs.map((org) => {
-            const orgLeads = leads.filter((l) => l.organization_id === org.id).length;
-            const orgUsers = users.filter((u) => u.organization_id === org.id).length;
-            const orgCalls = calls.filter((c) => c.organization_id === org.id).length;
+          {orgs.length === 0 ? (
+            <div className="p-8">
+              <EmptyState
+                icon={Building2}
+                title="No Organizations Registered"
+                description="Tenant organizations provisioned on the platform will appear here with tenant isolation telemetry."
+                actionText="Manage Organizations"
+                onAction={() => navigate('/admin/organizations')}
+              />
+            </div>
+          ) : (
+            orgs.map((org) => {
+              const orgLeads = leads.filter((l) => l.organization_id === org.id).length;
+              const orgUsers = users.filter((u) => u.organization_id === org.id).length;
+              const orgCalls = calls.filter((c) => c.organization_id === org.id).length;
 
-            return (
-              <div key={org.id} className="p-4 flex items-center justify-between hover:bg-[#F6F8FB]/60 text-xs transition-colors">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-[8px] bg-[#EAF2FB] border border-blue-200 text-[#1E4D8F] flex items-center justify-center">
-                    <Building2 className="w-4 h-4" />
+              return (
+                <div key={org.id} className="p-4 flex items-center justify-between hover:bg-[#F6F8FB]/60 text-xs transition-colors">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#EAF2FB] border border-blue-200 text-[#1E4D8F] flex items-center justify-center">
+                      <Building2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="font-bold text-[#0B1F3A] text-sm">{org.name}</div>
+                      <div className="text-[#64748B] text-[11px]">
+                        Industry: {org.industry} • Tenant ID: <span className="font-mono text-[#172B4D]">{org.id}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="font-bold text-[#0B1F3A] text-sm">{org.name}</div>
-                    <div className="text-[#64748B] text-[11px]">
-                      Industry: {org.industry} • Tenant ID: <span className="font-mono text-[#172B4D]">{org.id}</span>
+
+                  <div className="flex items-center gap-6 text-[#172B4D]">
+                    <div>
+                      <span className="text-[#64748B] block text-[10px]">Users</span>
+                      <span className="font-bold text-[#0B1F3A]">{orgUsers}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#64748B] block text-[10px]">Leads</span>
+                      <span className="font-bold text-[#0B1F3A]">{orgLeads}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#64748B] block text-[10px]">Calls</span>
+                      <span className="font-bold text-[#0B1F3A]">{orgCalls}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#64748B] block text-[10px]">Status</span>
+                      <span className="text-[#16845B] font-semibold">{org.status}</span>
                     </div>
                   </div>
                 </div>
-
-                <div className="flex items-center gap-6 text-[#172B4D]">
-                  <div>
-                    <span className="text-[#64748B] block text-[10px]">Users</span>
-                    <span className="font-bold text-[#0B1F3A]">{orgUsers}</span>
-                  </div>
-                  <div>
-                    <span className="text-[#64748B] block text-[10px]">Leads</span>
-                    <span className="font-bold text-[#0B1F3A]">{orgLeads}</span>
-                  </div>
-                  <div>
-                    <span className="text-[#64748B] block text-[10px]">Calls</span>
-                    <span className="font-bold text-[#0B1F3A]">{orgCalls}</span>
-                  </div>
-                  <div>
-                    <span className="text-[#64748B] block text-[10px]">Status</span>
-                    <span className="text-[#16845B] font-semibold">{org.status}</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </div>
     </div>

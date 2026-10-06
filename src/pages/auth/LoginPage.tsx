@@ -13,11 +13,11 @@ import {
 } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
-  const { login, quickLogin } = useAuth();
+  const { login, quickLogin, isDemoMode } = useAuth();
   const navigate = useNavigate();
 
-  const [email, setEmail] = useState('owner@vertex.com');
-  const [password, setPassword] = useState('Password123!');
+  const [email, setEmail] = useState(isDemoMode ? 'owner@vertex.com' : '');
+  const [password, setPassword] = useState(isDemoMode ? 'Password123!' : '');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -118,63 +118,65 @@ export const LoginPage: React.FC = () => {
             </button>
           </form>
 
-          {/* Quick Demo Logins for instant evaluation */}
-          <div className="pt-4 border-t border-[#DCE4EE]">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#64748B] uppercase tracking-wider mb-2.5">
-              <Sparkles className="w-3.5 h-3.5 text-[#1E4D8F]" />
-              <span>1-Click Evaluator Login</span>
+          {/* Quick Demo Logins for instant evaluation - strictly hidden in production */}
+          {isDemoMode && (
+            <div className="pt-4 border-t border-[#DCE4EE]">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-[#64748B] uppercase tracking-wider mb-2.5">
+                <Sparkles className="w-3.5 h-3.5 text-[#1E4D8F]" />
+                <span>1-Click Evaluator Login</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleQuickLogin('owner')}
+                  className="p-2.5 rounded-[8px] bg-[#F6F8FB] hover:bg-[#EAF2FB] border border-[#DCE4EE] hover:border-[#1E4D8F] text-left transition-colors"
+                >
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-[#0B1F3A]">
+                    <Building className="w-3.5 h-3.5 text-[#1E4D8F]" />
+                    <span>Owner</span>
+                  </div>
+                  <div className="text-[10px] text-[#64748B] truncate">Vertex Consultancy</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleQuickLogin('telecaller')}
+                  className="p-2.5 rounded-[8px] bg-[#F6F8FB] hover:bg-[#EAF2FB] border border-[#DCE4EE] hover:border-[#1E4D8F] text-left transition-colors"
+                >
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-[#0B1F3A]">
+                    <Headphones className="w-3.5 h-3.5 text-[#1E4D8F]" />
+                    <span>Telecaller</span>
+                  </div>
+                  <div className="text-[10px] text-[#64748B] truncate">Arjun Kumar</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleQuickLogin('admin')}
+                  className="p-2.5 rounded-[8px] bg-[#F6F8FB] hover:bg-[#EAF2FB] border border-[#DCE4EE] hover:border-[#1E4D8F] text-left transition-colors"
+                >
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-[#0B1F3A]">
+                    <Server className="w-3.5 h-3.5 text-[#1E4D8F]" />
+                    <span>Super Admin</span>
+                  </div>
+                  <div className="text-[10px] text-[#64748B] truncate">Platform Overview</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleQuickLogin('prime_owner')}
+                  className="p-2.5 rounded-[8px] bg-[#F6F8FB] hover:bg-[#EAF2FB] border border-[#DCE4EE] hover:border-[#B7791F] text-left transition-colors"
+                >
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-[#B7791F]">
+                    <Building className="w-3.5 h-3.5 text-[#B7791F]" />
+                    <span>Tenant B Owner</span>
+                  </div>
+                  <div className="text-[10px] text-[#64748B] truncate">Prime Careers</div>
+                </button>
+              </div>
             </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('owner')}
-                className="p-2.5 rounded-[8px] bg-[#F6F8FB] hover:bg-[#EAF2FB] border border-[#DCE4EE] hover:border-[#1E4D8F] text-left transition-colors"
-              >
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#0B1F3A]">
-                  <Building className="w-3.5 h-3.5 text-[#1E4D8F]" />
-                  <span>Owner</span>
-                </div>
-                <div className="text-[10px] text-[#64748B] truncate">Vertex Consultancy</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('telecaller')}
-                className="p-2.5 rounded-[8px] bg-[#F6F8FB] hover:bg-[#EAF2FB] border border-[#DCE4EE] hover:border-[#1E4D8F] text-left transition-colors"
-              >
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#0B1F3A]">
-                  <Headphones className="w-3.5 h-3.5 text-[#1E4D8F]" />
-                  <span>Telecaller</span>
-                </div>
-                <div className="text-[10px] text-[#64748B] truncate">Arjun Kumar</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('admin')}
-                className="p-2.5 rounded-[8px] bg-[#F6F8FB] hover:bg-[#EAF2FB] border border-[#DCE4EE] hover:border-[#1E4D8F] text-left transition-colors"
-              >
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#0B1F3A]">
-                  <Server className="w-3.5 h-3.5 text-[#1E4D8F]" />
-                  <span>Super Admin</span>
-                </div>
-                <div className="text-[10px] text-[#64748B] truncate">Platform Overview</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('prime_owner')}
-                className="p-2.5 rounded-[8px] bg-[#F6F8FB] hover:bg-[#EAF2FB] border border-[#DCE4EE] hover:border-[#B7791F] text-left transition-colors"
-              >
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#B7791F]">
-                  <Building className="w-3.5 h-3.5 text-[#B7791F]" />
-                  <span>Tenant B Owner</span>
-                </div>
-                <div className="text-[10px] text-[#64748B] truncate">Prime Careers</div>
-              </button>
-            </div>
-          </div>
+          )}
 
           <div className="text-center pt-2">
             <span className="text-xs text-[#64748B]">Need a new organization workspace? </span>

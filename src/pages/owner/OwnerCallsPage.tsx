@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   Headphones,
 } from 'lucide-react';
+import { EmptyState } from '@/components/common/EmptyState';
 
 export const OwnerCallsPage: React.FC = () => {
   const { profile } = useAuth();
@@ -144,8 +145,16 @@ export const OwnerCallsPage: React.FC = () => {
             <tbody className="divide-y divide-[#DCE4EE]">
               {paginatedCalls.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-[#64748B]">
-                    No call records found matching criteria.
+                  <td colSpan={7} className="py-12 text-center">
+                    <EmptyState
+                      icon={PhoneCall}
+                      title={calls.length === 0 ? 'No call records yet' : 'No calls matching filters'}
+                      description={
+                        calls.length === 0
+                          ? 'Calls placed by telecallers will appear here in real-time with durations, outcomes, and audit logs.'
+                          : 'Try adjusting your search criteria or telecaller and outcome filters.'
+                      }
+                    />
                   </td>
                 </tr>
               ) : (
