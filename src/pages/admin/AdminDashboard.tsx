@@ -42,21 +42,21 @@ export const AdminDashboard: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#DCE4EE] pb-5">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-white tracking-tight">Platform Administration</h1>
-            <span className="text-[11px] font-semibold text-purple-400 bg-purple-950/60 border border-purple-500/30 px-2 py-0.5 rounded-full">
+            <h1 className="text-xl font-bold text-[#0B1F3A] tracking-tight">Platform Administration</h1>
+            <span className="text-[11px] font-semibold text-[#1E4D8F] bg-[#EAF2FB] border border-blue-200 px-2.5 py-0.5 rounded-full">
               Super Admin
             </span>
           </div>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-[#64748B] mt-1">
             Global tenant governance, multi-organization security telemetry and system health.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-400 text-xs">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] bg-emerald-50 border border-emerald-200 text-[#16845B] text-xs font-medium shadow-sm">
             <Server className="w-3.5 h-3.5" />
             <span>Database: Connected (0.8ms)</span>
           </div>
@@ -65,101 +65,101 @@ export const AdminDashboard: React.FC = () => {
 
       {/* METRIC STRIP (Section 7) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <div className="text-[11px] text-slate-400 font-medium mb-1">Organizations</div>
-          <div className="text-2xl font-bold text-white">{orgs.length}</div>
-          <span className="text-[10px] text-emerald-400">{activeOrgs} active</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <div className="text-[11px] text-[#64748B] font-medium mb-1">Organizations</div>
+          <div className="text-2xl font-bold text-[#0B1F3A]">{orgs.length}</div>
+          <span className="text-[10px] text-[#16845B] font-medium">{activeOrgs} active</span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <div className="text-[11px] text-slate-400 font-medium mb-1">Owners</div>
-          <div className="text-2xl font-bold text-sky-400">{owners}</div>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <div className="text-[11px] text-[#64748B] font-medium mb-1">Owners</div>
+          <div className="text-2xl font-bold text-[#1E4D8F]">{owners}</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <div className="text-[11px] text-slate-400 font-medium mb-1">Telecallers</div>
-          <div className="text-2xl font-bold text-emerald-400">{telecallers}</div>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <div className="text-[11px] text-[#64748B] font-medium mb-1">Telecallers</div>
+          <div className="text-2xl font-bold text-[#16845B]">{telecallers}</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <div className="text-[11px] text-slate-400 font-medium mb-1">Total Leads</div>
-          <div className="text-2xl font-bold text-white">{leads.length}</div>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <div className="text-[11px] text-[#64748B] font-medium mb-1">Total Leads</div>
+          <div className="text-2xl font-bold text-[#0B1F3A]">{leads.length}</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <div className="text-[11px] text-slate-400 font-medium mb-1">Total Calls</div>
-          <div className="text-2xl font-bold text-purple-400">{calls.length}</div>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <div className="text-[11px] text-[#64748B] font-medium mb-1">Total Calls</div>
+          <div className="text-2xl font-bold text-[#1E4D8F]">{calls.length}</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <div className="text-[11px] text-slate-400 font-medium mb-1">Security Alerts</div>
-          <div className="text-2xl font-bold text-rose-400">{securityEvents.length}</div>
-          <span className="text-[10px] text-rose-400 font-semibold">{criticalSecEvents} critical</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <div className="text-[11px] text-[#64748B] font-medium mb-1">Security Alerts</div>
+          <div className="text-2xl font-bold text-[#C53030]">{securityEvents.length}</div>
+          <span className="text-[10px] text-[#C53030] font-semibold">{criticalSecEvents} critical</span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <div className="text-[11px] text-slate-400 font-medium mb-1">System Health</div>
-          <div className="text-xl font-bold text-emerald-400">99.98%</div>
-          <span className="text-[10px] text-slate-400">All services ok</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <div className="text-[11px] text-[#64748B] font-medium mb-1">System Health</div>
+          <div className="text-xl font-bold text-[#16845B]">99.98%</div>
+          <span className="text-[10px] text-[#64748B]">All services ok</span>
         </div>
       </div>
 
       {/* ORGANIZATIONS BREAKDOWN */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+      <div className="rounded-[12px] border border-[#DCE4EE] bg-white overflow-hidden shadow-sm">
+        <div className="p-4 border-b border-[#DCE4EE] flex items-center justify-between bg-[#F6F8FB]/50">
           <div>
-            <h2 className="text-xs font-semibold text-white uppercase tracking-wider">
+            <h2 className="text-xs font-semibold text-[#0B1F3A] uppercase tracking-wider">
               Registered Organizations & Tenant Isolations
             </h2>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-[11px] text-[#64748B]">
               Each organization operates in strict PostgreSQL RLS quarantine.
             </p>
           </div>
           <button
             onClick={() => navigate('/admin/organizations')}
-            className="text-xs text-emerald-400 hover:text-emerald-300 font-medium flex items-center gap-1"
+            className="text-xs text-[#1E4D8F] hover:text-[#0B1F3A] font-semibold flex items-center gap-1 transition-colors"
           >
             <span>Manage Orgs</span>
             <ArrowUpRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        <div className="divide-y divide-slate-800/60">
+        <div className="divide-y divide-[#DCE4EE]">
           {orgs.map((org) => {
             const orgLeads = leads.filter((l) => l.organization_id === org.id).length;
             const orgUsers = users.filter((u) => u.organization_id === org.id).length;
             const orgCalls = calls.filter((c) => c.organization_id === org.id).length;
 
             return (
-              <div key={org.id} className="p-4 flex items-center justify-between hover:bg-slate-800/40 text-xs">
+              <div key={org.id} className="p-4 flex items-center justify-between hover:bg-[#F6F8FB]/60 text-xs transition-colors">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-[8px] bg-[#EAF2FB] border border-blue-200 text-[#1E4D8F] flex items-center justify-center">
                     <Building2 className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="font-bold text-white text-sm">{org.name}</div>
-                    <div className="text-slate-400 text-[11px]">
-                      Industry: {org.industry} • Tenant ID: <span className="font-mono">{org.id}</span>
+                    <div className="font-bold text-[#0B1F3A] text-sm">{org.name}</div>
+                    <div className="text-[#64748B] text-[11px]">
+                      Industry: {org.industry} • Tenant ID: <span className="font-mono text-[#172B4D]">{org.id}</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-6 text-slate-300">
+                <div className="flex items-center gap-6 text-[#172B4D]">
                   <div>
-                    <span className="text-slate-500 block text-[10px]">Users</span>
-                    <span className="font-bold text-white">{orgUsers}</span>
+                    <span className="text-[#64748B] block text-[10px]">Users</span>
+                    <span className="font-bold text-[#0B1F3A]">{orgUsers}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 block text-[10px]">Leads</span>
-                    <span className="font-bold text-white">{orgLeads}</span>
+                    <span className="text-[#64748B] block text-[10px]">Leads</span>
+                    <span className="font-bold text-[#0B1F3A]">{orgLeads}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 block text-[10px]">Calls</span>
-                    <span className="font-bold text-white">{orgCalls}</span>
+                    <span className="text-[#64748B] block text-[10px]">Calls</span>
+                    <span className="font-bold text-[#0B1F3A]">{orgCalls}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 block text-[10px]">Status</span>
-                    <span className="text-emerald-400 font-semibold">{org.status}</span>
+                    <span className="text-[#64748B] block text-[10px]">Status</span>
+                    <span className="text-[#16845B] font-semibold">{org.status}</span>
                   </div>
                 </div>
               </div>

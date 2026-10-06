@@ -6,7 +6,7 @@ import { MobileNav } from './MobileNav';
 
 export const AppLayout: React.FC = () => {
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500/30 selection:text-emerald-200">
+    <div className="min-h-screen bg-[#F6F8FB] text-[#172B4D] flex flex-col font-sans selection:bg-[#EAF2FB] selection:text-[#0B1F3A]">
       <Navbar />
       <div className="flex-1 flex overflow-hidden">
         <Sidebar />

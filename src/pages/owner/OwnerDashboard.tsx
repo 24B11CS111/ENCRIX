@@ -1,25 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
-import { Lead, Call, FollowUp, Profile } from '@/types';
+import { Lead, Call, FollowUp, Profile, SecurityEvent } from '@/types';
 import {
   Users,
   UserCheck,
-  UserX,
   PhoneCall,
-  CheckCircle,
-  XCircle,
   Calendar,
   TrendingUp,
   ArrowUpRight,
   Upload,
-  Plus,
-  Headphones,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
-  AreaChart,
-  Area,
   XAxis,
   YAxis,
   Tooltip,
@@ -41,6 +35,7 @@ export const OwnerDashboard: React.FC = () => {
   const [calls, setCalls] = useState<Call[]>([]);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [telecallers, setTelecallers] = useState<Profile[]>([]);
+  const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([]);
 
   const loadData = () => {
     if (!profile) return;
@@ -48,12 +43,13 @@ export const OwnerDashboard: React.FC = () => {
     setCalls(db.getCalls(profile));
     setFollowUps(db.getFollowUps(profile));
     setTelecallers(db.getTelecallers(profile));
+    setSecurityEvents(db.getSecurityEvents(profile));
   };
 
   useEffect(() => {
     loadData();
 
-    // Supabase Realtime Subscription: updates dashboard immediately without page refresh!
+    // Supabase Realtime Subscription: updates dashboard immediately without page refresh
     const unsubscribe = db.subscribe(({ type }) => {
       if (
         type === 'LEAD_CREATED' ||
@@ -63,6 +59,7 @@ export const OwnerDashboard: React.FC = () => {
         type === 'CALL_RECORDED' ||
         type === 'CALL_OUTCOME_SAVED' ||
         type === 'FOLLOWUP_CREATED' ||
+        type === 'SECURITY_EVENT_RAISED' ||
         type === 'SANDBOX_RESET'
       ) {
         loadData();
@@ -72,7 +69,6 @@ export const OwnerDashboard: React.FC = () => {
     return () => unsubscribe();
   }, [profile]);
 
-  // Compute metrics specified in Section 8
   const totalLeads = leads.length;
   const assignedLeads = leads.filter((l) => l.assigned_to).length;
   const unassignedLeads = totalLeads - assignedLeads;
@@ -81,20 +77,19 @@ export const OwnerDashboard: React.FC = () => {
   const oneDayAgo = new Date(Date.now() - 86400000);
   const callsToday = calls.filter((c) => new Date(c.created_at) > oneDayAgo).length;
 
-  const positiveLeads = leads.filter(
+  const conversions = leads.filter(
     (l) => l.status === 'INTERESTED' || l.status === 'CONVERTED'
   ).length;
-  const negativeLeads = leads.filter((l) => l.status === 'NOT_INTERESTED').length;
   const activeFollowUps = followUps.filter((f) => f.status === 'PENDING').length;
-  const conversionRate = totalLeads > 0 ? Math.round((positiveLeads / totalLeads) * 100) : 0;
+  const securityCount = securityEvents.length;
 
   // Chart data: Outcome distribution
   const outcomeStats = [
-    { name: 'Interested', value: leads.filter((l) => l.status === 'INTERESTED').length, color: '#10b981' },
-    { name: 'Converted', value: leads.filter((l) => l.status === 'CONVERTED').length, color: '#059669' },
-    { name: 'Follow-Up', value: leads.filter((l) => l.status === 'FOLLOW_UP').length, color: '#f59e0b' },
-    { name: 'Contacted', value: leads.filter((l) => l.status === 'CONTACTED').length, color: '#3b82f6' },
-    { name: 'Not Interested', value: negativeLeads, color: '#64748b' },
+    { name: 'Interested', value: leads.filter((l) => l.status === 'INTERESTED').length, color: '#1E4D8F' },
+    { name: 'Converted', value: leads.filter((l) => l.status === 'CONVERTED').length, color: '#16845B' },
+    { name: 'Follow-Up', value: leads.filter((l) => l.status === 'FOLLOW_UP').length, color: '#B7791F' },
+    { name: 'Contacted', value: leads.filter((l) => l.status === 'CONTACTED').length, color: '#0B1F3A' },
+    { name: 'Not Interested', value: leads.filter((l) => l.status === 'NOT_INTERESTED').length, color: '#64748B' },
   ];
 
   // Chart data: Telecaller performance comparison
@@ -113,119 +108,103 @@ export const OwnerDashboard: React.FC = () => {
     };
   });
 
+  const firstName = profile?.full_name?.split(' ')[0] || 'Leader';
+
   return (
     <div className="space-y-6">
-      {/* Top Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+      {/* Top Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#DCE4EE] pb-5">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-white tracking-tight">Organization Overview</h1>
-            <span className="text-[11px] font-medium text-emerald-400 bg-emerald-950/60 border border-emerald-500/20 px-2 py-0.5 rounded-full">
-              Real-time Active
-            </span>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            {organization?.name} • Controlled data access, live calling telemetry & telecaller queue.
+          <h1 className="text-2xl font-bold text-[#0B1F3A] tracking-tight">
+            Good morning, {firstName}
+          </h1>
+          <p className="text-xs text-[#64748B] mt-1 font-medium">
+            Monitor your lead operations and team activity.
           </p>
         </div>
 
         <div className="flex items-center gap-2.5">
           <button
             onClick={() => navigate('/owner/import')}
-            className="flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg shadow-sm transition-all"
+            className="flex items-center gap-2 px-3.5 py-2 bg-[#0B1F3A] hover:bg-[#071A33] text-white text-xs font-semibold rounded-[10px] shadow-subtle transition-all"
           >
             <Upload className="w-3.5 h-3.5" />
             <span>Import Leads</span>
           </button>
           <button
             onClick={() => navigate('/owner/assignments')}
-            className="flex items-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 transition-colors"
+            className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-[#F6F8FB] text-[#0B1F3A] text-xs font-medium rounded-[10px] border border-[#DCE4EE] shadow-subtle transition-colors"
           >
-            <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <UserCheck className="w-3.5 h-3.5 text-[#1E4D8F]" />
             <span>Distribute Queue</span>
           </button>
         </div>
       </div>
 
-      {/* METRIC CARDS (Section 8 of spec) */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-        <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800">
-          <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-[11px] font-medium">Total Leads</span>
-            <Users className="w-3.5 h-3.5" />
+      {/* STATS CARDS (Section 6 of spec) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card">
+          <div className="flex items-center justify-between text-[#64748B] mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">TOTAL LEADS</span>
+            <Users className="w-4 h-4 text-[#1E4D8F]" />
           </div>
-          <div className="text-xl font-bold text-white tracking-tight">{totalLeads}</div>
+          <div className="text-2xl font-bold text-[#0B1F3A] tracking-tight">{totalLeads}</div>
+          <div className="text-[11px] text-[#64748B] mt-1 flex items-center gap-1">
+            <span>{assignedLeads} assigned</span>
+            <span>•</span>
+            <span>{unassignedLeads} unassigned</span>
+          </div>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800">
-          <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-[11px] font-medium">Assigned</span>
-            <UserCheck className="w-3.5 h-3.5 text-sky-400" />
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card">
+          <div className="flex items-center justify-between text-[#64748B] mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">ACTIVE CALLS</span>
+            <PhoneCall className="w-4 h-4 text-[#1E4D8F]" />
           </div>
-          <div className="text-xl font-bold text-sky-400 tracking-tight">{assignedLeads}</div>
+          <div className="text-2xl font-bold text-[#0B1F3A] tracking-tight">{callsToday}</div>
+          <div className="text-[11px] text-[#16845B] mt-1">Logged within last 24h</div>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800">
-          <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-[11px] font-medium">Unassigned</span>
-            <UserX className="w-3.5 h-3.5 text-amber-400" />
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card">
+          <div className="flex items-center justify-between text-[#64748B] mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">FOLLOW-UPS</span>
+            <Calendar className="w-4 h-4 text-[#1E4D8F]" />
           </div>
-          <div className="text-xl font-bold text-amber-400 tracking-tight">{unassignedLeads}</div>
+          <div className="text-2xl font-bold text-[#0B1F3A] tracking-tight">{activeFollowUps}</div>
+          <div className="text-[11px] text-[#B7791F] mt-1">Pending callbacks</div>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800">
-          <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-[11px] font-medium">Calls Today</span>
-            <PhoneCall className="w-3.5 h-3.5 text-purple-400" />
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card">
+          <div className="flex items-center justify-between text-[#64748B] mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">CONVERSIONS</span>
+            <TrendingUp className="w-4 h-4 text-[#16845B]" />
           </div>
-          <div className="text-xl font-bold text-purple-400 tracking-tight">{callsToday}</div>
+          <div className="text-2xl font-bold text-[#0B1F3A] tracking-tight">{conversions}</div>
+          <div className="text-[11px] text-[#16845B] mt-1">Interested & converted</div>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800">
-          <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-[11px] font-medium">Positive</span>
-            <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card col-span-2 sm:col-span-1">
+          <div className="flex items-center justify-between text-[#64748B] mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">SECURITY EVENTS</span>
+            <ShieldAlert className="w-4 h-4 text-[#1E4D8F]" />
           </div>
-          <div className="text-xl font-bold text-emerald-400 tracking-tight">{positiveLeads}</div>
-        </div>
-
-        <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800">
-          <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-[11px] font-medium">Negative</span>
-            <XCircle className="w-3.5 h-3.5 text-slate-500" />
-          </div>
-          <div className="text-xl font-bold text-slate-400 tracking-tight">{negativeLeads}</div>
-        </div>
-
-        <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800">
-          <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-[11px] font-medium">Follow-ups</span>
-            <Calendar className="w-3.5 h-3.5 text-amber-400" />
-          </div>
-          <div className="text-xl font-bold text-amber-400 tracking-tight">{activeFollowUps}</div>
-        </div>
-
-        <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800">
-          <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-[11px] font-medium">Conversion</span>
-            <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-          </div>
-          <div className="text-xl font-bold text-white tracking-tight">{conversionRate}%</div>
+          <div className="text-2xl font-bold text-[#0B1F3A] tracking-tight">{securityCount}</div>
+          <div className="text-[11px] text-[#16845B] mt-1">Protected by RLS</div>
         </div>
       </div>
 
       {/* CHARTS SECTION */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Telecaller Activity Comparison */}
-        <div className="lg:col-span-2 p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+        <div className="lg:col-span-2 p-5 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-sm font-semibold text-white">Telecaller Performance & Queue</h2>
-              <p className="text-[11px] text-slate-400">Assigned leads, calls logged & positive outcomes</p>
+              <h2 className="text-sm font-semibold text-[#0B1F3A]">Telecaller Performance & Queue</h2>
+              <p className="text-[11px] text-[#64748B]">Assigned leads, calls logged & positive outcomes</p>
             </div>
             <button
               onClick={() => navigate('/owner/team')}
-              className="text-xs text-emerald-400 hover:text-emerald-300 font-medium flex items-center gap-1"
+              className="text-xs text-[#1E4D8F] hover:text-[#0B1F3A] font-semibold flex items-center gap-1"
             >
               <span>Manage Team</span>
               <ArrowUpRight className="w-3.5 h-3.5" />
@@ -235,24 +214,24 @@ export const OwnerDashboard: React.FC = () => {
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={telecallerData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <XAxis dataKey="name" stroke="#64748b" fontSize={11} tickLine={false} />
-                <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
+                <XAxis dataKey="name" stroke="#64748B" fontSize={11} tickLine={false} />
+                <YAxis stroke="#64748B" fontSize={11} tickLine={false} />
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px' }}
+                  contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '10px', fontSize: '12px', boxShadow: '0 4px 16px rgba(11, 31, 58, 0.08)', color: '#172B4D' }}
                 />
-                <Bar dataKey="assigned" fill="#38bdf8" name="Assigned" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="calls" fill="#a855f7" name="Calls" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="positive" fill="#10b981" name="Positive" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="assigned" fill="#0B1F3A" name="Assigned" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="calls" fill="#1E4D8F" name="Calls" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="positive" fill="#16845B" name="Positive" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
         {/* Lead Outcome Distribution */}
-        <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
+        <div className="p-5 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card flex flex-col justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-white">Lead Pipeline Funnel</h2>
-            <p className="text-[11px] text-slate-400">Status breakdown across active database</p>
+            <h2 className="text-sm font-semibold text-[#0B1F3A]">Lead Pipeline Funnel</h2>
+            <p className="text-[11px] text-[#64748B]">Status breakdown across active database</p>
           </div>
 
           <div className="h-44 w-full my-auto">
@@ -273,20 +252,20 @@ export const OwnerDashboard: React.FC = () => {
                   ))}
                 </Pie>
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px' }}
+                  contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '10px', fontSize: '12px', boxShadow: '0 4px 16px rgba(11, 31, 58, 0.08)', color: '#172B4D' }}
                 />
               </PieChart>
             </ResponsiveContainer>
           </div>
 
-          <div className="space-y-1.5 pt-2 border-t border-slate-800/80">
+          <div className="space-y-1.5 pt-2 border-t border-[#DCE4EE]">
             {outcomeStats.slice(0, 4).map((item) => (
               <div key={item.name} className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                  <span className="text-slate-300">{item.name}</span>
+                  <span className="text-[#172B4D]">{item.name}</span>
                 </div>
-                <span className="font-semibold text-white">{item.value}</span>
+                <span className="font-semibold text-[#0B1F3A]">{item.value}</span>
               </div>
             ))}
           </div>
@@ -296,26 +275,26 @@ export const OwnerDashboard: React.FC = () => {
       {/* RECENT LEADS & RECENT CALLS GRID */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Recent Leads */}
-        <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+        <div className="p-5 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white">Recent Ingested Leads</h3>
+            <h3 className="text-sm font-semibold text-[#0B1F3A]">Recent Ingested Leads</h3>
             <button
               onClick={() => navigate('/owner/leads')}
-              className="text-xs text-emerald-400 hover:text-emerald-300 font-medium"
+              className="text-xs text-[#1E4D8F] hover:text-[#0B1F3A] font-semibold"
             >
               View All ({leads.length})
             </button>
           </div>
 
-          <div className="divide-y divide-slate-800/60">
+          <div className="divide-y divide-[#DCE4EE]">
             {leads.slice(0, 5).map((lead) => (
               <div key={lead.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono font-semibold text-white">{lead.lead_code}</span>
-                    <span className="text-slate-300 font-medium">{lead.name}</span>
+                    <span className="font-mono font-semibold text-[#0B1F3A]">{lead.lead_code}</span>
+                    <span className="text-[#172B4D] font-medium">{lead.name}</span>
                   </div>
-                  <div className="text-[11px] text-slate-500 font-mono mt-0.5">{lead.phone} • {lead.source}</div>
+                  <div className="text-[11px] text-[#64748B] font-mono mt-0.5">{lead.phone} • {lead.source}</div>
                 </div>
                 <StatusBadge status={lead.status} />
               </div>
@@ -324,34 +303,34 @@ export const OwnerDashboard: React.FC = () => {
         </div>
 
         {/* Live Call Activity */}
-        <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+        <div className="p-5 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white">Live Call Feed</h3>
+            <h3 className="text-sm font-semibold text-[#0B1F3A]">Live Call Feed</h3>
             <button
               onClick={() => navigate('/owner/calls')}
-              className="text-xs text-emerald-400 hover:text-emerald-300 font-medium"
+              className="text-xs text-[#1E4D8F] hover:text-[#0B1F3A] font-semibold"
             >
               All Calls ({calls.length})
             </button>
           </div>
 
-          <div className="divide-y divide-slate-800/60">
+          <div className="divide-y divide-[#DCE4EE]">
             {calls.slice(0, 5).map((call) => (
               <div key={call.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <div className="w-7 h-7 rounded-full bg-[#EAF2FB] border border-[#C7DCF3] flex items-center justify-center text-[#1E4D8F]">
                     <PhoneCall className="w-3.5 h-3.5" />
                   </div>
                   <div>
-                    <div className="text-white font-medium">
+                    <div className="text-[#0B1F3A] font-medium">
                       {call.telecaller_name || 'Telecaller'} called {call.lead_name || 'Customer'}
                     </div>
-                    <div className="text-[11px] text-slate-500">
+                    <div className="text-[11px] text-[#64748B]">
                       Duration: {Math.floor(call.duration_seconds / 60)}m {call.duration_seconds % 60}s • {call.outcome || 'Logged'}
                     </div>
                   </div>
                 </div>
-                <span className="text-[10px] text-slate-500 whitespace-nowrap">
+                <span className="text-[10px] text-[#94A3B8] whitespace-nowrap">
                   {formatRelativeTime(call.created_at)}
                 </span>
               </div>

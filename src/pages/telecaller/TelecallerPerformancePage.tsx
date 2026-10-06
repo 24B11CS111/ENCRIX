@@ -50,69 +50,69 @@ export const TelecallerPerformancePage: React.FC = () => {
       : 0;
 
   const pieData = [
-    { name: 'Positive/Interested', value: positive + conversions, color: '#10b981' },
-    { name: 'Negative', value: negative, color: '#f43f5e' },
-    { name: 'In Progress / New', value: Math.max(0, totalAssigned - positive - conversions - negative), color: '#3b82f6' },
+    { name: 'Positive/Interested', value: positive + conversions, color: '#16845B' },
+    { name: 'Negative', value: negative, color: '#C53030' },
+    { name: 'In Progress / New', value: Math.max(0, totalAssigned - positive - conversions - negative), color: '#1E4D8F' },
   ];
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       {/* Header */}
-      <div className="border-b border-slate-800 pb-5">
-        <h1 className="text-xl font-bold text-white tracking-tight">Personal Calling Performance</h1>
-        <p className="text-xs text-slate-400 mt-1">
+      <div className="border-b border-[#DCE4EE] pb-5">
+        <h1 className="text-xl font-bold text-[#0B1F3A] tracking-tight">Personal Calling Performance</h1>
+        <p className="text-xs text-[#64748B] mt-1">
           Confidential metrics & conversion score for {profile?.full_name}.
         </p>
       </div>
 
       {/* METRICS GRID (Section 35) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-[11px] text-slate-400 block mb-1">Total Calls Placed</span>
-          <span className="text-2xl font-bold text-white">{totalCalls}</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <span className="text-[11px] text-[#64748B] block mb-1">Total Calls Placed</span>
+          <span className="text-2xl font-bold text-[#0B1F3A]">{totalCalls}</span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-[11px] text-emerald-400 block mb-1">Connected Calls</span>
-          <span className="text-2xl font-bold text-emerald-400">{connectedCalls}</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <span className="text-[11px] text-[#64748B] block mb-1">Connected Calls</span>
+          <span className="text-2xl font-bold text-[#16845B]">{connectedCalls}</span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-[11px] text-emerald-400 block mb-1">Positive Leads</span>
-          <span className="text-2xl font-bold text-emerald-400">{positive}</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <span className="text-[11px] text-[#64748B] block mb-1">Positive Leads</span>
+          <span className="text-2xl font-bold text-[#16845B]">{positive}</span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-[11px] text-rose-400 block mb-1">Negative Calls</span>
-          <span className="text-2xl font-bold text-rose-400">{negative}</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <span className="text-[11px] text-[#64748B] block mb-1">Negative Calls</span>
+          <span className="text-2xl font-bold text-[#C53030]">{negative}</span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-[11px] text-amber-400 block mb-1">Follow-ups Created</span>
-          <span className="text-2xl font-bold text-amber-400">{scheduledFollowUps}</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <span className="text-[11px] text-[#64748B] block mb-1">Follow-ups Created</span>
+          <span className="text-2xl font-bold text-[#B7791F]">{scheduledFollowUps}</span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-[11px] text-green-400 block mb-1">Conversions</span>
-          <span className="text-2xl font-bold text-green-400">{conversions}</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <span className="text-[11px] text-[#64748B] block mb-1">Conversions</span>
+          <span className="text-2xl font-bold text-[#16845B]">{conversions}</span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-[11px] text-purple-400 block mb-1">Conversion Rate</span>
-          <span className="text-2xl font-bold text-white">{conversionRate}%</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <span className="text-[11px] text-[#64748B] block mb-1">Conversion Rate</span>
+          <span className="text-2xl font-bold text-[#1E4D8F]">{conversionRate}%</span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-[11px] text-cyan-400 block mb-1">Avg Call Duration</span>
-          <span className="text-2xl font-bold text-cyan-400 font-mono">
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <span className="text-[11px] text-[#64748B] block mb-1">Avg Call Duration</span>
+          <span className="text-2xl font-bold text-[#0B1F3A] font-mono">
             {formatDuration(avgDuration)}
           </span>
         </div>
       </div>
 
       {/* Outcome Breakdown Chart */}
-      <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
-        <h2 className="text-sm font-semibold text-white">Lead Outcomes Breakdown</h2>
+      <div className="p-5 rounded-[16px] bg-white border border-[#DCE4EE] shadow-sm space-y-4">
+        <h2 className="text-sm font-semibold text-[#0B1F3A]">Lead Outcomes Breakdown</h2>
         <div className="h-52 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
@@ -131,17 +131,17 @@ export const TelecallerPerformancePage: React.FC = () => {
                 ))}
               </Pie>
               <Tooltip
-                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px' }}
+                contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '8px', fontSize: '12px', color: '#172B4D', boxShadow: '0 4px 12px rgba(11,31,58,0.08)' }}
               />
             </PieChart>
           </ResponsiveContainer>
         </div>
 
-        <div className="flex items-center justify-center gap-6 text-xs pt-2 border-t border-slate-800">
+        <div className="flex items-center justify-center gap-6 text-xs pt-2 border-t border-[#DCE4EE]">
           {pieData.map((item) => (
             <div key={item.name} className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-              <span className="text-slate-300 font-medium">{item.name}: {item.value}</span>
+              <span className="text-[#172B4D] font-medium">{item.name}: {item.value}</span>
             </div>
           ))}
         </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
-import { Lead, Profile, LeadStatus, LeadPriority } from '@/types';
+import { Lead, Profile } from '@/types';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
 import { SearchBar } from '@/components/common/SearchBar';
@@ -11,18 +11,17 @@ import { LeadAssignModal } from '@/features/leads/LeadAssignModal';
 import { CallModal } from '@/features/calls/CallModal';
 import { OutcomeModal } from '@/features/calls/OutcomeModal';
 import {
-  Users,
   UserCheck,
   Upload,
+  Download,
   Phone,
-  Filter,
   CheckSquare,
   Square,
   Eye,
-  Plus,
+  Shield,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { formatRelativeTime } from '@/lib/utils';
 
 export const OwnerLeadsPage: React.FC = () => {
   const { profile } = useAuth();
@@ -76,9 +75,34 @@ export const OwnerLeadsPage: React.FC = () => {
     return () => unsubscribe();
   }, [profile]);
 
+  // Export Leads (Owner only, audit logged)
+  const handleExport = () => {
+    if (!profile) return;
+    try {
+      const exportedLeads = db.exportLeads(profile);
+      const csvContent =
+        'LeadCode,Name,Phone,Email,Status,Source,CreatedAt\n' +
+        exportedLeads
+          .map(
+            (l) =>
+              `"${l.lead_code}","${l.name}","${l.phone}","${l.email || ''}","${l.status}","${l.source}","${l.created_at}"`
+          )
+          .join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `encrix_leads_export_${Date.now()}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err: any) {
+      alert(err.message || 'Export failed');
+    }
+  };
+
   // Filtering
   const filteredLeads = leads.filter((lead) => {
-    // Search query
     const matchSearch =
       lead.lead_code.toLowerCase().includes(search.toLowerCase()) ||
       lead.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -86,13 +110,8 @@ export const OwnerLeadsPage: React.FC = () => {
       (lead.email && lead.email.toLowerCase().includes(search.toLowerCase())) ||
       lead.source.toLowerCase().includes(search.toLowerCase());
 
-    // Status filter
     const matchStatus = statusFilter === 'ALL' || lead.status === statusFilter;
-
-    // Priority filter
     const matchPriority = priorityFilter === 'ALL' || lead.priority === priorityFilter;
-
-    // Assignment filter
     const matchAssignment =
       assignmentFilter === 'ALL'
         ? true
@@ -103,7 +122,6 @@ export const OwnerLeadsPage: React.FC = () => {
     return matchSearch && matchStatus && matchPriority && matchAssignment;
   });
 
-  // Pagination slice
   const totalPages = Math.ceil(filteredLeads.length / pageSize);
   const paginatedLeads = filteredLeads.slice(
     (currentPage - 1) * pageSize,
@@ -127,7 +145,7 @@ export const OwnerLeadsPage: React.FC = () => {
   };
 
   const getTelecallerName = (tcId?: string | null) => {
-    if (!tcId) return <span className="text-amber-400 font-mono text-[11px]">Unassigned</span>;
+    if (!tcId) return <span className="text-[#B7791F] font-medium text-[11px]">Unassigned</span>;
     const tc = telecallers.find((t) => t.id === tcId);
     return tc ? tc.full_name : 'Telecaller';
   };
@@ -135,11 +153,11 @@ export const OwnerLeadsPage: React.FC = () => {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#DCE4EE] pb-5">
         <div>
-          <h1 className="text-xl font-bold text-white tracking-tight">Master Lead Vault</h1>
-          <p className="text-xs text-slate-400 mt-1">
-            Browse, search, assign and monitor customer leads across your organization.
+          <h1 className="text-2xl font-bold text-[#0B1F3A] tracking-tight">Leads</h1>
+          <p className="text-xs text-[#64748B] mt-1 font-medium">
+            Manage and control your organization's lead pipeline.
           </p>
         </div>
 
@@ -147,7 +165,7 @@ export const OwnerLeadsPage: React.FC = () => {
           {selectedIds.length > 0 && (
             <button
               onClick={() => setIsAssignModalOpen(true)}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg shadow-sm transition-all"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-[#0B1F3A] hover:bg-[#071A33] text-white text-xs font-semibold rounded-[10px] shadow-subtle transition-all"
             >
               <UserCheck className="w-3.5 h-3.5" />
               <span>Assign ({selectedIds.length})</span>
@@ -156,16 +174,25 @@ export const OwnerLeadsPage: React.FC = () => {
 
           <button
             onClick={() => navigate('/owner/import')}
-            className="flex items-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 transition-colors"
+            className="flex items-center gap-2 px-3.5 py-2 bg-[#0B1F3A] hover:bg-[#071A33] text-white text-xs font-semibold rounded-[10px] shadow-subtle transition-all"
           >
-            <Upload className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Import CSV</span>
+            <Upload className="w-3.5 h-3.5" />
+            <span>Import</span>
+          </button>
+
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-[#F6F8FB] text-[#0B1F3A] text-xs font-medium rounded-[10px] border border-[#DCE4EE] shadow-subtle transition-colors"
+            title="Export CSV (Permission Restricted)"
+          >
+            <Download className="w-3.5 h-3.5 text-[#1E4D8F]" />
+            <span>Export</span>
           </button>
         </div>
       </div>
 
       {/* SEARCH & FILTERS BAR */}
-      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-white p-3.5 rounded-[12px] border border-[#DCE4EE] shadow-subtle">
         <div className="flex-1 max-w-md">
           <SearchBar
             value={search}
@@ -173,7 +200,7 @@ export const OwnerLeadsPage: React.FC = () => {
               setSearch(val);
               setCurrentPage(1);
             }}
-            placeholder="Search code, name, phone, source..."
+            placeholder="Search leads by code, customer name, source..."
           />
         </div>
 
@@ -185,7 +212,7 @@ export const OwnerLeadsPage: React.FC = () => {
               setStatusFilter(e.target.value);
               setCurrentPage(1);
             }}
-            className="px-2.5 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-emerald-500"
+            className="px-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] shadow-subtle focus:outline-none focus:border-[#1E4D8F]"
           >
             <option value="ALL">All Statuses</option>
             <option value="NEW">New</option>
@@ -203,7 +230,7 @@ export const OwnerLeadsPage: React.FC = () => {
               setPriorityFilter(e.target.value);
               setCurrentPage(1);
             }}
-            className="px-2.5 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-emerald-500"
+            className="px-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] shadow-subtle focus:outline-none focus:border-[#1E4D8F]"
           >
             <option value="ALL">All Priorities</option>
             <option value="URGENT">Urgent</option>
@@ -219,7 +246,7 @@ export const OwnerLeadsPage: React.FC = () => {
               setAssignmentFilter(e.target.value);
               setCurrentPage(1);
             }}
-            className="px-2.5 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-emerald-500"
+            className="px-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] shadow-subtle focus:outline-none focus:border-[#1E4D8F]"
           >
             <option value="ALL">All Telecallers</option>
             <option value="UNASSIGNED">Unassigned Only</option>
@@ -232,25 +259,24 @@ export const OwnerLeadsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* LEADS DATA TABLE (Section 26 Columns) */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+      {/* LEADS DATA TABLE */}
+      <div className="rounded-[12px] border border-[#DCE4EE] bg-white shadow-card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="bg-slate-950/70 text-slate-400 border-b border-slate-800 uppercase tracking-wider font-semibold">
+            <thead className="bg-[#F6F8FB] text-[#64748B] border-b border-[#DCE4EE] uppercase tracking-wider font-semibold">
               <tr>
                 <th className="py-3 px-3.5 w-10 text-center">
-                  <button onClick={handleSelectAll} className="text-slate-400 hover:text-white">
+                  <button onClick={handleSelectAll} className="text-[#64748B] hover:text-[#0B1F3A]">
                     {selectedIds.length > 0 && selectedIds.length === paginatedLeads.length ? (
-                      <CheckSquare className="w-4 h-4 text-emerald-400" />
+                      <CheckSquare className="w-4 h-4 text-[#1E4D8F]" />
                     ) : (
                       <Square className="w-4 h-4" />
                     )}
                   </button>
                 </th>
-                <th className="py-3 px-3">Lead ID</th>
-                <th className="py-3 px-3">Customer</th>
+                <th className="py-3 px-3">Lead</th>
+                <th className="py-3 px-3">Company / Source</th>
                 <th className="py-3 px-3">Phone</th>
-                <th className="py-3 px-3">Source</th>
                 <th className="py-3 px-3">Assigned To</th>
                 <th className="py-3 px-3">Status</th>
                 <th className="py-3 px-3">Priority</th>
@@ -259,10 +285,10 @@ export const OwnerLeadsPage: React.FC = () => {
                 <th className="py-3 px-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60">
+            <tbody className="divide-y divide-[#DCE4EE]">
               {paginatedLeads.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-slate-500">
+                  <td colSpan={10} className="py-12 text-center text-[#94A3B8]">
                     No leads found matching current search & filters.
                   </td>
                 </tr>
@@ -272,17 +298,17 @@ export const OwnerLeadsPage: React.FC = () => {
                   return (
                     <tr
                       key={lead.id}
-                      className={`hover:bg-slate-800/40 transition-colors ${
-                        isSelected ? 'bg-emerald-950/15' : ''
+                      className={`hover:bg-[#F6F8FB] transition-colors ${
+                        isSelected ? 'bg-[#EAF2FB]/50' : ''
                       }`}
                     >
                       <td className="py-3 px-3.5 text-center">
                         <button
                           onClick={() => handleToggleSelect(lead.id)}
-                          className="text-slate-500 hover:text-white"
+                          className="text-[#94A3B8] hover:text-[#0B1F3A]"
                         >
                           {isSelected ? (
-                            <CheckSquare className="w-4 h-4 text-emerald-400" />
+                            <CheckSquare className="w-4 h-4 text-[#1E4D8F]" />
                           ) : (
                             <Square className="w-4 h-4" />
                           )}
@@ -291,42 +317,42 @@ export const OwnerLeadsPage: React.FC = () => {
                       <td className="py-3 px-3">
                         <button
                           onClick={() => setDrawerLead(lead)}
-                          className="font-mono font-semibold text-emerald-400 hover:underline"
+                          className="font-medium text-[#0B1F3A] hover:text-[#1E4D8F] hover:underline flex flex-col text-left"
                         >
-                          {lead.lead_code}
+                          <span className="font-semibold text-[#0B1F3A]">{lead.name}</span>
+                          <span className="font-mono text-[11px] text-[#64748B]">{lead.lead_code}</span>
                         </button>
                       </td>
                       <td className="py-3 px-3">
-                        <div className="font-medium text-white">{lead.name}</div>
-                        {lead.email && <div className="text-[11px] text-slate-500">{lead.email}</div>}
+                        <div className="font-medium text-[#172B4D]">{(lead.metadata as any)?.company_name || lead.source || 'Individual'}</div>
+                        <div className="text-[11px] text-[#64748B]">{lead.source}</div>
                       </td>
-                      <td className="py-3 px-3 font-mono text-slate-300">{lead.phone}</td>
-                      <td className="py-3 px-3 text-slate-400">{lead.source}</td>
-                      <td className="py-3 px-3 text-slate-300">{getTelecallerName(lead.assigned_to)}</td>
+                      <td className="py-3 px-3 font-mono text-[#172B4D]">{lead.phone}</td>
+                      <td className="py-3 px-3 text-[#172B4D]">{getTelecallerName(lead.assigned_to)}</td>
                       <td className="py-3 px-3">
                         <StatusBadge status={lead.status} />
                       </td>
                       <td className="py-3 px-3">
                         <PriorityBadge priority={lead.priority} />
                       </td>
-                      <td className="py-3 px-3 text-slate-400">
+                      <td className="py-3 px-3 text-[#64748B]">
                         {formatRelativeTime(lead.last_contacted_at || undefined)}
                       </td>
-                      <td className="py-3 px-3 text-center text-slate-300 font-semibold">
+                      <td className="py-3 px-3 text-center text-[#172B4D] font-semibold">
                         {lead.calls_count || 0}
                       </td>
                       <td className="py-3 px-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           <button
                             onClick={() => setCallingLead(lead)}
-                            className="p-1.5 rounded-lg bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600 hover:text-white transition-colors"
+                            className="p-1.5 rounded-[8px] bg-[#EAF2FB] border border-[#C7DCF3] text-[#1E4D8F] hover:bg-[#0B1F3A] hover:text-white transition-colors"
                             title="Call Lead"
                           >
                             <Phone className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => setDrawerLead(lead)}
-                            className="p-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white transition-colors"
+                            className="p-1.5 rounded-[8px] bg-white border border-[#DCE4EE] text-[#64748B] hover:text-[#0B1F3A] hover:bg-[#F6F8FB] transition-colors"
                             title="View Lead Details"
                           >
                             <Eye className="w-3.5 h-3.5" />

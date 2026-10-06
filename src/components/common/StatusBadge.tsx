@@ -11,25 +11,25 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className }) =
   const getStyles = () => {
     switch (status) {
       case 'INTERESTED':
-        return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25';
+        return 'bg-[#EAF7EE] text-[#16845B] border-[#C3EBD0]';
       case 'CONVERTED':
-        return 'bg-green-500/15 text-green-400 border-green-500/30 font-semibold';
+        return 'bg-[#E4F4E9] text-[#16845B] border-[#A8E2BA] font-semibold';
       case 'ASSIGNED':
-        return 'bg-sky-500/10 text-sky-400 border-sky-500/25';
+        return 'bg-[#EAF2FB] text-[#1E4D8F] border-[#C7DCF3]';
       case 'FOLLOW_UP':
-        return 'bg-amber-500/10 text-amber-400 border-amber-500/25';
+        return 'bg-[#FEF6E7] text-[#B7791F] border-[#FBDFA8]';
       case 'CONTACTED':
-        return 'bg-blue-500/10 text-blue-400 border-blue-500/25';
+        return 'bg-[#EBF3FB] text-[#1E4D8F] border-[#C7DCF3]';
       case 'NEW':
-        return 'bg-purple-500/10 text-purple-400 border-purple-500/25';
+        return 'bg-[#F0F3F9] text-[#0B1F3A] border-[#DCE4EE] font-medium';
       case 'NOT_INTERESTED':
-        return 'bg-slate-500/10 text-slate-400 border-slate-500/25';
+        return 'bg-[#F1F5F9] text-[#64748B] border-[#E2E8F0]';
       case 'INVALID':
-        return 'bg-rose-500/10 text-rose-400 border-rose-500/25';
+        return 'bg-[#FEECEB] text-[#C53030] border-[#F8C8C6]';
       case 'DO_NOT_CONTACT':
-        return 'bg-red-500/15 text-red-400 border-red-500/30';
+        return 'bg-[#FEECEB] text-[#C53030] border-[#F8C8C6] font-semibold';
       default:
-        return 'bg-slate-500/10 text-slate-400 border-slate-500/25';
+        return 'bg-[#F1F5F9] text-[#64748B] border-[#E2E8F0]';
     }
   };
 

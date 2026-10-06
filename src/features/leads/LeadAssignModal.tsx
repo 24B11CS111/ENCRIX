@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { Profile } from '@/types';
 import { db } from '@/services/supabase/db';
 import { useAuth } from '@/features/auth/AuthContext';
-import { UserCheck, Shuffle, Check, AlertCircle } from 'lucide-react';
+import { UserCheck, Shuffle, Check } from 'lucide-react';
 
 interface LeadAssignModalProps {
   selectedLeadIds: string[];
@@ -62,29 +61,29 @@ export const LeadAssignModal: React.FC<LeadAssignModalProps> = ({
   const remainder = selectedLeadIds.length % Math.max(activeTcIds.length, 1);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6">
-        <div className="flex items-center gap-2.5 pb-4 border-b border-slate-800">
-          <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy-deep/20 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="w-full max-w-md rounded-[12px] border border-[#DCE4EE] bg-white shadow-dropdown p-6">
+        <div className="flex items-center gap-2.5 pb-4 border-b border-[#DCE4EE]">
+          <div className="p-2 rounded-[8px] bg-[#EAF2FB] border border-[#C7DCF3] text-[#1E4D8F]">
             <UserCheck className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-white">Assign Leads to Telecallers</h2>
-            <p className="text-xs text-slate-400">
-              Distribute <strong className="text-emerald-400">{selectedLeadIds.length}</strong> selected leads
+            <h2 className="text-base font-bold text-[#0B1F3A]">Assign Leads to Telecallers</h2>
+            <p className="text-xs text-[#64748B]">
+              Distribute <strong className="text-[#0B1F3A]">{selectedLeadIds.length}</strong> selected leads
             </p>
           </div>
         </div>
 
         {/* Method Toggle */}
-        <div className="grid grid-cols-2 gap-2 mt-4 p-1 rounded-xl bg-slate-950/80 border border-slate-800">
+        <div className="grid grid-cols-2 gap-2 mt-4 p-1 rounded-[10px] bg-[#F6F8FB] border border-[#DCE4EE]">
           <button
             type="button"
             onClick={() => setMethod('ROUND_ROBIN')}
-            className={`flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center justify-center gap-2 py-2 rounded-[8px] text-xs font-semibold transition-all ${
               method === 'ROUND_ROBIN'
-                ? 'bg-emerald-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-[#0B1F3A] text-white shadow-subtle'
+                : 'text-[#64748B] hover:text-[#0B1F3A]'
             }`}
           >
             <Shuffle className="w-3.5 h-3.5" />
@@ -94,10 +93,10 @@ export const LeadAssignModal: React.FC<LeadAssignModalProps> = ({
           <button
             type="button"
             onClick={() => setMethod('MANUAL')}
-            className={`flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center justify-center gap-2 py-2 rounded-[8px] text-xs font-semibold transition-all ${
               method === 'MANUAL'
-                ? 'bg-emerald-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-[#0B1F3A] text-white shadow-subtle'
+                : 'text-[#64748B] hover:text-[#0B1F3A]'
             }`}
           >
             <UserCheck className="w-3.5 h-3.5" />
@@ -108,13 +107,13 @@ export const LeadAssignModal: React.FC<LeadAssignModalProps> = ({
         {/* Round-Robin Distribution Setup */}
         {method === 'ROUND_ROBIN' && (
           <div className="mt-4 space-y-3">
-            <div className="p-3 rounded-lg bg-emerald-950/30 border border-emerald-500/30 text-xs text-emerald-300">
+            <div className="p-3 rounded-[8px] bg-[#EAF7EE] border border-[#C3EBD0] text-xs text-[#16845B]">
               Each selected telecaller will receive approx. <strong>{perCaller} leads</strong>
               {remainder > 0 ? ` (+1 for ${remainder} callers)` : ''}.
             </div>
 
             <div className="space-y-1.5">
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">
+              <span className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block">
                 Active Telecallers in Pool ({activeTcIds.length})
               </span>
               <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
@@ -124,25 +123,25 @@ export const LeadAssignModal: React.FC<LeadAssignModalProps> = ({
                     <div
                       key={tc.id}
                       onClick={() => handleToggleTc(tc.id)}
-                      className={`flex items-center justify-between p-2.5 rounded-lg border text-xs cursor-pointer transition-colors ${
+                      className={`flex items-center justify-between p-2.5 rounded-[8px] border text-xs cursor-pointer transition-colors ${
                         isChecked
-                          ? 'bg-slate-800 border-emerald-500/40 text-white'
-                          : 'bg-slate-900 border-slate-800 text-slate-400'
+                          ? 'bg-[#EAF2FB] border-[#C7DCF3] text-[#0B1F3A]'
+                          : 'bg-white border-[#DCE4EE] text-[#64748B]'
                       }`}
                     >
                       <div className="flex items-center gap-2">
                         <div
                           className={`w-4 h-4 rounded flex items-center justify-center border text-[10px] ${
                             isChecked
-                              ? 'bg-emerald-600 border-emerald-500 text-white'
-                              : 'border-slate-700 bg-slate-800'
+                              ? 'bg-[#0B1F3A] border-[#0B1F3A] text-white'
+                              : 'border-[#DCE4EE] bg-white'
                           }`}
                         >
                           {isChecked && <Check className="w-3 h-3" />}
                         </div>
-                        <span className="font-medium">{tc.full_name}</span>
+                        <span className="font-semibold text-[#172B4D]">{tc.full_name}</span>
                       </div>
-                      <span className="text-[11px] text-slate-500">
+                      <span className="text-[11px] text-[#64748B]">
                         {tc.assigned_count || 0} existing leads
                       </span>
                     </div>
@@ -157,11 +156,11 @@ export const LeadAssignModal: React.FC<LeadAssignModalProps> = ({
         {method === 'MANUAL' && (
           <div className="mt-4 space-y-3">
             <div>
-              <label className="text-xs text-slate-300 block mb-1">Select Telecaller</label>
+              <label className="text-xs font-semibold text-[#172B4D] block mb-1">Select Telecaller</label>
               <select
                 value={targetTelecallerId}
                 onChange={(e) => setTargetTelecallerId(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500"
+                className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] shadow-subtle focus:outline-none focus:border-[#1E4D8F]"
               >
                 <option value="">-- Choose Telecaller --</option>
                 {telecallers.map((tc) => (
@@ -175,11 +174,11 @@ export const LeadAssignModal: React.FC<LeadAssignModalProps> = ({
         )}
 
         {/* Actions */}
-        <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-slate-800">
+        <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-[#DCE4EE]">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-white transition-colors"
+            className="px-4 py-2 rounded-[8px] text-xs font-medium text-[#64748B] hover:text-[#0B1F3A] transition-colors"
           >
             Cancel
           </button>
@@ -191,7 +190,7 @@ export const LeadAssignModal: React.FC<LeadAssignModalProps> = ({
               (method === 'MANUAL' && !targetTelecallerId) ||
               (method === 'ROUND_ROBIN' && activeTcIds.length === 0)
             }
-            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg shadow-sm transition-all"
+            className="px-5 py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] disabled:opacity-40 text-white text-xs font-semibold rounded-[10px] shadow-subtle transition-all"
           >
             {isSubmitting ? 'Distributing...' : 'Confirm Assignment'}
           </button>

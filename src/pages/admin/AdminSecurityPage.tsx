@@ -16,33 +16,33 @@ export const AdminSecurityPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="border-b border-slate-800 pb-5">
-        <h1 className="text-xl font-bold text-white tracking-tight">Platform Security Operations Center</h1>
-        <p className="text-xs text-slate-400 mt-1">
+      <div className="border-b border-[#DCE4EE] pb-5">
+        <h1 className="text-xl font-bold text-[#0B1F3A] tracking-tight">Platform Security Operations Center</h1>
+        <p className="text-xs text-[#64748B] mt-1">
           Global threat monitoring, unassigned lead access attempts, and export prevention telemetry.
         </p>
       </div>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden divide-y divide-slate-800/60">
+      <div className="rounded-[12px] border border-[#DCE4EE] bg-white overflow-hidden divide-y divide-[#DCE4EE] shadow-sm">
         {events.map((evt) => (
-          <div key={evt.id} className="p-4 hover:bg-slate-800/40 space-y-1 text-xs">
+          <div key={evt.id} className="p-4 hover:bg-[#F6F8FB]/60 transition-colors space-y-1 text-xs">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span
                   className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                     evt.severity === 'HIGH' || evt.severity === 'CRITICAL'
-                      ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30'
-                      : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+                      ? 'bg-rose-50 text-[#C53030] border border-rose-200'
+                      : 'bg-amber-50 text-[#B7791F] border border-amber-200'
                   }`}
                 >
                   {evt.severity}
                 </span>
-                <span className="font-semibold text-white">{evt.event_type}</span>
-                <span className="text-slate-500">Org: {evt.organization_id}</span>
+                <span className="font-semibold text-[#172B4D]">{evt.event_type}</span>
+                <span className="text-[#64748B]">Org: {evt.organization_id}</span>
               </div>
-              <span className="text-slate-400 font-mono text-[11px]">{formatDateTime(evt.created_at)}</span>
+              <span className="text-[#64748B] font-mono text-[11px]">{formatDateTime(evt.created_at)}</span>
             </div>
-            <p className="text-slate-300">{evt.description}</p>
+            <p className="text-[#64748B]">{evt.description}</p>
           </div>
         ))}
       </div>

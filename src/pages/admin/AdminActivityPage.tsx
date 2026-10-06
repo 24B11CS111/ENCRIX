@@ -33,9 +33,9 @@ export const AdminActivityPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="border-b border-slate-800 pb-5">
-        <h1 className="text-xl font-bold text-white tracking-tight">Platform-Wide Activity Stream</h1>
-        <p className="text-xs text-slate-400 mt-1">
+      <div className="border-b border-[#DCE4EE] pb-5">
+        <h1 className="text-xl font-bold text-[#0B1F3A] tracking-tight">Platform-Wide Activity Stream</h1>
+        <p className="text-xs text-[#64748B] mt-1">
           Complete cross-organization activity and audit record log.
         </p>
       </div>
@@ -44,9 +44,9 @@ export const AdminActivityPage: React.FC = () => {
         <SearchBar value={search} onChange={(v) => setSearch(v)} placeholder="Filter platform activity..." />
       </div>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+      <div className="rounded-[12px] border border-[#DCE4EE] bg-white overflow-hidden shadow-sm">
         <table className="w-full text-left text-xs">
-          <thead className="bg-slate-950/70 text-slate-400 border-b border-slate-800 font-semibold uppercase">
+          <thead className="bg-[#F6F8FB] text-[#64748B] border-b border-[#DCE4EE] font-semibold uppercase">
             <tr>
               <th className="py-3 px-4">Timestamp</th>
               <th className="py-3 px-3">Organization</th>
@@ -55,16 +55,16 @@ export const AdminActivityPage: React.FC = () => {
               <th className="py-3 px-4">Metadata</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800/60">
+          <tbody className="divide-y divide-[#DCE4EE]">
             {paginatedLogs.map((log) => (
-              <tr key={log.id} className="hover:bg-slate-800/40">
-                <td className="py-3 px-4 text-slate-400 font-mono text-[11px] whitespace-nowrap">
+              <tr key={log.id} className="hover:bg-[#F6F8FB]/60 transition-colors">
+                <td className="py-3 px-4 text-[#64748B] font-mono text-[11px] whitespace-nowrap">
                   {formatDateTime(log.created_at)}
                 </td>
-                <td className="py-3 px-3 font-mono text-slate-300">{log.organization_id}</td>
-                <td className="py-3 px-3 text-white font-medium">{log.user_name || 'System'}</td>
-                <td className="py-3 px-3 font-mono text-emerald-400 font-semibold">{log.action}</td>
-                <td className="py-3 px-4 font-mono text-slate-400 text-[11px] max-w-sm truncate">
+                <td className="py-3 px-3 font-mono text-[#172B4D]">{log.organization_id}</td>
+                <td className="py-3 px-3 text-[#172B4D] font-medium">{log.user_name || 'System'}</td>
+                <td className="py-3 px-3 font-mono text-[#1E4D8F] font-semibold">{log.action}</td>
+                <td className="py-3 px-4 font-mono text-[#64748B] text-[11px] max-w-sm truncate">
                   {JSON.stringify(log.metadata)}
                 </td>
               </tr>

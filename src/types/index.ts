@@ -249,13 +249,14 @@ export interface ColumnMapping {
 }
 
 export interface ParsedLeadRow {
+  rowIndex?: number;
   name: string;
   phone: string;
   email?: string;
   source?: string;
   priority?: LeadPriority;
   notes?: string;
-  raw: Record<string, string>;
+  raw?: Record<string, string>;
   isValid: boolean;
   isDuplicate?: boolean;
   validationErrors: string[];

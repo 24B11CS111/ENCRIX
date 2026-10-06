@@ -66,10 +66,10 @@ export const OwnerAssignmentsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#DCE4EE] pb-5">
         <div>
-          <h1 className="text-xl font-bold text-white tracking-tight">Queue & Lead Assignments</h1>
-          <p className="text-xs text-slate-400 mt-1">
+          <h1 className="text-xl font-bold text-[#0B1F3A] tracking-tight">Queue & Lead Assignments</h1>
+          <p className="text-xs text-[#64748B] mt-1">
             Evenly distribute incoming leads or assign batches to high-performing telecallers.
           </p>
         </div>
@@ -78,7 +78,7 @@ export const OwnerAssignmentsPage: React.FC = () => {
           <button
             onClick={() => setIsModalOpen(true)}
             disabled={selectedLeadIds.length === 0}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg shadow-sm transition-all"
+            className="flex items-center gap-2 px-4 py-2 bg-[#0B1F3A] hover:bg-[#071A33] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-[10px] shadow-sm transition-all"
           >
             <Shuffle className="w-3.5 h-3.5" />
             <span>Distribute Selected ({selectedLeadIds.length})</span>
@@ -88,7 +88,7 @@ export const OwnerAssignmentsPage: React.FC = () => {
 
       {/* TELECALLER QUEUE STATUS CARDS */}
       <div>
-        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+        <h2 className="text-xs font-semibold text-[#64748B] uppercase tracking-wider mb-3">
           Active Telecallers Workload ({telecallers.length})
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -99,18 +99,18 @@ export const OwnerAssignmentsPage: React.FC = () => {
             ).length;
 
             return (
-              <div key={tc.id} className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+              <div key={tc.id} className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm space-y-2">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-bold text-white truncate">{tc.full_name}</div>
-                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  <div className="text-xs font-bold text-[#0B1F3A] truncate">{tc.full_name}</div>
+                  <span className="w-2 h-2 rounded-full bg-[#16845B]" />
                 </div>
                 <div className="flex items-baseline justify-between pt-1">
-                  <span className="text-[11px] text-slate-400">Assigned Queue:</span>
-                  <span className="text-base font-bold text-emerald-400">{count} leads</span>
+                  <span className="text-[11px] text-[#64748B]">Assigned Queue:</span>
+                  <span className="text-base font-bold text-[#1E4D8F]">{count} leads</span>
                 </div>
-                <div className="flex items-center justify-between text-[10px] text-slate-500">
+                <div className="flex items-center justify-between text-[10px] text-[#64748B]">
                   <span>Positive outcomes:</span>
-                  <span className="text-slate-300 font-medium">{positive}</span>
+                  <span className="text-[#172B4D] font-medium">{positive}</span>
                 </div>
               </div>
             );
@@ -119,13 +119,13 @@ export const OwnerAssignmentsPage: React.FC = () => {
       </div>
 
       {/* UNASSIGNED LEADS TABLE */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
-        <div className="p-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="rounded-[12px] border border-[#DCE4EE] bg-white overflow-hidden shadow-sm">
+        <div className="p-4 border-b border-[#DCE4EE] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h3 className="text-xs font-semibold text-white uppercase tracking-wider">
+            <h3 className="text-xs font-semibold text-[#0B1F3A] uppercase tracking-wider">
               Unassigned Leads Pool ({unassignedLeads.length})
             </h3>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-[11px] text-[#64748B]">
               Leads waiting in raw queue. Assign them to telecallers to initiate authorized calling.
             </p>
           </div>
@@ -133,7 +133,7 @@ export const OwnerAssignmentsPage: React.FC = () => {
           {unassignedLeads.length > 0 && (
             <button
               onClick={handleSelectAllUnassigned}
-              className="text-xs text-emerald-400 hover:text-emerald-300 font-medium"
+              className="text-xs text-[#1E4D8F] hover:text-[#0B1F3A] font-semibold transition-colors"
             >
               {selectedLeadIds.length === unassignedLeads.length
                 ? 'Deselect All'
@@ -144,14 +144,14 @@ export const OwnerAssignmentsPage: React.FC = () => {
 
         <div className="max-h-96 overflow-y-auto">
           <table className="w-full text-left text-xs">
-            <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800 sticky top-0 font-medium">
+            <thead className="bg-[#F6F8FB] text-[#64748B] border-b border-[#DCE4EE] sticky top-0 font-medium">
               <tr>
                 <th className="py-2.5 px-3.5 w-10 text-center">
                   <input
                     type="checkbox"
                     checked={selectedLeadIds.length > 0 && selectedLeadIds.length === unassignedLeads.length}
                     onChange={handleSelectAllUnassigned}
-                    className="rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-0"
+                    className="rounded bg-white border-[#DCE4EE] text-[#0B1F3A] focus:ring-0"
                   />
                 </th>
                 <th className="py-2.5 px-3">Lead Code</th>
@@ -162,11 +162,11 @@ export const OwnerAssignmentsPage: React.FC = () => {
                 <th className="py-2.5 px-3">Created</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60">
+            <tbody className="divide-y divide-[#DCE4EE]">
               {unassignedLeads.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-500">
-                    <CheckCircle className="w-6 h-6 text-emerald-500 mx-auto mb-2" />
+                  <td colSpan={7} className="py-12 text-center text-[#64748B]">
+                    <CheckCircle className="w-6 h-6 text-[#16845B] mx-auto mb-2" />
                     All leads are currently assigned! New imported leads will appear here.
                   </td>
                 </tr>
@@ -177,8 +177,8 @@ export const OwnerAssignmentsPage: React.FC = () => {
                     <tr
                       key={lead.id}
                       onClick={() => handleToggleSelect(lead.id)}
-                      className={`hover:bg-slate-800/40 cursor-pointer transition-colors ${
-                        isChecked ? 'bg-emerald-950/15' : ''
+                      className={`hover:bg-[#F6F8FB]/60 cursor-pointer transition-colors ${
+                        isChecked ? 'bg-[#EAF2FB]/50' : ''
                       }`}
                     >
                       <td className="py-2.5 px-3.5 text-center" onClick={(e) => e.stopPropagation()}>
@@ -186,19 +186,19 @@ export const OwnerAssignmentsPage: React.FC = () => {
                           type="checkbox"
                           checked={isChecked}
                           onChange={() => handleToggleSelect(lead.id)}
-                          className="rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-0"
+                          className="rounded bg-white border-[#DCE4EE] text-[#0B1F3A] focus:ring-0"
                         />
                       </td>
-                      <td className="py-2.5 px-3 font-mono font-semibold text-emerald-400">
+                      <td className="py-2.5 px-3 font-mono font-semibold text-[#1E4D8F]">
                         {lead.lead_code}
                       </td>
-                      <td className="py-2.5 px-3 text-slate-200 font-medium">{lead.name}</td>
-                      <td className="py-2.5 px-3 font-mono text-slate-300">{lead.phone}</td>
-                      <td className="py-2.5 px-3 text-slate-400">{lead.source}</td>
+                      <td className="py-2.5 px-3 text-[#172B4D] font-medium">{lead.name}</td>
+                      <td className="py-2.5 px-3 font-mono text-[#172B4D]">{lead.phone}</td>
+                      <td className="py-2.5 px-3 text-[#64748B]">{lead.source}</td>
                       <td className="py-2.5 px-3">
                         <PriorityBadge priority={lead.priority} />
                       </td>
-                      <td className="py-2.5 px-3 text-slate-500">{formatDate(lead.created_at)}</td>
+                      <td className="py-2.5 px-3 text-[#64748B]">{formatDate(lead.created_at)}</td>
                     </tr>
                   );
                 })

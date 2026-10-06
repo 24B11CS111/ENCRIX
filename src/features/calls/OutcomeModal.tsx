@@ -5,10 +5,7 @@ import { useAuth } from '@/features/auth/AuthContext';
 import {
   CheckCircle,
   XCircle,
-  PhoneForwarded,
-  Clock,
   Sparkles,
-  Calendar,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -38,7 +35,6 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
     new Date(Date.now() + 86400000).toISOString().split('T')[0]
   );
   const [followUpTime, setFollowUpTime] = useState('11:00');
-  const [priority, setPriority] = useState<'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'>('HIGH');
 
   // Negative Flow Fields
   const [negativeReason, setNegativeReason] = useState<NegativeReason>('Not Interested');
@@ -126,13 +122,13 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto animate-in fade-in duration-200">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6 my-8">
-        <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy-deep/20 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-200">
+      <div className="w-full max-w-lg rounded-[12px] border border-[#DCE4EE] bg-white shadow-dropdown p-6 my-8">
+        <div className="flex items-center justify-between pb-4 border-b border-[#DCE4EE]">
           <div>
-            <span className="text-xs font-semibold text-emerald-400">{lead.lead_code}</span>
-            <h2 className="text-lg font-bold text-white">How did the call go?</h2>
-            <p className="text-xs text-slate-400">Interaction with {lead.name}</p>
+            <span className="text-xs font-mono font-bold text-[#1E4D8F]">{lead.lead_code}</span>
+            <h2 className="text-lg font-bold text-[#0B1F3A]">Log Call Outcome</h2>
+            <p className="text-xs text-[#64748B]">Interaction with {lead.name}</p>
           </div>
         </div>
 
@@ -142,10 +138,10 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
             <button
               type="button"
               onClick={() => setSelectedOutcome('POSITIVE')}
-              className={`flex items-center justify-center gap-2.5 p-3.5 rounded-xl border font-semibold text-sm transition-all ${
+              className={`flex items-center justify-center gap-2.5 p-3.5 rounded-[10px] border font-semibold text-sm transition-all ${
                 selectedOutcome === 'POSITIVE'
-                  ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-950/50 scale-[1.02]'
-                  : 'bg-emerald-950/30 border-emerald-500/30 text-emerald-400 hover:bg-emerald-950/60'
+                  ? 'bg-[#16845B] border-[#16845B] text-white shadow-subtle'
+                  : 'bg-[#EAF7EE] border-[#C3EBD0] text-[#16845B] hover:bg-[#DDF2E3]'
               }`}
             >
               <CheckCircle className="w-5 h-5" />
@@ -155,10 +151,10 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
             <button
               type="button"
               onClick={() => setSelectedOutcome('NEGATIVE')}
-              className={`flex items-center justify-center gap-2.5 p-3.5 rounded-xl border font-semibold text-sm transition-all ${
+              className={`flex items-center justify-center gap-2.5 p-3.5 rounded-[10px] border font-semibold text-sm transition-all ${
                 selectedOutcome === 'NEGATIVE'
-                  ? 'bg-rose-600 border-rose-500 text-white shadow-lg shadow-rose-950/50 scale-[1.02]'
-                  : 'bg-rose-950/30 border-rose-500/30 text-rose-400 hover:bg-rose-950/60'
+                  ? 'bg-[#C53030] border-[#C53030] text-white shadow-subtle'
+                  : 'bg-[#FEECEB] border-[#F8C8C6] text-[#C53030] hover:bg-[#FCD8D6]'
               }`}
             >
               <XCircle className="w-5 h-5" />
@@ -168,7 +164,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
 
           {/* OTHER OUTCOMES CHIPS */}
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">
+            <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-2">
               Other Outcomes
             </label>
             <div className="flex flex-wrap gap-1.5">
@@ -177,10 +173,10 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                   key={item.type}
                   type="button"
                   onClick={() => setSelectedOutcome(item.type)}
-                  className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                  className={`px-3 py-1.5 rounded-[8px] border text-xs font-semibold transition-all ${
                     selectedOutcome === item.type
-                      ? 'bg-slate-700 border-slate-500 text-white'
-                      : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white'
+                      ? 'bg-[#0B1F3A] border-[#0B1F3A] text-white shadow-subtle'
+                      : 'bg-white border-[#DCE4EE] text-[#172B4D] hover:bg-[#F6F8FB]'
                   }`}
                 >
                   {item.label}
@@ -193,24 +189,24 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
 
           {/* 1. POSITIVE FLOW */}
           {selectedOutcome === 'POSITIVE' && (
-            <div className="p-4 rounded-xl bg-emerald-950/20 border border-emerald-500/30 space-y-4 animate-in fade-in duration-200">
-              <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold">
+            <div className="p-4 rounded-[10px] bg-[#EAF7EE] border border-[#C3EBD0] space-y-4 animate-in fade-in duration-200">
+              <div className="flex items-center gap-2 text-[#16845B] text-xs font-bold">
                 <Sparkles className="w-4 h-4" />
                 <span>Positive Interaction Workflow</span>
               </div>
 
               <div>
-                <label className="text-xs text-slate-300 block mb-1">Interest Level</label>
+                <label className="text-xs font-semibold text-[#172B4D] block mb-1">Interest Level</label>
                 <div className="grid grid-cols-3 gap-2">
                   {(['HIGH', 'MEDIUM', 'LOW'] as const).map((lvl) => (
                     <button
                       key={lvl}
                       type="button"
                       onClick={() => setInterestLevel(lvl)}
-                      className={`py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      className={`py-1.5 rounded-[8px] text-xs font-semibold border transition-colors ${
                         interestLevel === lvl
-                          ? 'bg-emerald-600 border-emerald-500 text-white'
-                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                          ? 'bg-[#16845B] border-[#16845B] text-white'
+                          : 'bg-white border-[#DCE4EE] text-[#172B4D] hover:bg-[#F6F8FB]'
                       }`}
                     >
                       {lvl}
@@ -220,49 +216,49 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
               </div>
 
               <div>
-                <label className="text-xs text-slate-300 block mb-1">Requirement / Need</label>
+                <label className="text-xs font-semibold text-[#172B4D] block mb-1">Requirement / Need</label>
                 <input
                   type="text"
                   required
                   value={requirement}
                   onChange={(e) => setRequirement(e.target.value)}
-                  placeholder="e.g. Master of Data Science Germany, IELTS ready"
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white focus:outline-none focus:border-emerald-500"
+                  placeholder="e.g. Master of Data Science, Consultation requested"
+                  className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D] focus:outline-none focus:border-[#1E4D8F]"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-slate-300 block mb-1">Follow-up Date</label>
+                  <label className="text-xs font-semibold text-[#172B4D] block mb-1">Follow-up Date</label>
                   <input
                     type="date"
                     required
                     value={followUpDate}
                     onChange={(e) => setFollowUpDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500"
+                    className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D] focus:outline-none focus:border-[#1E4D8F]"
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-slate-300 block mb-1">Follow-up Time</label>
+                  <label className="text-xs font-semibold text-[#172B4D] block mb-1">Follow-up Time</label>
                   <input
                     type="time"
                     required
                     value={followUpTime}
                     onChange={(e) => setFollowUpTime(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500"
+                    className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D] focus:outline-none focus:border-[#1E4D8F]"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs text-slate-300 block mb-1">Detailed Discussion Notes</label>
+                <label className="text-xs font-semibold text-[#172B4D] block mb-1">Detailed Discussion Notes</label>
                 <textarea
                   required
                   rows={3}
                   value={positiveNotes}
                   onChange={(e) => setPositiveNotes(e.target.value)}
-                  placeholder="Key discussion points, budget, documents required..."
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white focus:outline-none focus:border-emerald-500"
+                  placeholder="Key discussion points, requirements, next action..."
+                  className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D] focus:outline-none focus:border-[#1E4D8F]"
                 />
               </div>
             </div>
@@ -270,18 +266,18 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
 
           {/* 2. NEGATIVE FLOW */}
           {selectedOutcome === 'NEGATIVE' && (
-            <div className="p-4 rounded-xl bg-rose-950/20 border border-rose-500/30 space-y-4 animate-in fade-in duration-200">
-              <div className="flex items-center gap-2 text-rose-400 text-xs font-semibold">
+            <div className="p-4 rounded-[10px] bg-[#FEECEB] border border-[#F8C8C6] space-y-4 animate-in fade-in duration-200">
+              <div className="flex items-center gap-2 text-[#C53030] text-xs font-bold">
                 <XCircle className="w-4 h-4" />
                 <span>Negative Interaction Workflow</span>
               </div>
 
               <div>
-                <label className="text-xs text-slate-300 block mb-1">Reason for Negative</label>
+                <label className="text-xs font-semibold text-[#172B4D] block mb-1">Reason for Negative</label>
                 <select
                   value={negativeReason}
                   onChange={(e) => setNegativeReason(e.target.value as NegativeReason)}
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white focus:outline-none focus:border-rose-500"
+                  className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D] focus:outline-none focus:border-[#C53030]"
                 >
                   <option value="Not Interested">Not Interested</option>
                   <option value="Price">Price / Budget Constraint</option>
@@ -294,14 +290,14 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
               </div>
 
               <div>
-                <label className="text-xs text-slate-300 block mb-1">Notes</label>
+                <label className="text-xs font-semibold text-[#172B4D] block mb-1">Notes</label>
                 <textarea
                   required
                   rows={3}
                   value={negativeNotes}
                   onChange={(e) => setNegativeNotes(e.target.value)}
                   placeholder="Customer stated reasons..."
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white focus:outline-none focus:border-rose-500"
+                  className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D] focus:outline-none focus:border-[#C53030]"
                 />
               </div>
             </div>
@@ -309,56 +305,56 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
 
           {/* 3. OTHER OUTCOMES (FOLLOW-UP, NO ANSWER, ETC.) */}
           {selectedOutcome && selectedOutcome !== 'POSITIVE' && selectedOutcome !== 'NEGATIVE' && (
-            <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700/80 space-y-3">
+            <div className="p-4 rounded-[10px] bg-[#F6F8FB] border border-[#DCE4EE] space-y-3">
               {(selectedOutcome === 'FOLLOW_UP' || selectedOutcome === 'CALL_BACK') && (
                 <div className="grid grid-cols-2 gap-3 mb-2">
                   <div>
-                    <label className="text-xs text-slate-300 block mb-1">Schedule Date</label>
+                    <label className="text-xs font-semibold text-[#172B4D] block mb-1">Schedule Date</label>
                     <input
                       type="date"
                       value={followUpDate}
                       onChange={(e) => setFollowUpDate(e.target.value)}
-                      className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
+                      className="w-full px-3 py-1.5 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D]"
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-slate-300 block mb-1">Schedule Time</label>
+                    <label className="text-xs font-semibold text-[#172B4D] block mb-1">Schedule Time</label>
                     <input
                       type="time"
                       value={followUpTime}
                       onChange={(e) => setFollowUpTime(e.target.value)}
-                      className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
+                      className="w-full px-3 py-1.5 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D]"
                     />
                   </div>
                 </div>
               )}
 
               <div>
-                <label className="text-xs text-slate-300 block mb-1">Call Notes</label>
+                <label className="text-xs font-semibold text-[#172B4D] block mb-1">Call Notes</label>
                 <textarea
                   rows={2}
                   value={generalNotes}
                   onChange={(e) => setGeneralNotes(e.target.value)}
                   placeholder="Brief note about the call..."
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white focus:outline-none focus:border-slate-500"
+                  className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D] focus:outline-none focus:border-[#1E4D8F]"
                 />
               </div>
             </div>
           )}
 
           {/* ACTIONS */}
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#DCE4EE]">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-white transition-colors"
+              className="px-4 py-2 rounded-[8px] text-xs font-medium text-[#64748B] hover:text-[#0B1F3A] transition-colors"
             >
               Skip for now
             </button>
             <button
               type="submit"
               disabled={!selectedOutcome || isSubmitting}
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg shadow-sm transition-all"
+              className="px-5 py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-[10px] shadow-subtle transition-all"
             >
               {isSubmitting ? 'Saving...' : 'Save Call Outcome'}
             </button>

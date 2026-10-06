@@ -37,8 +37,6 @@ export const CallModal: React.FC<CallModalProps> = ({
   useEffect(() => {
     if (!isOpen || !profile) return;
 
-    let activeCallId = '';
-
     const startCall = async () => {
       try {
         setCallStatus('INITIATING');
@@ -52,7 +50,6 @@ export const CallModal: React.FC<CallModalProps> = ({
           telecallerId: profile.id,
         });
 
-        activeCallId = session.callId;
         setCallId(session.callId);
 
         // Progress ringing -> connected
@@ -92,9 +89,9 @@ export const CallModal: React.FC<CallModalProps> = ({
     if (timerRef.current) clearInterval(timerRef.current);
 
     const result = await telephonyService.endCall(callId);
-    const finalDuration = Math.max(duration, 3); // Ensure at least 3 seconds counted
+    const finalDuration = Math.max(duration, 3);
 
-    // Persist call to LeadVault Database
+    // Persist call to ENCRIX Database
     if (profile) {
       const recorded = db.recordCall(
         {
@@ -111,39 +108,34 @@ export const CallModal: React.FC<CallModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6 text-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy-deep/20 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="w-full max-w-md rounded-[12px] border border-[#DCE4EE] bg-white shadow-dropdown p-6 text-center">
         {/* Compliance security badge */}
-        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 text-xs mb-6">
+        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAF7EE] border border-[#C3EBD0] text-[#16845B] text-xs font-medium mb-6">
           <ShieldCheck className="w-3.5 h-3.5" />
-          <span>Authorized Gateway Connection</span>
+          <span>✓ Authorized Gateway Connection</span>
         </div>
 
         {/* Lead & Customer info */}
         <div className="space-y-1 mb-6">
-          <span className="text-xs font-semibold text-emerald-400 tracking-wider">
-            {lead.lead_code}
-          </span>
-          <h2 className="text-2xl font-bold text-white tracking-tight">{lead.name}</h2>
-          <p className="text-sm font-mono text-slate-400">{lead.phone}</p>
+          <h2 className="text-2xl font-bold text-[#0B1F3A] tracking-tight">{lead.name}</h2>
+          <div className="flex items-center justify-center gap-2 text-xs text-[#64748B]">
+            <span>Lead ID: <strong className="font-mono text-[#0B1F3A]">{lead.lead_code}</strong></span>
+            <span>•</span>
+            <span>Phone: <strong className="font-mono text-[#0B1F3A]">{lead.phone}</strong></span>
+          </div>
         </div>
 
         {/* Call Animation / Live Status */}
         <div className="py-6 flex flex-col items-center justify-center">
           <div className="relative flex items-center justify-center">
-            {callStatus === 'CONNECTED' && (
-              <span className="absolute w-24 h-24 rounded-full bg-emerald-500/20 animate-ping" />
-            )}
-            {callStatus === 'RINGING' && (
-              <span className="absolute w-20 h-20 rounded-full bg-amber-500/20 animate-pulse" />
-            )}
             <div
-              className={`w-20 h-20 rounded-full flex items-center justify-center text-white text-2xl shadow-xl transition-all ${
+              className={`w-20 h-20 rounded-full flex items-center justify-center text-white text-2xl shadow-card transition-all ${
                 callStatus === 'CONNECTED'
-                  ? 'bg-emerald-600 text-white'
+                  ? 'bg-[#1E4D8F]'
                   : callStatus === 'RINGING'
-                  ? 'bg-amber-600 text-white'
-                  : 'bg-slate-800 text-slate-400'
+                  ? 'bg-[#B7791F]'
+                  : 'bg-[#0B1F3A]'
               }`}
             >
               <Phone className="w-9 h-9" />
@@ -152,42 +144,47 @@ export const CallModal: React.FC<CallModalProps> = ({
 
           <div className="mt-4">
             {callStatus === 'INITIATING' && (
-              <span className="text-xs text-slate-400 flex items-center gap-1.5">
-                <Radio className="w-3.5 h-3.5 text-slate-400 animate-spin" />
-                Connecting securely to gateway...
-              </span>
+              <div className="space-y-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-[#0B1F3A]">
+                  CALL INITIATED
+                </span>
+                <p className="text-xs text-[#64748B] flex items-center justify-center gap-1.5">
+                  <Radio className="w-3.5 h-3.5 text-[#1E4D8F] animate-spin" />
+                  Connecting securely...
+                </p>
+              </div>
             )}
             {callStatus === 'RINGING' && (
-              <span className="text-xs font-medium text-amber-400 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              <span className="text-xs font-semibold text-[#B7791F] flex items-center justify-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#B7791F]" />
                 Ringing customer device...
               </span>
             )}
             {callStatus === 'CONNECTED' && (
               <div className="space-y-1">
-                <span className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-                  Call In Progress
+                <span className="text-xs font-semibold uppercase tracking-wider text-[#16845B]">
+                  Connected
                 </span>
-                <div className="text-3xl font-mono font-bold text-white tracking-wider">
+                <div className="text-3xl font-mono font-bold text-[#0B1F3A] tracking-wider">
                   {formatDuration(duration)}
                 </div>
               </div>
             )}
             {callStatus === 'ENDING' && (
-              <span className="text-xs text-slate-400">Wrapping call session...</span>
+              <span className="text-xs text-[#64748B]">Wrapping call session...</span>
             )}
           </div>
         </div>
 
         {/* Call Controls */}
-        <div className="flex items-center justify-center gap-4 mt-4 pt-4 border-t border-slate-800">
+        <div className="flex items-center justify-center gap-4 mt-4 pt-4 border-t border-[#DCE4EE]">
           <button
             onClick={handleToggleMute}
             disabled={callStatus !== 'CONNECTED'}
             className={`p-3.5 rounded-full border transition-all ${
               isMuted
-                ? 'bg-amber-500/20 border-amber-500 text-amber-400'
-                : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700'
+                ? 'bg-[#FEF6E7] border-[#FBDFA8] text-[#B7791F]'
+                : 'bg-white border-[#DCE4EE] text-[#64748B] hover:text-[#0B1F3A] hover:bg-[#F6F8FB]'
             } disabled:opacity-30 disabled:cursor-not-allowed`}
             title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
           >
@@ -196,7 +193,7 @@ export const CallModal: React.FC<CallModalProps> = ({
 
           <button
             onClick={handleEndCall}
-            className="flex items-center gap-2 px-6 py-3.5 bg-rose-600 hover:bg-rose-500 text-white font-semibold rounded-full shadow-lg hover:shadow-rose-900/30 transition-all"
+            className="flex items-center gap-2 px-6 py-3.5 bg-[#C53030] hover:bg-[#A82828] text-white font-semibold rounded-full shadow-subtle transition-all"
             title="End Call"
           >
             <PhoneOff className="w-5 h-5" />
@@ -205,8 +202,8 @@ export const CallModal: React.FC<CallModalProps> = ({
         </div>
 
         {/* Legal Consent Notice */}
-        <p className="mt-6 text-[11px] text-slate-500 flex items-center justify-center gap-1">
-          <AlertCircle className="w-3 h-3 text-slate-500 shrink-0" />
+        <p className="mt-6 text-[11px] text-[#64748B] flex items-center justify-center gap-1 font-medium">
+          <AlertCircle className="w-3 h-3 text-[#64748B] shrink-0" />
           Call recording enabled per statutory compliance policy.
         </p>
       </div>

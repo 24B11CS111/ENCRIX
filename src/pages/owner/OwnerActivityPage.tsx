@@ -53,15 +53,15 @@ export const OwnerActivityPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="border-b border-slate-800 pb-5">
-        <h1 className="text-xl font-bold text-white tracking-tight">Organization Audit Trail</h1>
-        <p className="text-xs text-slate-400 mt-1">
+      <div className="border-b border-[#DCE4EE] pb-5">
+        <h1 className="text-xl font-bold text-[#0B1F3A] tracking-tight">Organization Audit Trail</h1>
+        <p className="text-xs text-[#64748B] mt-1">
           Immutable event log of user logins, lead creations, queue assignments, calls, and security events.
         </p>
       </div>
 
       {/* FILTERS */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-[12px] border border-[#DCE4EE] shadow-sm">
         <div className="flex-1 max-w-md">
           <SearchBar
             value={search}
@@ -79,7 +79,7 @@ export const OwnerActivityPage: React.FC = () => {
             setActionFilter(e.target.value);
             setCurrentPage(1);
           }}
-          className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-emerald-500"
+          className="px-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] focus:outline-none focus:border-[#0B1F3A]"
         >
           <option value="ALL">All Actions</option>
           <option value="CALL_COMPLETED">CALL_COMPLETED</option>
@@ -93,10 +93,10 @@ export const OwnerActivityPage: React.FC = () => {
       </div>
 
       {/* LOGS TABLE */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+      <div className="rounded-[12px] border border-[#DCE4EE] bg-white overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="bg-slate-950/70 text-slate-400 border-b border-slate-800 uppercase tracking-wider font-semibold">
+            <thead className="bg-[#F6F8FB] text-[#64748B] border-b border-[#DCE4EE] uppercase tracking-wider font-semibold">
               <tr>
                 <th className="py-3 px-4">Timestamp</th>
                 <th className="py-3 px-3">Action</th>
@@ -106,10 +106,10 @@ export const OwnerActivityPage: React.FC = () => {
                 <th className="py-3 px-4">Audit Metadata</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60">
+            <tbody className="divide-y divide-[#DCE4EE]">
               {paginatedLogs.map((log) => (
-                <tr key={log.id} className="hover:bg-slate-800/40 transition-colors">
-                  <td className="py-3 px-4 text-slate-400 font-mono text-[11px] whitespace-nowrap">
+                <tr key={log.id} className="hover:bg-[#F6F8FB]/60 transition-colors">
+                  <td className="py-3 px-4 text-[#64748B] font-mono text-[11px] whitespace-nowrap">
                     {formatDateTime(log.created_at)}
                   </td>
 
@@ -117,27 +117,27 @@ export const OwnerActivityPage: React.FC = () => {
                     <span
                       className={`inline-flex items-center px-2 py-0.5 rounded font-mono text-[11px] font-semibold border ${
                         log.action.includes('EXPORT') || log.action.includes('SECURITY')
-                          ? 'bg-rose-500/10 text-rose-400 border-rose-500/25'
+                          ? 'bg-rose-50 text-[#C53030] border-rose-200'
                           : log.action.includes('CALL')
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
+                          ? 'bg-emerald-50 text-[#16845B] border-emerald-200'
                           : log.action.includes('ASSIGN')
-                          ? 'bg-sky-500/10 text-sky-400 border-sky-500/25'
-                          : 'bg-slate-800 text-slate-300 border-slate-700'
+                          ? 'bg-blue-50 text-[#1E4D8F] border-blue-200'
+                          : 'bg-[#F6F8FB] text-[#64748B] border-[#DCE4EE]'
                       }`}
                     >
                       {log.action}
                     </span>
                   </td>
 
-                  <td className="py-3 px-3 font-medium text-white">{log.user_name || 'System'}</td>
+                  <td className="py-3 px-3 font-medium text-[#172B4D]">{log.user_name || 'System'}</td>
 
                   <td className="py-3 px-3">
-                    <span className="text-slate-400 text-[11px]">{log.user_role || 'SYSTEM'}</span>
+                    <span className="text-[#64748B] text-[11px]">{log.user_role || 'SYSTEM'}</span>
                   </td>
 
-                  <td className="py-3 px-3 capitalize text-slate-300">{log.entity_type}</td>
+                  <td className="py-3 px-3 capitalize text-[#172B4D]">{log.entity_type}</td>
 
-                  <td className="py-3 px-4 font-mono text-[11px] text-slate-400 max-w-sm truncate">
+                  <td className="py-3 px-4 font-mono text-[11px] text-[#64748B] max-w-sm truncate">
                     {log.metadata ? JSON.stringify(log.metadata) : '—'}
                   </td>
                 </tr>

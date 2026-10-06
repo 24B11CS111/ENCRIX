@@ -21,12 +21,13 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
   };
 
   const getInitials = (n: string) => {
-    return n
+    return (n || 'User')
       .split(' ')
+      .filter(Boolean)
       .map((part) => part[0])
       .join('')
       .toUpperCase()
-      .slice(0, 2);
+      .slice(0, 2) || 'U';
   };
 
   if (avatarUrl) {
@@ -35,7 +36,7 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
         src={avatarUrl}
         alt={name}
         className={cn(
-          'rounded-full object-cover border border-slate-700 bg-slate-800',
+          'rounded-full object-cover border border-[#DCE4EE] bg-[#F6F8FB]',
           sizeClasses[size],
           className
         )}
@@ -46,7 +47,7 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
   return (
     <div
       className={cn(
-        'rounded-full bg-emerald-950/80 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-medium',
+        'rounded-full bg-[#EAF2FB] border border-[#C7DCF3] text-[#0B1F3A] flex items-center justify-center font-medium shadow-subtle',
         sizeClasses[size],
         className
       )}

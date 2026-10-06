@@ -90,75 +90,75 @@ export const OwnerAnalyticsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="border-b border-slate-800 pb-5">
-        <h1 className="text-xl font-bold text-white tracking-tight">Organization Analytics & BI</h1>
-        <p className="text-xs text-slate-400 mt-1">
+      <div className="border-b border-[#DCE4EE] pb-5">
+        <h1 className="text-xl font-bold text-[#0B1F3A] tracking-tight">Organization Analytics & BI</h1>
+        <p className="text-xs text-[#64748B] mt-1">
           Real-time calling conversion funnel, agent productivity and marketing acquisition channels.
         </p>
       </div>
 
       {/* METRIC STRIP (Section 34) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-[11px] text-slate-400 block mb-1">Total Leads</span>
-          <span className="text-2xl font-bold text-white">{totalLeads}</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <span className="text-[11px] text-[#64748B] block mb-1">Total Leads</span>
+          <span className="text-2xl font-bold text-[#0B1F3A]">{totalLeads}</span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-[11px] text-emerald-400 block mb-1">Interested + Converted</span>
-          <span className="text-2xl font-bold text-emerald-400">{interested + converted}</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <span className="text-[11px] text-[#64748B] block mb-1">Interested + Converted</span>
+          <span className="text-2xl font-bold text-[#16845B]">{interested + converted}</span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-[11px] text-sky-400 block mb-1">Total Calls Placed</span>
-          <span className="text-2xl font-bold text-sky-400">{totalCalls}</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <span className="text-[11px] text-[#64748B] block mb-1">Total Calls Placed</span>
+          <span className="text-2xl font-bold text-[#1E4D8F]">{totalCalls}</span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-[11px] text-amber-400 block mb-1">Avg Call Duration</span>
-          <span className="text-2xl font-bold text-amber-400 font-mono">
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <span className="text-[11px] text-[#64748B] block mb-1">Avg Call Duration</span>
+          <span className="text-2xl font-bold text-[#0B1F3A] font-mono">
             {formatDuration(avgCallDuration)}
           </span>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-          <span className="text-[11px] text-purple-400 block mb-1">Pipeline Conversion</span>
-          <span className="text-2xl font-bold text-white">{conversionRate}%</span>
+        <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-sm">
+          <span className="text-[11px] text-[#64748B] block mb-1">Pipeline Conversion</span>
+          <span className="text-2xl font-bold text-[#0B1F3A]">{conversionRate}%</span>
         </div>
       </div>
 
       {/* CHARTS GRID */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Source acquisition */}
-        <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
-          <h2 className="text-sm font-semibold text-white">Lead Acquisition Sources</h2>
+        <div className="p-5 rounded-[16px] bg-white border border-[#DCE4EE] shadow-sm space-y-4">
+          <h2 className="text-sm font-semibold text-[#0B1F3A]">Lead Acquisition Sources</h2>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={sourceData} layout="vertical" margin={{ left: 20, right: 20 }}>
-                <XAxis type="number" stroke="#64748b" fontSize={11} />
-                <YAxis dataKey="name" type="category" stroke="#94a3b8" fontSize={11} width={90} />
+                <XAxis type="number" stroke="#64748B" fontSize={11} />
+                <YAxis dataKey="name" type="category" stroke="#64748B" fontSize={11} width={90} />
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px' }}
+                  contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '8px', fontSize: '12px', color: '#172B4D', boxShadow: '0 4px 12px rgba(11,31,58,0.08)' }}
                 />
-                <Bar dataKey="count" fill="#10b981" radius={[0, 4, 4, 0]} name="Leads" />
+                <Bar dataKey="count" fill="#1E4D8F" radius={[0, 4, 4, 0]} name="Leads" />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
         {/* Telecaller Activity Chart */}
-        <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
-          <h2 className="text-sm font-semibold text-white">Telecaller Productive Output</h2>
+        <div className="p-5 rounded-[16px] bg-white border border-[#DCE4EE] shadow-sm space-y-4">
+          <h2 className="text-sm font-semibold text-[#0B1F3A]">Telecaller Productive Output</h2>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={telecallerActivityData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <XAxis dataKey="name" stroke="#64748b" fontSize={11} />
-                <YAxis stroke="#64748b" fontSize={11} />
+                <XAxis dataKey="name" stroke="#64748B" fontSize={11} />
+                <YAxis stroke="#64748B" fontSize={11} />
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px' }}
+                  contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#DCE4EE', borderRadius: '8px', fontSize: '12px', color: '#172B4D', boxShadow: '0 4px 12px rgba(11,31,58,0.08)' }}
                 />
-                <Bar dataKey="calls" fill="#38bdf8" name="Calls Placed" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="positive" fill="#10b981" name="Positive Leads" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="calls" fill="#1E4D8F" name="Calls Placed" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="positive" fill="#16845B" name="Positive Leads" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

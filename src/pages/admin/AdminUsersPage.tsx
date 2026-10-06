@@ -47,15 +47,15 @@ export const AdminUsersPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="border-b border-slate-800 pb-5">
-        <h1 className="text-xl font-bold text-white tracking-tight">Platform User Governance</h1>
-        <p className="text-xs text-slate-400 mt-1">
+      <div className="border-b border-[#DCE4EE] pb-5">
+        <h1 className="text-xl font-bold text-[#0B1F3A] tracking-tight">Platform User Governance</h1>
+        <p className="text-xs text-[#64748B] mt-1">
           Supervise user accounts, role allocations and account access statuses across all customer organizations.
         </p>
       </div>
 
       {/* FILTERS */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-[12px] border border-[#DCE4EE] shadow-sm">
         <div className="flex-1 max-w-md">
           <SearchBar
             value={search}
@@ -68,7 +68,7 @@ export const AdminUsersPage: React.FC = () => {
           <select
             value={orgFilter}
             onChange={(e) => setOrgFilter(e.target.value)}
-            className="px-2.5 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-emerald-500"
+            className="px-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] focus:outline-none focus:border-[#0B1F3A]"
           >
             <option value="ALL">All Organizations</option>
             {orgs.map((o) => (
@@ -81,7 +81,7 @@ export const AdminUsersPage: React.FC = () => {
           <select
             value={roleFilter}
             onChange={(e) => setRoleFilter(e.target.value)}
-            className="px-2.5 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-emerald-500"
+            className="px-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] focus:outline-none focus:border-[#0B1F3A]"
           >
             <option value="ALL">All Roles</option>
             <option value="ADMIN">ADMIN</option>
@@ -92,9 +92,9 @@ export const AdminUsersPage: React.FC = () => {
       </div>
 
       {/* TABLE */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+      <div className="rounded-[12px] border border-[#DCE4EE] bg-white overflow-hidden shadow-sm">
         <table className="w-full text-left text-xs">
-          <thead className="bg-slate-950/70 text-slate-400 border-b border-slate-800 uppercase tracking-wider font-semibold">
+          <thead className="bg-[#F6F8FB] text-[#64748B] border-b border-[#DCE4EE] uppercase tracking-wider font-semibold">
             <tr>
               <th className="py-3 px-4">User</th>
               <th className="py-3 px-3">Role</th>
@@ -104,17 +104,17 @@ export const AdminUsersPage: React.FC = () => {
               <th className="py-3 px-4 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800/60">
+          <tbody className="divide-y divide-[#DCE4EE]">
             {filteredUsers.map((u) => {
               const org = orgs.find((o) => o.id === u.organization_id);
               return (
-                <tr key={u.id} className="hover:bg-slate-800/40 transition-colors">
+                <tr key={u.id} className="hover:bg-[#F6F8FB]/60 transition-colors">
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-2.5">
                       <UserAvatar name={u.full_name} avatarUrl={u.avatar_url} size="sm" />
                       <div>
-                        <div className="font-semibold text-white">{u.full_name}</div>
-                        <div className="text-[11px] text-slate-400 font-mono">{u.phone || '—'}</div>
+                        <div className="font-semibold text-[#172B4D]">{u.full_name}</div>
+                        <div className="text-[11px] text-[#64748B] font-mono">{u.phone || '—'}</div>
                       </div>
                     </div>
                   </td>
@@ -123,40 +123,40 @@ export const AdminUsersPage: React.FC = () => {
                     <span
                       className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${
                         u.role === 'ADMIN'
-                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                          ? 'bg-[#EAF2FB] text-[#1E4D8F] border-blue-200'
                           : u.role === 'OWNER'
-                          ? 'bg-sky-500/10 text-sky-400 border-sky-500/30'
-                          : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                          ? 'bg-[#0B1F3A]/5 text-[#0B1F3A] border-[#0B1F3A]/20'
+                          : 'bg-emerald-50 text-[#16845B] border-emerald-200'
                       }`}
                     >
                       {u.role}
                     </span>
                   </td>
 
-                  <td className="py-3 px-3 text-slate-300">{org?.name || 'Platform'}</td>
+                  <td className="py-3 px-3 text-[#172B4D]">{org?.name || 'Platform'}</td>
 
                   <td className="py-3 px-3">
                     <span
                       className={`px-2 py-0.5 rounded text-[11px] font-medium border ${
                         u.status === 'ACTIVE'
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                          : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                          ? 'bg-emerald-50 text-[#16845B] border-emerald-200'
+                          : 'bg-rose-50 text-[#C53030] border-rose-200'
                       }`}
                     >
                       {u.status}
                     </span>
                   </td>
 
-                  <td className="py-3 px-3 text-slate-400 font-mono text-[11px]">{formatDate(u.created_at)}</td>
+                  <td className="py-3 px-3 text-[#64748B] font-mono text-[11px]">{formatDate(u.created_at)}</td>
 
                   <td className="py-3 px-4 text-right">
                     {u.role !== 'ADMIN' && (
                       <button
                         onClick={() => handleToggleStatus(u)}
-                        className={`p-1.5 rounded transition-colors ${
+                        className={`p-1.5 rounded-[8px] transition-colors ${
                           u.status === 'ACTIVE'
-                            ? 'text-slate-400 hover:text-rose-400 hover:bg-rose-950/40'
-                            : 'text-emerald-400 hover:bg-emerald-950/40'
+                            ? 'text-[#64748B] hover:text-[#C53030] hover:bg-rose-50'
+                            : 'text-[#16845B] hover:bg-emerald-50'
                         }`}
                         title={u.status === 'ACTIVE' ? 'Disable Account' : 'Activate Account'}
                       >

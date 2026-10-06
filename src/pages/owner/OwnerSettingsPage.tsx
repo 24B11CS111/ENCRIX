@@ -32,15 +32,15 @@ export const OwnerSettingsPage: React.FC = () => {
   return (
     <div className="max-w-3xl space-y-6">
       {/* Header */}
-      <div className="border-b border-slate-800 pb-5">
-        <h1 className="text-xl font-bold text-white tracking-tight">Organization Settings</h1>
-        <p className="text-xs text-slate-400 mt-1">
+      <div className="border-b border-[#DCE4EE] pb-5">
+        <h1 className="text-xl font-bold text-[#0B1F3A] tracking-tight">Organization Settings</h1>
+        <p className="text-xs text-[#64748B] mt-1">
           Configure calling gateway, statutory recording policies, and organization profile.
         </p>
       </div>
 
       {savedNotice && (
-        <div className="p-3 bg-emerald-950/60 border border-emerald-500/40 rounded-xl text-xs text-emerald-400 flex items-center gap-2">
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-[10px] text-xs text-[#16845B] flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4" />
           <span>Configuration saved successfully.</span>
         </div>
@@ -48,48 +48,48 @@ export const OwnerSettingsPage: React.FC = () => {
 
       <form onSubmit={handleSave} className="space-y-6">
         {/* Organization Info */}
-        <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
-          <div className="flex items-center gap-2 text-white font-semibold text-sm">
-            <Building className="w-4 h-4 text-emerald-400" />
+        <div className="p-5 rounded-[16px] bg-white border border-[#DCE4EE] shadow-sm space-y-4">
+          <div className="flex items-center gap-2 text-[#0B1F3A] font-semibold text-sm">
+            <Building className="w-4 h-4 text-[#1E4D8F]" />
             <span>Organization Profile</span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
             <div>
-              <label className="text-slate-400 block mb-1">Company Name</label>
+              <label className="text-[#64748B] block mb-1">Company Name</label>
               <input
                 type="text"
                 disabled
                 value={organization?.name || 'Vertex Consultancy'}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-300 cursor-not-allowed"
+                className="w-full px-3 py-2 bg-[#F6F8FB] border border-[#DCE4EE] rounded-[10px] text-[#64748B] cursor-not-allowed"
               />
             </div>
 
             <div>
-              <label className="text-slate-400 block mb-1">Industry</label>
+              <label className="text-[#64748B] block mb-1">Industry</label>
               <input
                 type="text"
                 disabled
                 value={organization?.industry || 'Education Consultancy'}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-300 cursor-not-allowed"
+                className="w-full px-3 py-2 bg-[#F6F8FB] border border-[#DCE4EE] rounded-[10px] text-[#64748B] cursor-not-allowed"
               />
             </div>
           </div>
         </div>
 
         {/* Telephony Gateway Settings (Section 20 & 21) */}
-        <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
-          <div className="flex items-center gap-2 text-white font-semibold text-sm">
-            <PhoneCall className="w-4 h-4 text-emerald-400" />
+        <div className="p-5 rounded-[16px] bg-white border border-[#DCE4EE] shadow-sm space-y-4">
+          <div className="flex items-center gap-2 text-[#0B1F3A] font-semibold text-sm">
+            <PhoneCall className="w-4 h-4 text-[#1E4D8F]" />
             <span>Telephony Infrastructure Provider</span>
           </div>
 
           <div className="space-y-2 text-xs">
-            <label className="text-slate-400 block">Active Provider Gateway</label>
+            <label className="text-[#64748B] block">Active Provider Gateway</label>
             <select
               value={provider}
               onChange={(e) => setProvider(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500"
+              className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] focus:outline-none focus:border-[#0B1F3A]"
             >
               <option value="MOCK">Mock Telephony Gateway (Development & Evaluation)</option>
               <option value="TWILIO">Twilio Voice SIP Trunking</option>
@@ -100,8 +100,8 @@ export const OwnerSettingsPage: React.FC = () => {
 
           <div className="pt-2 flex items-center justify-between text-xs">
             <div>
-              <span className="text-slate-200 font-medium block">Automatic Call Consent Notice</span>
-              <span className="text-slate-500 text-[11px]">
+              <span className="text-[#172B4D] font-medium block">Automatic Call Consent Notice</span>
+              <span className="text-[#64748B] text-[11px]">
                 Plays statutory recording advisory to customer before agent connects
               </span>
             </div>
@@ -109,7 +109,7 @@ export const OwnerSettingsPage: React.FC = () => {
               type="checkbox"
               checked={consentPolicy}
               onChange={(e) => setConsentPolicy(e.target.checked)}
-              className="w-4 h-4 rounded text-emerald-600 bg-slate-950 border-slate-700"
+              className="w-4 h-4 rounded text-[#0B1F3A] bg-white border-[#DCE4EE]"
             />
           </div>
         </div>
@@ -119,7 +119,7 @@ export const OwnerSettingsPage: React.FC = () => {
           <button
             type="button"
             onClick={handleResetSandbox}
-            className="flex items-center gap-1.5 px-3 py-2 text-rose-400 hover:bg-rose-950/40 rounded-lg text-xs font-medium border border-rose-500/20 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 text-[#C53030] hover:bg-rose-50 rounded-[10px] text-xs font-medium border border-rose-200 transition-colors shadow-sm"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>Reset Demo Sandbox</span>
@@ -127,7 +127,7 @@ export const OwnerSettingsPage: React.FC = () => {
 
           <button
             type="submit"
-            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg shadow-sm transition-all"
+            className="px-5 py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white text-xs font-semibold rounded-[10px] shadow-sm transition-all"
           >
             Save Settings
           </button>

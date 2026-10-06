@@ -11,13 +11,15 @@ export const PriorityBadge: React.FC<PriorityBadgeProps> = ({ priority, classNam
   const getStyles = () => {
     switch (priority) {
       case 'URGENT':
-        return 'text-rose-400 bg-rose-500/10 border-rose-500/30';
+        return 'text-[#C53030] bg-[#FEECEB] border-[#F8C8C6] font-semibold';
       case 'HIGH':
-        return 'text-amber-400 bg-amber-500/10 border-amber-500/30';
+        return 'text-[#B7791F] bg-[#FEF6E7] border-[#FBDFA8]';
       case 'MEDIUM':
-        return 'text-blue-400 bg-blue-500/10 border-blue-500/30';
+        return 'text-[#1E4D8F] bg-[#EAF2FB] border-[#C7DCF3]';
       case 'LOW':
-        return 'text-slate-400 bg-slate-500/10 border-slate-500/30';
+        return 'text-[#64748B] bg-[#F1F5F9] border-[#E2E8F0]';
+      default:
+        return 'text-[#64748B] bg-[#F1F5F9] border-[#E2E8F0]';
     }
   };
 
