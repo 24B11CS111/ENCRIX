@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import Papa from 'papaparse';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
-import { ColumnMapping, ParsedLeadRow, ImportSummary } from '@/types';
+import { ColumnMapping, ParsedLeadRow, ImportSummary, DistributionResult } from '@/types';
 import {
   Upload,
   CheckCircle,
@@ -11,6 +11,7 @@ import {
   FileSpreadsheet,
   Sparkles,
   ArrowUp,
+  Shuffle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { sanitizeFormulaInjection, sanitizeText } from '@/lib/validation';
@@ -37,6 +38,7 @@ export const LeadImportWizard: React.FC = () => {
   });
 
   const [isImporting, setIsImporting] = useState(false);
+  const [distributionResult, setDistributionResult] = useState<DistributionResult | null>(null);
 
   // STEP 1: Handle File Upload & Parse
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -227,7 +229,12 @@ Rahul Dravid,+91 9845012340,rahul.d@duplicate.com,Referral,HIGH,Duplicate phone 
           notes: r.notes,
         }));
 
-      db.importLeads(validLeadsToInsert, profile);
+      const res = db.importLeads(validLeadsToInsert, profile);
+      if (res.distribution) {
+        setDistributionResult(res.distribution);
+      } else {
+        setDistributionResult(null);
+      }
       setStep(4);
     } catch (err) {
       console.error('Import error:', err);
@@ -301,7 +308,7 @@ Rahul Dravid,+91 9845012340,rahul.d@duplicate.com,Referral,HIGH,Duplicate phone 
             </label>
           </div>
 
-          {/* Quick Demo Preloader */}
+          {/* Sample Dataset Preloader */}
           <div className="flex items-center justify-between p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-subtle">
             <div className="flex items-center gap-3">
               <Sparkles className="w-5 h-5 text-[#1E4D8F]" />
@@ -484,9 +491,38 @@ Rahul Dravid,+91 9845012340,rahul.d@duplicate.com,Referral,HIGH,Duplicate phone 
           </div>
           <h2 className="text-xl font-bold text-[#0B1F3A]">Import Successfully Completed!</h2>
           <p className="text-xs text-[#64748B] max-w-md mx-auto">
-            <strong className="text-[#16845B]">{summary.validRows} leads</strong> have been persisted with status{' '}
-            <span className="font-mono text-[#0B1F3A]">NEW</span>. You can now distribute them via round-robin or assign them directly to telecallers.
+            <strong className="text-[#16845B]">{summary.validRows} leads</strong> have been persisted.
           </p>
+
+          {/* Smart Distribution Result Card */}
+          {distributionResult ? (
+            <div className="max-w-md mx-auto p-4 rounded-[12px] bg-[#EAF2FB] border border-[#C7DCF3] text-left space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[#0B1F3A] flex items-center gap-1.5">
+                  <Shuffle className="w-3.5 h-3.5 text-[#1E4D8F]" />
+                  Automated Distribution Executed ({distributionResult.mode})
+                </span>
+                <span className="text-[11px] font-bold text-[#16845B]">
+                  {distributionResult.assigned_count} Assigned
+                </span>
+              </div>
+              <p className="text-[11px] text-[#64748B]">
+                Leads were automatically distributed across active telecallers according to your organization rules.
+              </p>
+              {distributionResult.unassigned_count > 0 && (
+                <div className="text-[11px] text-[#B7791F] flex items-center gap-1 pt-1 border-t border-[#C7DCF3]">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    {distributionResult.unassigned_count} leads placed in unassigned queue ({distributionResult.unassigned_reason || 'overflow'}).
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="max-w-md mx-auto p-3.5 rounded-[10px] bg-[#F6F8FB] border border-[#DCE4EE] text-left text-xs text-[#64748B]">
+              All leads have been added to the <strong className="text-[#0B1F3A]">Unassigned Queue</strong>. You can distribute them manually or configure automatic rules in Lead Distribution.
+            </div>
+          )}
 
           <div className="flex items-center justify-center gap-3 pt-4">
             <button

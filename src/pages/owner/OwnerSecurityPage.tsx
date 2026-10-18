@@ -32,7 +32,7 @@ export const OwnerSecurityPage: React.FC = () => {
       if (type === 'SECURITY_EVENT_RAISED') {
         loadData();
       }
-    });
+    }, profile);
 
     return () => unsubscribe();
   }, [profile]);

@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/features/auth/AuthContext';
 import { RoleGate } from '@/features/auth/RoleGate';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { AppSplashScreen } from '@/components/AppSplashScreen';
 
 // Public Pages
 import { LandingPage } from '@/pages/LandingPage';
@@ -10,6 +11,7 @@ import { LoginPage } from '@/pages/auth/LoginPage';
 import { RegisterPage } from '@/pages/auth/RegisterPage';
 import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from '@/pages/auth/ResetPasswordPage';
+import { AcceptInvitationPage } from '@/pages/auth/AcceptInvitationPage';
 
 // Owner Pages
 import { OwnerDashboard } from '@/pages/owner/OwnerDashboard';
@@ -59,6 +61,8 @@ const AppRoutes: React.FC = () => {
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/onboarding" element={<RegisterPage />} />
+      <Route path="/accept-invitation" element={<AcceptInvitationPage />} />
+      <Route path="/invite" element={<AcceptInvitationPage />} />
 
       {/* Owner Protected Routes */}
       <Route
@@ -123,14 +127,48 @@ const AppRoutes: React.FC = () => {
   );
 };
 
+const AppContent: React.FC = () => {
+  const { isLoading } = useAuth();
+  const [showSplash, setShowSplash] = React.useState(() => {
+    if (typeof window !== 'undefined') {
+      return !sessionStorage.getItem('encrix_splash_completed');
+    }
+    return true;
+  });
+
+  const handleSplashComplete = () => {
+    if (typeof window !== 'undefined') {
+      try {
+        sessionStorage.setItem('encrix_splash_completed', 'true');
+      } catch {
+        // Safe handling if storage quota or access blocked
+      }
+    }
+    setShowSplash(false);
+  };
+
+  return (
+    <>
+      {showSplash && (
+        <AppSplashScreen
+          isLoading={isLoading}
+          onComplete={handleSplashComplete}
+        />
+      )}
+      <AppRoutes />
+    </>
+  );
+};
+
 export const App: React.FC = () => {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <AppContent />
       </AuthProvider>
     </BrowserRouter>
   );
 };
 
 export default App;
+

@@ -29,7 +29,7 @@ export const OwnerActivityPage: React.FC = () => {
       if (type === 'ACTIVITY_LOGGED') {
         loadData();
       }
-    });
+    }, profile);
 
     return () => unsubscribe();
   }, [profile]);

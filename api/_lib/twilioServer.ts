@@ -12,7 +12,7 @@ export function getTwilioServerConfig(): TwilioServerConfig {
   return {
     accountSid: process.env.TWILIO_ACCOUNT_SID || 'AC_prod_placeholder_sid_leadvault',
     authToken: process.env.TWILIO_AUTH_TOKEN || 'prod_auth_token_placeholder_leadvault',
-    callerId: process.env.TWILIO_CALLER_ID || '+15550005678',
+    callerId: process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_CALLER_ID || '+15550005678',
     voiceWebhookUrl:
       process.env.TWILIO_VOICE_WEBHOOK_URL ||
       'https://app.leadvault.io/api/telephony/voice',

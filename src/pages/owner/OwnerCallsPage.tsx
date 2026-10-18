@@ -16,6 +16,9 @@ import {
 } from 'lucide-react';
 import { EmptyState } from '@/components/common/EmptyState';
 
+import { useRef } from 'react';
+import { recordingService } from '@/services/telephony/recordingService';
+
 export const OwnerCallsPage: React.FC = () => {
   const { profile } = useAuth();
   const [calls, setCalls] = useState<Call[]>([]);
@@ -25,6 +28,8 @@ export const OwnerCallsPage: React.FC = () => {
   const [telecallerFilter, setTelecallerFilter] = useState('ALL');
   const [outcomeFilter, setOutcomeFilter] = useState('ALL');
   const [playingCallId, setPlayingCallId] = useState<string | null>(null);
+  const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 12;
@@ -42,10 +47,56 @@ export const OwnerCallsPage: React.FC = () => {
       if (type === 'CALL_RECORDED' || type === 'CALL_OUTCOME_SAVED') {
         loadData();
       }
-    });
+    }, profile);
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+    };
   }, [profile]);
+
+  const handlePlayRecording = async (call: Call) => {
+    if (playingCallId === call.id) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      setPlayingCallId(null);
+      return;
+    }
+
+    try {
+      setLoadingAudioId(call.id);
+      let url = call.recording_url;
+      try {
+        const signed = await recordingService.fetchRecordingSignedUrl(call.id);
+        if (signed?.recordingUrl) {
+          url = signed.recordingUrl;
+        }
+      } catch {
+        // Fallback
+      }
+
+      if (!url) return;
+
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => setPlayingCallId(null);
+      audio.onerror = () => setPlayingCallId(null);
+
+      await audio.play().catch(() => {});
+      setPlayingCallId(call.id);
+    } catch {
+      // Audio error handled
+    } finally {
+      setLoadingAudioId(null);
+    }
+  };
 
   const filteredCalls = calls.filter((call) => {
     const matchSearch =
@@ -204,19 +255,20 @@ export const OwnerCallsPage: React.FC = () => {
                     <td className="py-3 px-4 text-right">
                       {call.recording_url ? (
                         <button
-                          onClick={() =>
-                            setPlayingCallId(playingCallId === call.id ? null : call.id)
-                          }
+                          onClick={() => handlePlayRecording(call)}
+                          disabled={loadingAudioId === call.id}
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[8px] text-[11px] font-medium border transition-colors ${
                             playingCallId === call.id
-                              ? 'bg-[#0B1F3A] border-[#0B1F3A] text-white'
+                              ? 'bg-[#0B1F3A] border-[#0B1F3A] text-white shadow-sm'
                               : 'bg-white border-[#DCE4EE] text-[#172B4D] hover:bg-[#F6F8FB]'
-                          }`}
+                          } disabled:opacity-50`}
                         >
-                          {playingCallId === call.id ? (
+                          {loadingAudioId === call.id ? (
+                            <span>Loading...</span>
+                          ) : playingCallId === call.id ? (
                             <>
                               <Volume2 className="w-3.5 h-3.5 text-white animate-bounce" />
-                              <span>Playing...</span>
+                              <span>Stop</span>
                             </>
                           ) : (
                             <>

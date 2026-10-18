@@ -29,7 +29,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { formatRelativeTime } from '@/lib/utils';
 
 export const OwnerDashboard: React.FC = () => {
-  const { profile, organization } = useAuth();
+  const { profile } = useAuth();
   const navigate = useNavigate();
 
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -65,7 +65,7 @@ export const OwnerDashboard: React.FC = () => {
       ) {
         loadData();
       }
-    });
+    }, profile);
 
     return () => unsubscribe();
   }, [profile]);
@@ -74,14 +74,30 @@ export const OwnerDashboard: React.FC = () => {
   const assignedLeads = leads.filter((l) => l.assigned_to).length;
   const unassignedLeads = totalLeads - assignedLeads;
 
+  // Real-time Live Calls in progress
+  const liveActiveCalls = calls.filter(
+    (c) => c.status === 'INITIATED' || c.status === 'RINGING' || c.status === 'IN_PROGRESS' || c.status === 'CONNECTED'
+  );
+
   // Calls today (within last 24h)
   const oneDayAgo = new Date(Date.now() - 86400000);
   const callsToday = calls.filter((c) => new Date(c.created_at) > oneDayAgo).length;
 
+  // Operational metrics
+  const totalCallsCount = calls.length;
+  const totalCallSeconds = calls.reduce((sum, c) => sum + (c.duration_seconds || 0), 0);
+  const totalCallMinutes = Math.round(totalCallSeconds / 60);
+  const answeredCallsCount = calls.filter(
+    (c) => (c.duration_seconds || 0) > 0 || c.status === 'COMPLETED'
+  ).length;
+  const connectRate = totalCallsCount > 0 ? Math.round((answeredCallsCount / totalCallsCount) * 100) : 0;
+
   const conversions = leads.filter(
     (l) => l.status === 'INTERESTED' || l.status === 'CONVERTED'
   ).length;
-  const activeFollowUps = followUps.filter((f) => f.status === 'PENDING').length;
+  const activeFollowUps = followUps.filter(
+    (f) => f.status !== 'COMPLETED' && f.status !== 'CANCELLED' && f.status !== 'RESCHEDULED'
+  ).length;
   const securityCount = securityEvents.length;
 
   // Chart data: Outcome distribution
@@ -93,7 +109,7 @@ export const OwnerDashboard: React.FC = () => {
     { name: 'Not Interested', value: leads.filter((l) => l.status === 'NOT_INTERESTED').length, color: '#64748B' },
   ];
 
-  // Chart data: Telecaller performance comparison
+  // Chart data: Telecaller performance comparison & shift status
   const telecallerData = telecallers.map((tc) => {
     const callerLeads = leads.filter((l) => l.assigned_to === tc.id);
     const callerCalls = calls.filter((c) => c.telecaller_id === tc.id);
@@ -101,11 +117,16 @@ export const OwnerDashboard: React.FC = () => {
       (l) => l.status === 'INTERESTED' || l.status === 'CONVERTED'
     ).length;
 
+    const isCalling = liveActiveCalls.some((c) => c.telecaller_id === tc.id);
+    const shiftStatus = tc.status === 'ACTIVE' ? (isCalling ? 'ON_CALL' : 'AVAILABLE') : 'OFFLINE';
+
     return {
       name: tc.full_name.split(' ')[0],
       assigned: callerLeads.length,
       calls: callerCalls.length,
       positive: callerPositives,
+      shiftStatus,
+      status: tc.status,
     };
   });
 
@@ -120,7 +141,7 @@ export const OwnerDashboard: React.FC = () => {
             Good morning, {firstName}
           </h1>
           <p className="text-xs text-[#64748B] mt-1 font-medium">
-            Monitor your lead operations and team activity.
+            Monitor real-time lead operations, telephony queue, and agent performance.
           </p>
         </div>
 
@@ -160,10 +181,24 @@ export const OwnerDashboard: React.FC = () => {
         <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card">
           <div className="flex items-center justify-between text-[#64748B] mb-1">
             <span className="text-[11px] font-semibold uppercase tracking-wider">ACTIVE CALLS</span>
-            <PhoneCall className="w-4 h-4 text-[#1E4D8F]" />
+            <div className="flex items-center gap-1.5">
+              {liveActiveCalls.length > 0 && (
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+              )}
+              <PhoneCall className="w-4 h-4 text-[#1E4D8F]" />
+            </div>
           </div>
-          <div className="text-2xl font-bold text-[#0B1F3A] tracking-tight">{callsToday}</div>
-          <div className="text-[11px] text-[#16845B] mt-1">Logged within last 24h</div>
+          <div className="text-2xl font-bold text-[#0B1F3A] tracking-tight">
+            {liveActiveCalls.length > 0 ? liveActiveCalls.length : callsToday}
+          </div>
+          <div className="text-[11px] text-[#16845B] mt-1 font-medium">
+            {liveActiveCalls.length > 0
+              ? `${liveActiveCalls.length} call in progress now`
+              : `${callsToday} logged in last 24h`}
+          </div>
         </div>
 
         <div className="p-4 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card">
@@ -191,6 +226,28 @@ export const OwnerDashboard: React.FC = () => {
           </div>
           <div className="text-2xl font-bold text-[#0B1F3A] tracking-tight">{securityCount}</div>
           <div className="text-[11px] text-[#16845B] mt-1">Protected by RLS</div>
+        </div>
+      </div>
+
+      {/* OPERATIONAL TELEPHONY METRICS (Section 4) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-white p-4 rounded-[12px] border border-[#DCE4EE] shadow-card text-xs">
+        <div>
+          <span className="text-[#64748B] text-[11px] uppercase tracking-wider font-semibold">Total Outreach Calls</span>
+          <div className="text-lg font-bold text-[#0B1F3A] mt-0.5">{totalCallsCount}</div>
+        </div>
+        <div>
+          <span className="text-[#64748B] text-[11px] uppercase tracking-wider font-semibold">Talk Time</span>
+          <div className="text-lg font-bold text-[#0B1F3A] mt-0.5">{totalCallMinutes} minutes</div>
+        </div>
+        <div>
+          <span className="text-[#64748B] text-[11px] uppercase tracking-wider font-semibold">Call Connect Rate</span>
+          <div className="text-lg font-bold text-[#16845B] mt-0.5">{connectRate}%</div>
+        </div>
+        <div>
+          <span className="text-[#64748B] text-[11px] uppercase tracking-wider font-semibold">Live Telecaller Presence</span>
+          <div className="text-lg font-bold text-[#1E4D8F] mt-0.5 flex items-center gap-2">
+            <span>{telecallers.filter((tc) => tc.status === 'ACTIVE').length} / {telecallers.length} Active</span>
+          </div>
         </div>
       </div>
 
@@ -293,8 +350,8 @@ export const OwnerDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* RECENT LEADS & RECENT CALLS GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      {/* RECENT LEADS, CALLS & AUDIT LOG GRID (Section 4) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {/* Recent Leads */}
         <div className="p-5 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card space-y-4">
           <div className="flex items-center justify-between">
@@ -333,10 +390,10 @@ export const OwnerDashboard: React.FC = () => {
           )}
         </div>
 
-        {/* Live Call Activity */}
+        {/* Recent Call Activity */}
         <div className="p-5 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-[#0B1F3A]">Live Call Feed</h3>
+            <h3 className="text-sm font-semibold text-[#0B1F3A]">Recent Call Activity</h3>
             <button
               onClick={() => navigate('/owner/calls')}
               className="text-xs text-[#1E4D8F] hover:text-[#0B1F3A] font-semibold"
@@ -371,6 +428,50 @@ export const OwnerDashboard: React.FC = () => {
                   <span className="text-[10px] text-[#94A3B8] whitespace-nowrap">
                     {formatRelativeTime(call.created_at)}
                   </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Security & Audit Events Feed */}
+        <div className="p-5 rounded-[12px] bg-white border border-[#DCE4EE] shadow-card space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-[#0B1F3A]">Security & Audit Trail</h3>
+            <span className="text-[10px] text-[#16845B] font-semibold bg-[#EAF7EE] px-2 py-0.5 rounded-full border border-[#C3EBD0]">
+              RLS Guard Active
+            </span>
+          </div>
+
+          {securityEvents.length === 0 ? (
+            <EmptyState
+              icon={ShieldAlert}
+              title="No security anomalies"
+              description="Audit records, recording accesses, and security events will stream here live."
+            />
+          ) : (
+            <div className="divide-y divide-[#DCE4EE]">
+              {securityEvents.slice(0, 5).map((evt) => (
+                <div key={evt.id} className="py-2.5 space-y-1 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                        evt.severity === 'CRITICAL'
+                          ? 'bg-rose-100 text-rose-800'
+                          : evt.severity === 'HIGH'
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      {evt.event_type}
+                    </span>
+                    <span className="text-[10px] text-[#94A3B8]">
+                      {formatRelativeTime(evt.created_at)}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#172B4D] leading-tight line-clamp-2">
+                    {evt.description}
+                  </p>
                 </div>
               ))}
             </div>

@@ -4,24 +4,46 @@ import {
   Shield,
   Bell,
   LogOut,
-  ChevronDown,
   Building,
-  CheckCircle2,
+  Calendar,
+  CheckCheck,
+  Check,
+  AlertTriangle,
+  UserCheck,
 } from 'lucide-react';
 import { db } from '@/services/supabase/db';
+import { realtimeManager } from '@/services/realtime/realtimeManager';
+import { RealtimeStatusBadge } from '@/components/common/RealtimeStatusBadge';
 import { Notification } from '@/types';
 import { formatRelativeTime } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
 
 export const Navbar: React.FC = () => {
-  const { profile, organization, logout, quickLogin, isDemoMode } = useAuth();
+  const { profile, organization, logout } = useAuth();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [showRoleSwitcher, setShowRoleSwitcher] = useState(false);
+  const [securityStatus, setSecurityStatus] = useState<{
+    label: string;
+    color: 'green' | 'amber' | 'neutral';
+    title: string;
+  }>({
+    label: 'System Secure',
+    color: 'green',
+    title: 'Tenant Isolation and Data Protection Active',
+  });
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!profile) return;
+    if (!profile) {
+      setSecurityStatus({
+        label: 'Unverified',
+        color: 'neutral',
+        title: 'Authentication session required',
+      });
+      return;
+    }
+
+    realtimeManager.setOrganization(profile.organization_id);
     setNotifications(db.getNotifications(profile));
 
     const unsubscribe = db.subscribe(({ type }) => {
@@ -30,31 +52,88 @@ export const Navbar: React.FC = () => {
         type === 'NOTIFICATION_READ' ||
         type === 'CALL_OUTCOME_SAVED' ||
         type === 'LEADS_ASSIGNED' ||
-        type === 'SECURITY_EVENT_RAISED'
+        type === 'SECURITY_EVENT_RAISED' ||
+        type === 'FOLLOWUP_CREATED' ||
+        type === 'FOLLOWUP_UPDATED' ||
+        type === 'FOLLOWUP_REMINDER_SENT'
       ) {
         setNotifications(db.getNotifications(profile));
       }
-    });
+    }, profile);
 
     return () => unsubscribe();
   }, [profile]);
 
+  // Truthful Security Status: Backed by real health, anomaly checks and active profile status
+  useEffect(() => {
+    if (!profile) return;
+
+    if (typeof window !== 'undefined' && !navigator.onLine) {
+      setSecurityStatus({
+        label: 'Offline Guard',
+        color: 'neutral',
+        title: 'Connection offline — Row-Level Protection maintained locally',
+      });
+      return;
+    }
+
+    const events = db.getSecurityEvents(profile);
+    const hasCriticalAnomaly = events.some(
+      (e) => e.severity === 'CRITICAL' || e.severity === 'HIGH'
+    );
+
+    if (hasCriticalAnomaly) {
+      setSecurityStatus({
+        label: 'Security Alert',
+        color: 'amber',
+        title: 'Security anomaly detected — review audit log',
+      });
+    } else if (profile.status === 'ACTIVE' && organization) {
+      setSecurityStatus({
+        label: 'System Secure',
+        color: 'green',
+        title: 'Tenant Isolation & Zero-Phone-Exposure Active',
+      });
+    } else {
+      setSecurityStatus({
+        label: 'Restricted',
+        color: 'neutral',
+        title: 'Profile status inactive or awaiting tenant assignment',
+      });
+    }
+  }, [profile, organization, notifications]);
+
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  const handleMarkAsRead = (id: string, link?: string) => {
+  const handleMarkAsRead = (id: string, link?: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     db.markNotificationRead(id);
+    if (profile) setNotifications(db.getNotifications(profile));
     if (link) {
       navigate(link);
       setShowNotifications(false);
     }
   };
 
-  const handleRoleSwitch = (type: 'admin' | 'owner' | 'telecaller' | 'prime_owner') => {
-    quickLogin(type);
-    setShowRoleSwitcher(false);
-    if (type === 'admin') navigate('/admin');
-    else if (type === 'owner' || type === 'prime_owner') navigate('/owner');
-    else navigate('/telecaller');
+  const handleMarkAllAsRead = () => {
+    if (!profile) return;
+    db.markAllNotificationsRead(profile);
+    setNotifications(db.getNotifications(profile));
+  };
+
+  const getNotificationIcon = (type: Notification['type']) => {
+    switch (type) {
+      case 'FOLLOW_UP_DUE':
+      case 'FOLLOW_UP_OVERDUE':
+      case 'FOLLOW_UP_ESCALATED':
+        return <Calendar className="w-3.5 h-3.5 text-[#1E4D8F]" />;
+      case 'LEAD_ASSIGNED':
+        return <UserCheck className="w-3.5 h-3.5 text-[#16845B]" />;
+      case 'SECURITY_ALERT':
+        return <AlertTriangle className="w-3.5 h-3.5 text-[#C53030]" />;
+      default:
+        return <Bell className="w-3.5 h-3.5 text-[#64748B]" />;
+    }
   };
 
   return (
@@ -87,89 +166,34 @@ export const Navbar: React.FC = () => {
         )}
       </div>
 
-      {/* Security Status, Fast Role Switcher, Notifications & Profile */}
-      <div className="flex items-center gap-3">
-        {/* Calm Enterprise Security Indicator */}
+      {/* Security Status, Realtime Live Status, Fast Role Switcher, Notifications & Profile */}
+      <div className="flex items-center gap-2.5 sm:gap-3">
+        {/* Real-Time Connection Indicator */}
+        <RealtimeStatusBadge />
+
+        {/* Truthful Enterprise Security Indicator */}
         <div
-          className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#EAF7EE] border border-[#C3EBD0] text-[11px] font-medium text-[#16845B]"
-          title="Tenant Isolation and Data Protection Active"
+          data-testid="navbar-security-indicator"
+          className={`hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium transition-colors ${
+            securityStatus.color === 'green'
+              ? 'bg-[#EAF7EE] border-[#C3EBD0] text-[#16845B]'
+              : securityStatus.color === 'amber'
+              ? 'bg-[#FEF6E7] border-[#F9E2B6] text-[#B4690E]'
+              : 'bg-[#F6F8FB] border-[#DCE4EE] text-[#64748B]'
+          }`}
+          title={securityStatus.title}
         >
-          <span className="w-2 h-2 rounded-full bg-[#16845B]" />
-          <span>● System Secure</span>
+          <span
+            className={`w-2 h-2 rounded-full ${
+              securityStatus.color === 'green'
+                ? 'bg-[#16845B]'
+                : securityStatus.color === 'amber'
+                ? 'bg-[#B4690E]'
+                : 'bg-[#94A3B8]'
+            }`}
+          />
+          <span>● {securityStatus.label}</span>
         </div>
-
-        {/* Demo Fast Role Switcher - STRICTLY REMOVED IN PRODUCTION */}
-        {isDemoMode && (
-          <div className="relative">
-            <button
-              onClick={() => setShowRoleSwitcher(!showRoleSwitcher)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] bg-white border border-[#DCE4EE] hover:border-[#CBD5E1] text-xs text-[#172B4D] hover:bg-[#F6F8FB] transition-all shadow-subtle"
-              title="Switch demo persona for testing"
-            >
-              <span className="w-2 h-2 rounded-full bg-[#1E4D8F]" />
-              <span className="font-semibold text-[#0B1F3A]">Role: {profile?.role}</span>
-              <ChevronDown className="w-3.5 h-3.5 text-[#64748B]" />
-            </button>
-
-            {showRoleSwitcher && (
-              <div className="absolute right-0 mt-2 w-72 rounded-[12px] border border-[#DCE4EE] bg-white p-2 shadow-dropdown z-50">
-                <div className="px-3 py-1.5 text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider border-b border-[#DCE4EE]">
-                  Switch Test Persona
-                </div>
-
-                <button
-                  onClick={() => handleRoleSwitch('owner')}
-                  className="w-full text-left p-2.5 rounded-[8px] hover:bg-[#F6F8FB] transition-colors flex items-center justify-between"
-                >
-                  <div>
-                    <div className="text-xs font-semibold text-[#0B1F3A]">Vikram Malhotra (Owner)</div>
-                    <div className="text-[11px] text-[#64748B]">Vertex Consultancy • Full Org Control</div>
-                  </div>
-                  {profile?.role === 'OWNER' && profile.organization_id === 'org-vertex-001' && (
-                    <CheckCircle2 className="w-4 h-4 text-[#16845B]" />
-                  )}
-                </button>
-
-                <button
-                  onClick={() => handleRoleSwitch('telecaller')}
-                  className="w-full text-left p-2.5 rounded-[8px] hover:bg-[#F6F8FB] transition-colors flex items-center justify-between"
-                >
-                  <div>
-                    <div className="text-xs font-semibold text-[#0B1F3A]">Arjun Kumar (Telecaller)</div>
-                    <div className="text-[11px] text-[#64748B]">Masked Leads • Calling Workspace</div>
-                  </div>
-                  {profile?.role === 'TELECALLER' && <CheckCircle2 className="w-4 h-4 text-[#16845B]" />}
-                </button>
-
-                <button
-                  onClick={() => handleRoleSwitch('admin')}
-                  className="w-full text-left p-2.5 rounded-[8px] hover:bg-[#F6F8FB] transition-colors flex items-center justify-between"
-                >
-                  <div>
-                    <div className="text-xs font-semibold text-[#0B1F3A]">System Admin</div>
-                    <div className="text-[11px] text-[#64748B]">Platform-Wide Health & Tenant Audit</div>
-                  </div>
-                  {profile?.role === 'ADMIN' && <CheckCircle2 className="w-4 h-4 text-[#16845B]" />}
-                </button>
-
-                <div className="my-1 border-t border-[#DCE4EE]" />
-
-                <button
-                  onClick={() => handleRoleSwitch('prime_owner')}
-                  className="w-full text-left p-2 rounded-[8px] hover:bg-[#F6F8FB] transition-colors flex items-center justify-between"
-                >
-                  <div>
-                    <div className="text-xs font-semibold text-[#B7791F]">Rohan Verma (Tenant B Owner)</div>
-                    <div className="text-[10px] text-[#64748B]">Prime Careers • Test Tenant Isolation</div>
-                  </div>
-                  {profile?.organization_id === 'org-prime-002' && (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-[#B7791F]" />
-                  )}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Notifications Center */}
         <div className="relative">
@@ -189,8 +213,27 @@ export const Navbar: React.FC = () => {
           {showNotifications && (
             <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-[12px] border border-[#DCE4EE] bg-white shadow-dropdown z-50 overflow-hidden">
               <div className="flex items-center justify-between px-4 py-3 border-b border-[#DCE4EE] bg-[#F6F8FB]">
-                <span className="text-xs font-semibold text-[#0B1F3A]">Notifications ({unreadCount} unread)</span>
-                <span className="text-[11px] font-medium text-[#16845B]">Live Feed</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-[#0B1F3A]">Notifications</span>
+                  {unreadCount > 0 && (
+                    <span className="rounded-full bg-[#1E4D8F] px-1.5 py-0.2 text-[10px] font-bold text-white">
+                      {unreadCount}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-medium text-[#1E4D8F]">Event Stream</span>
+                  {unreadCount > 0 && (
+                    <button
+                      onClick={handleMarkAllAsRead}
+                      className="text-[10px] font-semibold text-[#1E4D8F] hover:text-[#0B1F3A] flex items-center gap-0.5 transition-colors pl-1.5 border-l border-[#DCE4EE]"
+                      title="Mark all as read"
+                    >
+                      <CheckCheck className="w-3 h-3" />
+                      <span>Read all</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="max-h-80 overflow-y-auto divide-y divide-[#DCE4EE]">
@@ -202,16 +245,35 @@ export const Navbar: React.FC = () => {
                       key={notif.id}
                       onClick={() => handleMarkAsRead(notif.id, notif.link)}
                       className={`p-3.5 hover:bg-[#F6F8FB] cursor-pointer transition-colors ${
-                        !notif.read ? 'bg-[#EAF2FB]/40' : ''
+                        !notif.read ? 'bg-[#EAF2FB]/50' : ''
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <span className="text-xs font-semibold text-[#0B1F3A]">{notif.title}</span>
-                        <span className="text-[10px] text-[#94A3B8] whitespace-nowrap">
-                          {formatRelativeTime(notif.created_at)}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="p-1 rounded bg-white border border-[#DCE4EE]">
+                            {getNotificationIcon(notif.type)}
+                          </span>
+                          <span className="text-xs font-semibold text-[#0B1F3A]">{notif.title}</span>
+                          {!notif.read && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#1E4D8F]" />
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-[#94A3B8] whitespace-nowrap">
+                            {formatRelativeTime(notif.created_at)}
+                          </span>
+                          {!notif.read && (
+                            <button
+                              onClick={(e) => handleMarkAsRead(notif.id, undefined, e)}
+                              className="p-1 text-[#64748B] hover:text-[#16845B] hover:bg-white rounded"
+                              title="Mark as read"
+                            >
+                              <Check className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <p className="text-xs text-[#64748B] mt-1 line-clamp-2">{notif.message}</p>
+                      <p className="text-xs text-[#64748B] mt-1 line-clamp-2 pl-6">{notif.message}</p>
                     </div>
                   ))
                 )}

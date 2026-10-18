@@ -98,10 +98,17 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
 
           <h2 className="text-xl font-bold text-[#0B1F3A] tracking-tight">{lead.name}</h2>
           <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-[#64748B]">
-            <span className="flex items-center gap-1 font-mono font-medium text-[#172B4D]">
-              <Phone className="w-3.5 h-3.5 text-[#1E4D8F]" />
-              {lead.phone}
-            </span>
+            {profile?.role === 'TELECALLER' ? (
+              <span className="flex items-center gap-1 text-[11px] font-medium text-[#1E4D8F]">
+                <Shield className="w-3.5 h-3.5 text-[#1E4D8F]" />
+                Zero-Exposure Gateway
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 font-mono font-medium text-[#172B4D]">
+                <Phone className="w-3.5 h-3.5 text-[#1E4D8F]" />
+                {lead.phone}
+              </span>
+            )}
             {lead.email && <span>{lead.email}</span>}
             <span>Source: <strong className="text-[#172B4D]">{lead.source}</strong></span>
           </div>

@@ -1,32 +1,73 @@
 import React, { useState } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
-import {
-  Shield,
-  Lock,
-  Mail,
-  ArrowRight,
-  Headphones,
-  Building,
-  Server,
-  Sparkles,
-} from 'lucide-react';
+import { Shield, Mail, ArrowRight, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { OtpInput } from '@/components/auth/OtpInput';
+import { normalizeEmailAddress } from '@/lib/emailNormalization';
 
 export const LoginPage: React.FC = () => {
-  const { login, quickLogin, isDemoMode } = useAuth();
+  const { requestOtp, verifyOtp } = useAuth();
   const navigate = useNavigate();
 
-  const [email, setEmail] = useState(isDemoMode ? 'owner@vertex.com' : '');
-  const [password, setPassword] = useState(isDemoMode ? 'Password123!' : '');
+  // Screen Step: 1 = Enter Email, 2 = Verify OTP
+  const [step, setStep] = useState<1 | 2>(1);
+  const [email, setEmail] = useState('');
+  const [otp, setOtp] = useState('');
+  const [maskedEmail, setMaskedEmail] = useState('');
+  const [cooldown, setCooldown] = useState(60);
+  const [expiresAt, setExpiresAt] = useState<string | undefined>(undefined);
+  const [resendAvailableAt, setResendAvailableAt] = useState<string | undefined>(undefined);
+
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Step 1: Send OTP
+  const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
     setError(null);
 
-    const result = await login(email, password);
+    const norm = normalizeEmailAddress(email);
+    if (!norm.isValid) {
+      setError(norm.error || 'Please enter a valid work email address (e.g. name@company.com)');
+      return;
+    }
+
+    setIsLoading(true);
+    const result = await requestOtp({
+      email: norm.normalized,
+      purpose: 'LOGIN',
+    });
+    setIsLoading(false);
+
+    if (result.success) {
+      setMaskedEmail(result.maskedEmail || norm.masked);
+      setCooldown(result.cooldownSeconds || 60);
+      setExpiresAt(result.expiresAt);
+      setResendAvailableAt(result.resendAvailableAt);
+      setStep(2);
+      setOtp('');
+    } else {
+      setError(result.error || 'Failed to send verification code.');
+    }
+  };
+
+  // Step 2: Verify OTP
+  const handleVerifyOtp = async (codeToVerify?: string) => {
+    const code = codeToVerify || otp;
+    if (!code || code.length !== 6) {
+      setError('Enter the 6-digit verification code.');
+      return;
+    }
+
+    setError(null);
+    setIsLoading(true);
+
+    const norm = normalizeEmailAddress(email);
+    const result = await verifyOtp({
+      email: norm.normalized,
+      otp: code,
+      purpose: 'LOGIN',
+    });
     setIsLoading(false);
 
     if (result.success) {
@@ -34,15 +75,28 @@ export const LoginPage: React.FC = () => {
       else if (result.role === 'OWNER') navigate('/owner');
       else navigate('/telecaller');
     } else {
-      setError(result.error || 'Login failed');
+      setError(result.error || 'Verification failed. Please check the code.');
     }
   };
 
-  const handleQuickLogin = (type: 'owner' | 'telecaller' | 'admin' | 'prime_owner') => {
-    quickLogin(type);
-    if (type === 'admin') navigate('/admin');
-    else if (type === 'owner' || type === 'prime_owner') navigate('/owner');
-    else navigate('/telecaller');
+  const handleResendOtp = async () => {
+    setError(null);
+    setIsLoading(true);
+    const norm = normalizeEmailAddress(email);
+    const result = await requestOtp({
+      email: norm.normalized,
+      purpose: 'LOGIN',
+    });
+    setIsLoading(false);
+
+    if (result.success) {
+      setCooldown(result.cooldownSeconds || 60);
+      setExpiresAt(result.expiresAt);
+      setResendAvailableAt(result.resendAvailableAt);
+      setOtp('');
+    } else {
+      setError(result.error || 'Failed to resend code.');
+    }
   };
 
   return (
@@ -62,9 +116,13 @@ export const LoginPage: React.FC = () => {
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white border border-[#DCE4EE] py-8 px-6 shadow-card rounded-[12px] sm:px-10 space-y-6">
           <div className="text-center">
-            <h2 className="text-lg font-bold text-[#0B1F3A]">Sign in to your CRM workspace</h2>
+            <h2 className="text-lg font-bold text-[#0B1F3A]">
+              {step === 1 ? 'Welcome Back' : 'Verify Your Email'}
+            </h2>
             <p className="text-xs text-[#64748B] mt-1">
-              Protected by PostgreSQL Row Level Security
+              {step === 1
+                ? 'Sign in to your ENCRIX workspace using secure email OTP'
+                : `Enter the 6-digit verification code sent to ${maskedEmail}`}
             </p>
           </div>
 
@@ -74,114 +132,81 @@ export const LoginPage: React.FC = () => {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="text-xs font-semibold text-[#172B4D] block mb-1">Work Email</label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-[#64748B] absolute left-3 top-2.5" />
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] placeholder-[#94A3B8] shadow-subtle focus:outline-none focus:border-[#1E4D8F]"
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-semibold text-[#172B4D]">Password</label>
-                <Link to="/forgot-password" className="text-[11px] text-[#1E4D8F] font-semibold hover:underline">
-                  Forgot password?
-                </Link>
-              </div>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-[#64748B] absolute left-3 top-2.5" />
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] placeholder-[#94A3B8] shadow-subtle focus:outline-none focus:border-[#1E4D8F]"
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white font-semibold text-xs rounded-[10px] shadow-subtle transition-all"
-            >
-              <span>{isLoading ? 'Verifying...' : 'Sign In'}</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </form>
-
-          {/* Quick Demo Logins for instant evaluation - strictly hidden in production */}
-          {isDemoMode && (
-            <div className="pt-4 border-t border-[#DCE4EE]">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-[#64748B] uppercase tracking-wider mb-2.5">
-                <Sparkles className="w-3.5 h-3.5 text-[#1E4D8F]" />
-                <span>1-Click Evaluator Login</span>
+          {step === 1 ? (
+            <form onSubmit={handleSendOtp} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-[#172B4D] block mb-1">Work Email</label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-[#64748B] absolute left-3 top-2.5" />
+                  <input
+                    type="email"
+                    required
+                    autoFocus
+                    placeholder="name@company.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] placeholder-[#94A3B8] shadow-subtle focus:outline-none focus:border-[#0B1F3A]"
+                  />
+                </div>
+                <p className="text-[11px] text-[#64748B] mt-1">
+                  We'll send a one-time verification code to your email.
+                </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white font-semibold text-xs rounded-[10px] shadow-subtle transition-all cursor-pointer disabled:opacity-50"
+              >
+                <span>{isLoading ? 'Sending Code...' : 'Send OTP'}</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </form>
+          ) : (
+            <div className="space-y-5">
+              <OtpInput
+                value={otp}
+                onChange={setOtp}
+                onComplete={(code) => handleVerifyOtp(code)}
+                onResend={handleResendOtp}
+                cooldownSeconds={cooldown}
+                expiresAt={expiresAt}
+                resendAvailableAt={resendAvailableAt}
+                isLoading={isLoading}
+                error={error}
+              />
+
+              <div className="space-y-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => handleQuickLogin('owner')}
-                  className="p-2.5 rounded-[8px] bg-[#F6F8FB] hover:bg-[#EAF2FB] border border-[#DCE4EE] hover:border-[#1E4D8F] text-left transition-colors"
+                  onClick={() => handleVerifyOtp()}
+                  disabled={isLoading || otp.length !== 6}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white font-semibold text-xs rounded-[10px] shadow-subtle transition-all cursor-pointer disabled:opacity-50"
                 >
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-[#0B1F3A]">
-                    <Building className="w-3.5 h-3.5 text-[#1E4D8F]" />
-                    <span>Owner</span>
-                  </div>
-                  <div className="text-[10px] text-[#64748B] truncate">Vertex Consultancy</div>
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{isLoading ? 'Verifying...' : 'Verify OTP'}</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => handleQuickLogin('telecaller')}
-                  className="p-2.5 rounded-[8px] bg-[#F6F8FB] hover:bg-[#EAF2FB] border border-[#DCE4EE] hover:border-[#1E4D8F] text-left transition-colors"
+                  onClick={() => {
+                    setStep(1);
+                    setError(null);
+                  }}
+                  disabled={isLoading}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold text-[#64748B] hover:text-[#0B1F3A] transition-colors"
                 >
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-[#0B1F3A]">
-                    <Headphones className="w-3.5 h-3.5 text-[#1E4D8F]" />
-                    <span>Telecaller</span>
-                  </div>
-                  <div className="text-[10px] text-[#64748B] truncate">Arjun Kumar</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleQuickLogin('admin')}
-                  className="p-2.5 rounded-[8px] bg-[#F6F8FB] hover:bg-[#EAF2FB] border border-[#DCE4EE] hover:border-[#1E4D8F] text-left transition-colors"
-                >
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-[#0B1F3A]">
-                    <Server className="w-3.5 h-3.5 text-[#1E4D8F]" />
-                    <span>Super Admin</span>
-                  </div>
-                  <div className="text-[10px] text-[#64748B] truncate">Platform Overview</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleQuickLogin('prime_owner')}
-                  className="p-2.5 rounded-[8px] bg-[#F6F8FB] hover:bg-[#EAF2FB] border border-[#DCE4EE] hover:border-[#B7791F] text-left transition-colors"
-                >
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-[#B7791F]">
-                    <Building className="w-3.5 h-3.5 text-[#B7791F]" />
-                    <span>Tenant B Owner</span>
-                  </div>
-                  <div className="text-[10px] text-[#64748B] truncate">Prime Careers</div>
+                  <ArrowLeft className="w-3 h-3" />
+                  <span>Change Email Address</span>
                 </button>
               </div>
             </div>
           )}
 
-          <div className="text-center pt-2">
-            <span className="text-xs text-[#64748B]">Need a new organization workspace? </span>
-            <Link to="/register" className="text-xs text-[#1E4D8F] font-semibold hover:underline">
-              Create an organization
+          <div className="pt-4 border-t border-[#DCE4EE] text-center text-xs text-[#64748B]">
+            New to ENCRIX?{' '}
+            <Link to="/register" className="font-semibold text-[#1E4D8F] hover:underline">
+              Create an account
             </Link>
           </div>
         </div>

@@ -1,10 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Profile, Organization, UserRole } from '@/types';
+import { Profile, Organization, UserRole, OrganizationInvitation } from '@/types';
 import { db } from '@/services/supabase/db';
 import { DEMO_PROFILES, DEMO_ORGS } from '@/services/supabase/demoData';
 import { IS_DEMO_MODE } from '@/lib/config';
 import { rateLimiter } from '@/lib/rateLimiter';
 import { supabase, isRealSupabaseConfigured } from '@/services/supabase/client';
+import { authService, SendOtpParams, SendOtpResult, VerifyOtpParams, VerifyOtpResult } from '@/services/auth/authService';
 
 interface AuthContextType {
   user: { id: string; email: string } | null;
@@ -14,6 +15,9 @@ interface AuthContextType {
   isLoading: boolean;
   isDemoMode: boolean;
   login: (email: string, password?: string) => Promise<{ success: boolean; role?: UserRole; error?: string }>;
+  requestOtp: (params: SendOtpParams) => Promise<SendOtpResult>;
+  verifyOtp: (params: VerifyOtpParams) => Promise<VerifyOtpResult>;
+  inviteTelecaller: (data: { fullName: string; email: string; phone?: string }) => Promise<{ success: boolean; invitation?: OrganizationInvitation; error?: string }>;
   register: (data: {
     companyName: string;
     ownerName: string;
@@ -51,11 +55,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: 'User profile not found in organization.' };
       }
 
-      if (userProfile.status === 'DISABLED') {
+      if (userProfile.status === 'DISABLED' || userProfile.status === 'SUSPENDED') {
         await supabase.auth.signOut();
         setProfile(null);
         setOrganization(null);
         return { success: false, error: 'Your account has been suspended. Please contact your organization owner.' };
+      }
+
+      if (userProfile.status === 'PENDING_VERIFICATION') {
+        await supabase.auth.signOut();
+        setProfile(null);
+        setOrganization(null);
+        return { success: false, error: 'Your account is pending phone verification.' };
       }
 
       const { data: orgData } = await supabase
@@ -100,48 +111,88 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return () => subscription.unsubscribe();
     }
 
-    try {
-      const savedUser = localStorage.getItem('leadvault_session');
-      if (savedUser) {
-        const parsed = JSON.parse(savedUser);
-        const allProfiles = db.getProfiles({ role: 'ADMIN', organization_id: '' } as Profile);
-        const found = allProfiles.find((p) => p.id === parsed.profileId);
-
-        // Ensure account is active and not disabled
-        if (found && found.status !== 'DISABLED') {
-          setProfile(found);
-          const orgs = db.getOrganizations(found);
-          setOrganization(orgs.find((o) => o.id === found.organization_id) || null);
-          setIsLoading(false);
+    const initAuth = async () => {
+      if (isRealSupabaseConfigured()) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          await loadSupabaseProfile(session.user.id);
           return;
-        } else if (found && found.status === 'DISABLED') {
-          // Immediately revoke session for disabled account
-          localStorage.removeItem('leadvault_session');
+        }
+      }
+
+      // Live API / Production: Cryptographic server-side session restoration
+      const token = authService.getSessionToken();
+      if (token) {
+        try {
+          const serverSession = await authService.restoreServerSession();
+          if (serverSession.authenticated && serverSession.profile) {
+            setProfile(serverSession.profile);
+            setOrganization(serverSession.organization || null);
+            setIsLoading(false);
+            return;
+          } else {
+            // Forged or expired session in storage: revoke immediately
+            localStorage.removeItem('leadvault_session');
+            localStorage.removeItem('leadvault_session_token');
+            setProfile(null);
+            setOrganization(null);
+            setIsLoading(false);
+            return;
+          }
+        } catch {
+          // If server check fails in production, do not trust client storage
+          if (!IS_DEMO_MODE) {
+            setProfile(null);
+            setOrganization(null);
+            setIsLoading(false);
+            return;
+          }
+        }
+      }
+
+      try {
+        const savedUser = localStorage.getItem('leadvault_session');
+        if (savedUser && IS_DEMO_MODE) {
+          const parsed = JSON.parse(savedUser);
+          const allProfiles = db.getProfiles({ role: 'ADMIN', organization_id: '' } as Profile);
+          const found = allProfiles.find((p) => p.id === parsed.profileId);
+
+          if (found && found.status === 'ACTIVE') {
+            setProfile(found);
+            const orgs = db.getOrganizations(found);
+            setOrganization(orgs.find((o) => o.id === found.organization_id) || null);
+            setIsLoading(false);
+            return;
+          } else if (found && (found.status === 'DISABLED' || found.status === 'SUSPENDED' || found.status === 'PENDING_VERIFICATION')) {
+            localStorage.removeItem('leadvault_session');
+            setProfile(null);
+            setOrganization(null);
+            setIsLoading(false);
+            return;
+          }
+        }
+
+        // In Demo mode only: default initial state to Vikram Malhotra (Owner of Vertex Consultancy)
+        if (IS_DEMO_MODE) {
+          const defaultOwner = DEMO_PROFILES.find((p) => p.role === 'OWNER' && p.organization_id === 'org-vertex-001');
+          if (defaultOwner) {
+            setProfile(defaultOwner);
+            setOrganization(DEMO_ORGS[0]);
+          }
+        } else {
+          // Production: clean unauthenticated state
           setProfile(null);
           setOrganization(null);
-          setIsLoading(false);
-          return;
         }
-      }
-
-      // In Demo mode only: default initial state to Vikram Malhotra (Owner of Vertex Consultancy)
-      if (IS_DEMO_MODE) {
-        const defaultOwner = DEMO_PROFILES.find((p) => p.role === 'OWNER' && p.organization_id === 'org-vertex-001');
-        if (defaultOwner) {
-          setProfile(defaultOwner);
-          setOrganization(DEMO_ORGS[0]);
-        }
-      } else {
-        // Production: clean unauthenticated state
+      } catch {
         setProfile(null);
         setOrganization(null);
+      } finally {
+        setIsLoading(false);
       }
-    } catch {
-      setProfile(null);
-      setOrganization(null);
-    } finally {
-      setIsLoading(false);
-    }
+    };
+
+    initAuth();
   }, []);
 
   const login = async (email: string, password?: string) => {
@@ -220,12 +271,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           {
             event_type: 'DISABLED_ACCOUNT_LOGIN_ATTEMPT',
             severity: 'HIGH',
+            description: `Disabled user ${matchedProfile.full_name} (${matchedProfile.id}) attempted to log in.`,
+            metadata: { email, userId: matchedProfile.id },
+          },
+          matchedProfile
+        );
+        return { success: false, error: 'Your account has been suspended. Please contact your organization owner.' };
+      }
+
+      if (matchedProfile.status === 'SUSPENDED') {
+        db.recordSecurityEvent(
+          {
+            event_type: 'ACCOUNT_SUSPENDED',
+            severity: 'HIGH',
             description: `Suspended user ${matchedProfile.full_name} (${matchedProfile.id}) attempted to log in.`,
             metadata: { email, userId: matchedProfile.id },
           },
           matchedProfile
         );
         return { success: false, error: 'Your account has been suspended. Please contact your organization owner.' };
+      }
+
+      if (matchedProfile.status === 'PENDING_VERIFICATION') {
+        return { success: false, error: 'Your account is pending verification and cannot be accessed.' };
       }
 
       rateLimiter.reset(`login:${email.toLowerCase().trim()}`);
@@ -372,6 +440,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         entity_type: 'auth',
       });
     }
+    db.unsubscribeAll();
     localStorage.removeItem('leadvault_session');
     setProfile(null);
     setOrganization(null);
@@ -416,6 +485,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const requestOtp = async (params: SendOtpParams): Promise<SendOtpResult> => {
+    return authService.requestOtp(params);
+  };
+
+  const verifyOtp = async (params: VerifyOtpParams): Promise<VerifyOtpResult> => {
+    setIsLoading(true);
+    try {
+      const res = await authService.verifyOtp(params);
+      if (res.success && res.profile) {
+        setProfile(res.profile);
+        setOrganization(res.organization || null);
+        localStorage.setItem(
+          'leadvault_session',
+          JSON.stringify({
+            profileId: res.profile.id,
+            profile: res.profile,
+            organization: res.organization,
+          })
+        );
+        return res;
+      }
+      return { success: false, error: res.error || 'Verification failed.' };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const inviteTelecaller = async (data: {
+    fullName: string;
+    email: string;
+    phone?: string;
+  }): Promise<{ success: boolean; invitation?: OrganizationInvitation; error?: string }> => {
+    if (!profile) return { success: false, error: 'Unauthorized: No active user profile.' };
+    return authService.inviteTelecaller({
+      ...data,
+      currentProfile: profile,
+    });
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -427,6 +535,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isDemoMode: IS_DEMO_MODE,
         login,
         register,
+        requestOtp,
+        verifyOtp,
+        inviteTelecaller,
         logout,
         switchRole,
         quickLogin,

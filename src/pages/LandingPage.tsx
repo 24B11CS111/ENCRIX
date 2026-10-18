@@ -1,6 +1,5 @@
 import React from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '@/features/auth/AuthContext';
+import { Link } from 'react-router-dom';
 import {
   Shield,
   PhoneCall,
@@ -11,27 +10,12 @@ import {
   Building,
   CheckCircle2,
   XCircle,
-  Play,
   ArrowRight,
   Headphones,
   Upload,
 } from 'lucide-react';
 
 export const LandingPage: React.FC = () => {
-  const { quickLogin, isDemoMode } = useAuth();
-  const navigate = useNavigate();
-
-  const handleLaunchDemo = (role: 'owner' | 'telecaller' | 'admin') => {
-    if (!isDemoMode) {
-      navigate('/login');
-      return;
-    }
-    quickLogin(role);
-    if (role === 'owner') navigate('/owner');
-    else if (role === 'telecaller') navigate('/telecaller');
-    else navigate('/admin');
-  };
-
   return (
     <div className="min-h-screen bg-[#F6F8FB] text-[#172B4D] font-sans selection:bg-[#EAF2FB] selection:text-[#0B1F3A]">
       {/* Top Navbar */}
@@ -52,15 +36,6 @@ export const LandingPage: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            {isDemoMode && (
-              <button
-                onClick={() => handleLaunchDemo('owner')}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] bg-white border border-[#DCE4EE] hover:border-[#1E4D8F] text-xs font-semibold text-[#0B1F3A] transition-all shadow-subtle"
-              >
-                <Play className="w-3.5 h-3.5 fill-[#1E4D8F] text-[#1E4D8F]" />
-                <span>Instant Live Demo</span>
-              </button>
-            )}
 
             <Link
               to="/login"
@@ -110,49 +85,14 @@ export const LandingPage: React.FC = () => {
               GET STARTED
             </Link>
 
-            {isDemoMode ? (
-              <button
-                onClick={() => handleLaunchDemo('owner')}
-                className="w-full sm:w-auto px-7 py-3.5 bg-white hover:bg-[#F6F8FB] text-[#0B1F3A] font-semibold text-sm rounded-[10px] border border-[#DCE4EE] shadow-subtle transition-all flex items-center justify-center gap-2"
-              >
-                <Play className="w-4 h-4 text-[#1E4D8F] fill-[#1E4D8F]" />
-                <span>VIEW PLATFORM</span>
-              </button>
-            ) : (
-              <Link
-                to="/login"
-                className="w-full sm:w-auto px-7 py-3.5 bg-white hover:bg-[#F6F8FB] text-[#0B1F3A] font-semibold text-sm rounded-[10px] border border-[#DCE4EE] shadow-subtle transition-all flex items-center justify-center gap-2"
-              >
-                <span>SIGN IN</span>
-                <ArrowRight className="w-4 h-4 text-[#1E4D8F]" />
-              </Link>
-            )}
+            <Link
+              to="/login"
+              className="w-full sm:w-auto px-7 py-3.5 bg-white hover:bg-[#F6F8FB] text-[#0B1F3A] font-semibold text-sm rounded-[10px] border border-[#DCE4EE] shadow-subtle transition-all flex items-center justify-center gap-2"
+            >
+              <span>SIGN IN</span>
+              <ArrowRight className="w-4 h-4 text-[#1E4D8F]" />
+            </Link>
           </div>
-
-          {/* Quick Demo Persona Badges */}
-          {isDemoMode && (
-            <div className="pt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-[#64748B]">
-              <span>Explore demo personas:</span>
-              <button
-                onClick={() => handleLaunchDemo('owner')}
-                className="px-2.5 py-1 rounded-[8px] bg-[#F6F8FB] border border-[#DCE4EE] hover:border-[#1E4D8F] text-[#172B4D] hover:text-[#0B1F3A] font-medium transition-colors"
-              >
-                Owner Workspace
-              </button>
-              <button
-                onClick={() => handleLaunchDemo('telecaller')}
-                className="px-2.5 py-1 rounded-[8px] bg-[#F6F8FB] border border-[#DCE4EE] hover:border-[#1E4D8F] text-[#172B4D] hover:text-[#0B1F3A] font-medium transition-colors"
-              >
-                Telecaller (Masked)
-              </button>
-              <button
-                onClick={() => handleLaunchDemo('admin')}
-                className="px-2.5 py-1 rounded-[8px] bg-[#F6F8FB] border border-[#DCE4EE] hover:border-[#1E4D8F] text-[#172B4D] hover:text-[#0B1F3A] font-medium transition-colors"
-              >
-                Platform Admin
-              </button>
-            </div>
-          )}
 
           {/* Hero Interface Mockup Card */}
           <div className="pt-8 max-w-5xl mx-auto">
@@ -535,21 +475,12 @@ export const LandingPage: React.FC = () => {
             >
               START PROTECTING YOUR LEADS
             </Link>
-            {isDemoMode ? (
-              <button
-                onClick={() => handleLaunchDemo('owner')}
-                className="px-8 py-3.5 bg-[#071A33] hover:bg-[#1E4D8F] text-white text-xs font-semibold rounded-[10px] border border-slate-700 transition-colors"
-              >
-                TRY WITH DEMO DATA
-              </button>
-            ) : (
-              <Link
-                to="/login"
-                className="px-8 py-3.5 bg-[#071A33] hover:bg-[#1E4D8F] text-white text-xs font-semibold rounded-[10px] border border-slate-700 transition-colors"
-              >
-                SIGN IN TO WORKSPACE
-              </Link>
-            )}
+            <Link
+              to="/login"
+              className="px-8 py-3.5 bg-[#071A33] hover:bg-[#1E4D8F] text-white text-xs font-semibold rounded-[10px] border border-slate-700 transition-colors"
+            >
+              SIGN IN TO WORKSPACE
+            </Link>
           </div>
         </div>
       </section>

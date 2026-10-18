@@ -6,7 +6,7 @@ import { StatusBadge } from '@/components/common/StatusBadge';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
 import { CallModal } from '@/features/calls/CallModal';
 import { OutcomeModal } from '@/features/calls/OutcomeModal';
-import { LeadDrawer } from '@/features/leads/LeadDrawer';
+import { StudentDetailModal } from '@/features/leads/StudentDetailModal';
 import { formatRelativeTime } from '@/lib/utils';
 import {
   Users,
@@ -17,6 +17,7 @@ import {
   Eye,
   ArrowRight,
   Shield,
+  ShieldCheck,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -33,7 +34,8 @@ export const TelecallerDashboard: React.FC = () => {
   const [callingLead, setCallingLead] = useState<Lead | null>(null);
   const [completedCallId, setCompletedCallId] = useState<string | null>(null);
   const [isOutcomeOpen, setIsOutcomeOpen] = useState(false);
-  const [drawerLead, setDrawerLead] = useState<Lead | null>(null);
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
 
   const loadData = () => {
     if (!profile) return;
@@ -55,7 +57,7 @@ export const TelecallerDashboard: React.FC = () => {
       ) {
         loadData();
       }
-    });
+    }, profile);
 
     return () => unsubscribe();
   }, [profile]);
@@ -70,7 +72,9 @@ export const TelecallerDashboard: React.FC = () => {
     (l) => l.status === 'INTERESTED' || l.status === 'CONVERTED'
   ).length;
 
-  const myFollowUps = followUps.filter((f) => f.status === 'PENDING').length;
+  const myFollowUps = followUps.filter(
+    (f) => f.status !== 'COMPLETED' && f.status !== 'CANCELLED' && f.status !== 'RESCHEDULED'
+  ).length;
 
   // Next lead in queue to call
   const nextLeadToCall = assignedLeads.find(
@@ -196,10 +200,13 @@ export const TelecallerDashboard: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Masked Name & Phone */}
+                  {/* Student Name & Voice Bridge Indicator */}
                   <h3 className="text-base font-bold text-[#0B1F3A] tracking-tight">{lead.name}</h3>
-                  <div className="flex items-center gap-3 text-xs text-[#64748B] font-mono mt-1">
-                    <span>{lead.phone}</span>
+                  <div className="flex items-center gap-2 text-xs text-[#64748B] mt-1">
+                    <span className="inline-flex items-center gap-1 font-medium text-[11px] text-[#1E4D8F] bg-[#EAF2FB] px-2 py-0.5 rounded border border-[#C7DCF3]">
+                      <ShieldCheck className="w-3 h-3 text-[#1E4D8F]" />
+                      Voice Bridge
+                    </span>
                     <span className="text-[#DCE4EE]">•</span>
                     <span>{lead.source}</span>
                   </div>
@@ -218,9 +225,12 @@ export const TelecallerDashboard: React.FC = () => {
 
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setDrawerLead(lead)}
+                      onClick={() => {
+                        setSelectedLeadId(lead.id);
+                        setIsDetailOpen(true);
+                      }}
                       className="p-2 rounded-[8px] bg-white border border-[#DCE4EE] hover:bg-[#F6F8FB] text-[#172B4D] text-xs transition-colors shadow-subtle"
-                      title="View Lead Details"
+                      title="View Student Details"
                     >
                       <Eye className="w-4 h-4" />
                     </button>
@@ -257,7 +267,7 @@ export const TelecallerDashboard: React.FC = () => {
       {/* CALL OUTCOME MODAL */}
       {isOutcomeOpen && completedCallId && (
         <OutcomeModal
-          lead={callingLead || drawerLead || assignedLeads[0]}
+          lead={callingLead || assignedLeads[0]}
           callId={completedCallId}
           isOpen={isOutcomeOpen}
           onClose={() => {
@@ -270,12 +280,20 @@ export const TelecallerDashboard: React.FC = () => {
         />
       )}
 
-      {/* LEAD DETAILS DRAWER */}
-      <LeadDrawer
-        lead={drawerLead}
-        isOpen={Boolean(drawerLead)}
-        onClose={() => setDrawerLead(null)}
-        onInitiateCall={(lead) => setCallingLead(lead)}
+      {/* SECURE STUDENT DETAIL MODAL */}
+      <StudentDetailModal
+        leadId={selectedLeadId}
+        isOpen={isDetailOpen}
+        onClose={() => {
+          setIsDetailOpen(false);
+          setSelectedLeadId(null);
+        }}
+        onInitiateCall={(leadId) => {
+          const target = assignedLeads.find((l) => l.id === leadId);
+          if (target) {
+            setCallingLead(target);
+          }
+        }}
       />
     </div>
   );

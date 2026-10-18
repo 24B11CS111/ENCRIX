@@ -6,12 +6,11 @@ import {
   Building,
   PhoneCall,
   Shield,
-  RotateCcw,
   CheckCircle2,
 } from 'lucide-react';
 
 export const OwnerSettingsPage: React.FC = () => {
-  const { profile, organization, isDemoMode } = useAuth();
+  const { profile, organization } = useAuth();
   const [provider, setProvider] = useState('MOCK');
   const [consentPolicy, setConsentPolicy] = useState(true);
   const [savedNotice, setSavedNotice] = useState(false);
@@ -20,13 +19,6 @@ export const OwnerSettingsPage: React.FC = () => {
     e.preventDefault();
     setSavedNotice(true);
     setTimeout(() => setSavedNotice(false), 3000);
-  };
-
-  const handleResetSandbox = () => {
-    if (window.confirm('Reset local demo sandbox database to original state?')) {
-      db.resetSandbox();
-      window.location.reload();
-    }
   };
 
   return (
@@ -115,23 +107,10 @@ export const OwnerSettingsPage: React.FC = () => {
         </div>
 
         {/* Actions */}
-        <div className="flex items-center justify-between pt-2">
-          {isDemoMode ? (
-            <button
-              type="button"
-              onClick={handleResetSandbox}
-              className="flex items-center gap-1.5 px-3 py-2 text-[#C53030] hover:bg-rose-50 rounded-[10px] text-xs font-medium border border-rose-200 transition-colors shadow-sm"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset Demo Sandbox</span>
-            </button>
-          ) : (
-            <div />
-          )}
-
+        <div className="flex items-center justify-end pt-2">
           <button
             type="submit"
-            className="px-5 py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white text-xs font-semibold rounded-[10px] shadow-sm transition-all"
+            className="px-5 py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white text-xs font-semibold rounded-[10px] shadow-sm transition-all cursor-pointer"
           >
             Save Settings
           </button>

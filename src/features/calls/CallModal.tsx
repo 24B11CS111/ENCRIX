@@ -143,7 +143,11 @@ export const CallModal: React.FC<CallModalProps> = ({
           <div className="flex items-center justify-center gap-2 text-xs text-[#64748B]">
             <span>Lead ID: <strong className="font-mono text-[#0B1F3A]">{lead.lead_code}</strong></span>
             <span>•</span>
-            <span>Phone: <strong className="font-mono text-[#0B1F3A]">{lead.phone}</strong></span>
+            {profile?.role === 'TELECALLER' ? (
+              <span>Voice Bridge: <strong className="font-semibold text-[#1E4D8F]">Zero-Exposure Gateway</strong></span>
+            ) : (
+              <span>Phone: <strong className="font-mono text-[#0B1F3A]">{lead.phone}</strong></span>
+            )}
           </div>
         </div>
 

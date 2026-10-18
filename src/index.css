@@ -77,3 +77,113 @@ input:focus, select:focus, textarea:focus {
   border-color: #1E4D8F !important;
   box-shadow: 0 0 0 1px #1E4D8F;
 }
+
+/* ENCRIX Phase 20: Premium White-Background Logo Animation Keyframes */
+
+/* 1. Geometric Blue E Mark 3D Float-In & Gentle Oscillation */
+@keyframes mark-float-entrance {
+  0% {
+    opacity: 0;
+    transform: perspective(800px) translateY(22px) rotateX(10deg) rotateY(-8deg) scale(0.92);
+    filter: drop-shadow(0 4px 8px rgba(30, 77, 143, 0.05));
+  }
+  65% {
+    opacity: 1;
+    transform: perspective(800px) translateY(-3px) rotateX(-1.5deg) rotateY(1deg) scale(1.02);
+    filter: drop-shadow(0 16px 26px rgba(30, 77, 143, 0.22));
+  }
+  100% {
+    opacity: 1;
+    transform: perspective(800px) translateY(0) rotateX(0deg) rotateY(0deg) scale(1);
+    filter: drop-shadow(0 12px 22px rgba(30, 77, 143, 0.16));
+  }
+}
+
+@keyframes mark-float-subtle {
+  0%, 100% {
+    transform: perspective(800px) translateY(0px) rotateX(0deg) rotateY(0deg);
+    filter: drop-shadow(0 12px 22px rgba(30, 77, 143, 0.16));
+  }
+  50% {
+    transform: perspective(800px) translateY(-5px) rotateX(1.8deg) rotateY(-1.2deg);
+    filter: drop-shadow(0 18px 28px rgba(30, 77, 143, 0.22));
+  }
+}
+
+/* 2. ENCRIX Wordmark Reveal (Opacity & Letter-Spacing Adjustment) */
+@keyframes wordmark-reveal {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+    letter-spacing: 0.04em;
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    letter-spacing: 0em;
+  }
+}
+
+/* 3. SECURE TELECALLER CRM Tagline Reveal (Restrained Staggered Fade) */
+@keyframes tagline-reveal {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+    letter-spacing: 0.18em;
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    letter-spacing: 0.26em;
+  }
+}
+
+/* 4. Subtle Pale-Blue Light Bloom */
+@keyframes bloom-pulse {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.04);
+  }
+}
+
+/* Animated utility classes */
+.animate-splash-logo {
+  animation: mark-float-entrance 750ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-logo-float {
+  animation: mark-float-subtle 3600ms ease-in-out infinite;
+}
+
+.animate-splash-text {
+  animation: wordmark-reveal 650ms cubic-bezier(0.16, 1, 0.3, 1) 200ms forwards;
+}
+
+.animate-splash-tagline {
+  animation: tagline-reveal 650ms cubic-bezier(0.16, 1, 0.3, 1) 380ms forwards;
+}
+
+.animate-logo-bloom {
+  animation: bloom-pulse 4000ms ease-in-out infinite;
+}
+
+/* Reduced motion accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .animate-splash-logo,
+  .animate-logo-float,
+  .animate-splash-text,
+  .animate-splash-tagline,
+  .animate-logo-bloom {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+}
+
+
+

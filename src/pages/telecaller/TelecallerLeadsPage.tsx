@@ -6,7 +6,7 @@ import { StatusBadge } from '@/components/common/StatusBadge';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
 import { SearchBar } from '@/components/common/SearchBar';
 import { Pagination } from '@/components/common/Pagination';
-import { LeadDrawer } from '@/features/leads/LeadDrawer';
+import { StudentDetailModal } from '@/features/leads/StudentDetailModal';
 import { CallModal } from '@/features/calls/CallModal';
 import { OutcomeModal } from '@/features/calls/OutcomeModal';
 import { formatRelativeTime } from '@/lib/utils';
@@ -15,6 +15,7 @@ import {
   Eye,
   Download,
   ShieldAlert,
+  ShieldCheck,
   Users,
 } from 'lucide-react';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -29,7 +30,8 @@ export const TelecallerLeadsPage: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
 
-  const [drawerLead, setDrawerLead] = useState<Lead | null>(null);
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [callingLead, setCallingLead] = useState<Lead | null>(null);
   const [completedCallId, setCompletedCallId] = useState<string | null>(null);
   const [isOutcomeOpen, setIsOutcomeOpen] = useState(false);
@@ -52,16 +54,16 @@ export const TelecallerLeadsPage: React.FC = () => {
       ) {
         loadData();
       }
-    });
+    }, profile);
 
     return () => unsubscribe();
   }, [profile]);
 
   const filteredLeads = leads.filter((l) => {
+    // Zero phone exposure: Telecallers search exclusively by code, name, and source
     const matchSearch =
       l.lead_code.toLowerCase().includes(search.toLowerCase()) ||
       l.name.toLowerCase().includes(search.toLowerCase()) ||
-      l.phone.includes(search) ||
       l.source.toLowerCase().includes(search.toLowerCase());
 
     const matchStatus = statusFilter === 'ALL' || l.status === statusFilter;
@@ -184,7 +186,7 @@ export const TelecallerLeadsPage: React.FC = () => {
             <thead className="bg-[#F6F8FB] text-[#64748B] border-b border-[#DCE4EE] uppercase tracking-wider font-semibold">
               <tr>
                 <th className="py-3 px-4">Lead</th>
-                <th className="py-3 px-3">Phone (Masked)</th>
+                <th className="py-3 px-3">Voice Gateway</th>
                 <th className="py-3 px-3">Status</th>
                 <th className="py-3 px-3">Priority</th>
                 <th className="py-3 px-3">Last Contact</th>
@@ -214,7 +216,12 @@ export const TelecallerLeadsPage: React.FC = () => {
                       <div className="font-mono text-[11px] text-[#1E4D8F]">{lead.lead_code}</div>
                     </td>
 
-                    <td className="py-3 px-3 font-mono text-[#172B4D]">{lead.phone}</td>
+                    <td className="py-3 px-3">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] bg-[#EAF2FB] border border-[#C7DCF3] text-[11px] font-medium text-[#1E4D8F]">
+                        <ShieldCheck className="w-3.5 h-3.5 text-[#1E4D8F]" />
+                        <span>Encrix Voice Bridge</span>
+                      </span>
+                    </td>
 
                     <td className="py-3 px-3">
                       <StatusBadge status={lead.status} />
@@ -231,9 +238,12 @@ export const TelecallerLeadsPage: React.FC = () => {
                     <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button
-                          onClick={() => setDrawerLead(lead)}
+                          onClick={() => {
+                            setSelectedLeadId(lead.id);
+                            setIsDetailOpen(true);
+                          }}
                           className="p-1.5 rounded-[8px] bg-white border border-[#DCE4EE] text-[#64748B] hover:text-[#0B1F3A] hover:bg-[#F6F8FB] transition-colors shadow-subtle"
-                          title="View Details"
+                          title="View Student Details"
                         >
                           <Eye className="w-3.5 h-3.5" />
                         </button>
@@ -262,12 +272,20 @@ export const TelecallerLeadsPage: React.FC = () => {
         />
       </div>
 
-      {/* LEAD DRAWER */}
-      <LeadDrawer
-        lead={drawerLead}
-        isOpen={Boolean(drawerLead)}
-        onClose={() => setDrawerLead(null)}
-        onInitiateCall={(lead) => setCallingLead(lead)}
+      {/* SECURE STUDENT DETAIL MODAL */}
+      <StudentDetailModal
+        leadId={selectedLeadId}
+        isOpen={isDetailOpen}
+        onClose={() => {
+          setIsDetailOpen(false);
+          setSelectedLeadId(null);
+        }}
+        onInitiateCall={(leadId) => {
+          const target = leads.find((l) => l.id === leadId);
+          if (target) {
+            setCallingLead(target);
+          }
+        }}
       />
 
       {/* ACTIVE CALL MODAL */}
@@ -287,7 +305,7 @@ export const TelecallerLeadsPage: React.FC = () => {
       {/* OUTCOME MODAL */}
       {isOutcomeOpen && completedCallId && (
         <OutcomeModal
-          lead={callingLead || drawerLead || paginatedLeads[0]}
+          lead={callingLead || paginatedLeads[0]}
           callId={completedCallId}
           isOpen={isOutcomeOpen}
           onClose={() => {

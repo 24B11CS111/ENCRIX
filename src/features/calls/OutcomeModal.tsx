@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
-import { Lead, CallOutcomeType, NegativeReason } from '@/types';
+import { Lead, CallOutcomeType, NegativeReason, LeadPriority } from '@/types';
 import { db } from '@/services/supabase/db';
 import { useAuth } from '@/features/auth/AuthContext';
 import {
   CheckCircle,
   XCircle,
   Sparkles,
+  Calendar,
+  Clock,
+  Globe,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -31,10 +34,15 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   const [interestLevel, setInterestLevel] = useState<'HIGH' | 'MEDIUM' | 'LOW'>('HIGH');
   const [requirement, setRequirement] = useState('');
   const [positiveNotes, setPositiveNotes] = useState('');
+
+  // Follow-Up Scheduling Fields
+  const [scheduleFollowUp, setScheduleFollowUp] = useState(true);
   const [followUpDate, setFollowUpDate] = useState(
     new Date(Date.now() + 86400000).toISOString().split('T')[0]
   );
   const [followUpTime, setFollowUpTime] = useState('11:00');
+  const [followUpPriority, setFollowUpPriority] = useState<LeadPriority>('MEDIUM');
+  const [followUpReason, setFollowUpReason] = useState('');
 
   // Negative Flow Fields
   const [negativeReason, setNegativeReason] = useState<NegativeReason>('Not Interested');
@@ -44,6 +52,30 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   const [generalNotes, setGeneralNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const displayTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+  const applyPreset = (preset: '1H' | 'TOMORROW_10AM' | 'IN_2_DAYS' | 'NEXT_MONDAY') => {
+    const d = new Date();
+    if (preset === '1H') {
+      d.setHours(d.getHours() + 1);
+      setFollowUpDate(d.toISOString().split('T')[0]);
+      setFollowUpTime(d.toTimeString().slice(0, 5));
+    } else if (preset === 'TOMORROW_10AM') {
+      d.setDate(d.getDate() + 1);
+      setFollowUpDate(d.toISOString().split('T')[0]);
+      setFollowUpTime('10:00');
+    } else if (preset === 'IN_2_DAYS') {
+      d.setDate(d.getDate() + 2);
+      setFollowUpDate(d.toISOString().split('T')[0]);
+      setFollowUpTime('11:00');
+    } else if (preset === 'NEXT_MONDAY') {
+      const daysUntilMonday = ((1 + 7 - d.getDay()) % 7) || 7;
+      d.setDate(d.getDate() + daysUntilMonday);
+      setFollowUpDate(d.toISOString().split('T')[0]);
+      setFollowUpTime('11:00');
+    }
+  };
+
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -52,6 +84,13 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
 
     setIsSubmitting(true);
     try {
+      const shouldIncludeFollowUp =
+        selectedOutcome === 'POSITIVE' ||
+        selectedOutcome === 'CONVERTED' ||
+        selectedOutcome === 'FOLLOW_UP' ||
+        selectedOutcome === 'CALL_BACK' ||
+        (scheduleFollowUp && (selectedOutcome === 'NO_ANSWER' || selectedOutcome === 'BUSY'));
+
       if (selectedOutcome === 'POSITIVE' || selectedOutcome === 'CONVERTED') {
         db.recordCallOutcome(
           {
@@ -61,8 +100,11 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
             interest_level: interestLevel,
             requirement,
             notes: positiveNotes,
-            followUpDate,
-            followUpTime,
+            followUpDate: shouldIncludeFollowUp ? followUpDate : undefined,
+            followUpTime: shouldIncludeFollowUp ? followUpTime : undefined,
+            followUpPriority,
+            followUpReason: followUpReason || requirement || positiveNotes,
+            timezone: displayTimezone,
           },
           profile
         );
@@ -95,8 +137,11 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
             lead_id: lead.id,
             outcome: selectedOutcome,
             notes: generalNotes,
-            followUpDate: selectedOutcome === 'FOLLOW_UP' || selectedOutcome === 'CALL_BACK' ? followUpDate : undefined,
-            followUpTime: selectedOutcome === 'FOLLOW_UP' || selectedOutcome === 'CALL_BACK' ? followUpTime : undefined,
+            followUpDate: shouldIncludeFollowUp ? followUpDate : undefined,
+            followUpTime: shouldIncludeFollowUp ? followUpTime : undefined,
+            followUpPriority,
+            followUpReason: followUpReason || generalNotes || `Callback for ${selectedOutcome}`,
+            timezone: displayTimezone,
           },
           profile
         );
@@ -227,26 +272,95 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-[#172B4D] block mb-1">Follow-up Date</label>
-                  <input
-                    type="date"
-                    required
-                    value={followUpDate}
-                    onChange={(e) => setFollowUpDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D] focus:outline-none focus:border-[#1E4D8F]"
-                  />
+              {/* Follow-up Scheduling Section with Quick Presets */}
+              <div className="p-3 bg-white rounded-[8px] border border-[#C3EBD0] space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-[#16845B] flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5" /> Next Action / Callback
+                  </span>
+                  <span className="text-[10px] text-[#64748B] flex items-center gap-1 font-mono">
+                    <Globe className="w-3 h-3" /> {displayTimezone}
+                  </span>
                 </div>
+
+                {/* Quick Presets */}
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => applyPreset('1H')}
+                    className="px-2 py-1 text-[11px] font-medium bg-[#F6F8FB] hover:bg-[#EAF2FB] text-[#1E4D8F] rounded-[6px] border border-[#DCE4EE] transition-colors"
+                  >
+                    +1 Hour
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyPreset('TOMORROW_10AM')}
+                    className="px-2 py-1 text-[11px] font-medium bg-[#F6F8FB] hover:bg-[#EAF2FB] text-[#1E4D8F] rounded-[6px] border border-[#DCE4EE] transition-colors"
+                  >
+                    Tomorrow 10 AM
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyPreset('IN_2_DAYS')}
+                    className="px-2 py-1 text-[11px] font-medium bg-[#F6F8FB] hover:bg-[#EAF2FB] text-[#1E4D8F] rounded-[6px] border border-[#DCE4EE] transition-colors"
+                  >
+                    In 2 Days
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyPreset('NEXT_MONDAY')}
+                    className="px-2 py-1 text-[11px] font-medium bg-[#F6F8FB] hover:bg-[#EAF2FB] text-[#1E4D8F] rounded-[6px] border border-[#DCE4EE] transition-colors"
+                  >
+                    Next Monday
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-semibold text-[#172B4D] block mb-1">Date</label>
+                    <input
+                      type="date"
+                      required
+                      value={followUpDate}
+                      onChange={(e) => setFollowUpDate(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D] focus:outline-none focus:border-[#1E4D8F]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-[#172B4D] block mb-1">Time</label>
+                    <input
+                      type="time"
+                      required
+                      value={followUpTime}
+                      onChange={(e) => setFollowUpTime(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D] focus:outline-none focus:border-[#1E4D8F]"
+                    />
+                  </div>
+                </div>
+
                 <div>
-                  <label className="text-xs font-semibold text-[#172B4D] block mb-1">Follow-up Time</label>
-                  <input
-                    type="time"
-                    required
-                    value={followUpTime}
-                    onChange={(e) => setFollowUpTime(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D] focus:outline-none focus:border-[#1E4D8F]"
-                  />
+                  <label className="text-xs font-semibold text-[#172B4D] block mb-1">Priority</label>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {(['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setFollowUpPriority(p)}
+                        className={`py-1 rounded-[6px] text-[11px] font-semibold border transition-colors ${
+                          followUpPriority === p
+                            ? 'bg-[#0B1F3A] border-[#0B1F3A] text-white'
+                            : 'bg-white border-[#DCE4EE] text-[#64748B] hover:bg-[#F6F8FB]'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-[#1E4D8F] bg-[#EAF2FB] p-2 rounded-[6px] flex items-center justify-between">
+                  <span>Exact Scheduled: {followUpDate} at {followUpTime}</span>
+                  <span className="font-mono text-[10px]">{displayTimezone}</span>
                 </div>
               </div>
 
@@ -303,29 +417,130 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
             </div>
           )}
 
-          {/* 3. OTHER OUTCOMES (FOLLOW-UP, NO ANSWER, ETC.) */}
+          {/* 3. OTHER OUTCOMES (FOLLOW-UP, NO ANSWER, CALL_BACK, ETC.) */}
           {selectedOutcome && selectedOutcome !== 'POSITIVE' && selectedOutcome !== 'NEGATIVE' && (
             <div className="p-4 rounded-[10px] bg-[#F6F8FB] border border-[#DCE4EE] space-y-3">
-              {(selectedOutcome === 'FOLLOW_UP' || selectedOutcome === 'CALL_BACK') && (
-                <div className="grid grid-cols-2 gap-3 mb-2">
-                  <div>
-                    <label className="text-xs font-semibold text-[#172B4D] block mb-1">Schedule Date</label>
-                    <input
-                      type="date"
-                      value={followUpDate}
-                      onChange={(e) => setFollowUpDate(e.target.value)}
-                      className="w-full px-3 py-1.5 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D]"
-                    />
+              {(selectedOutcome === 'FOLLOW_UP' || selectedOutcome === 'CALL_BACK') ? (
+                <div className="space-y-3 p-3 bg-white rounded-[8px] border border-[#DCE4EE]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-[#1E4D8F] flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5" /> Schedule Callback
+                    </span>
+                    <span className="text-[10px] text-[#64748B] flex items-center gap-1 font-mono">
+                      <Globe className="w-3 h-3" /> {displayTimezone}
+                    </span>
                   </div>
-                  <div>
-                    <label className="text-xs font-semibold text-[#172B4D] block mb-1">Schedule Time</label>
-                    <input
-                      type="time"
-                      value={followUpTime}
-                      onChange={(e) => setFollowUpTime(e.target.value)}
-                      className="w-full px-3 py-1.5 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D]"
-                    />
+
+                  {/* Quick Presets */}
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('1H')}
+                      className="px-2 py-1 text-[11px] font-medium bg-[#F6F8FB] hover:bg-[#EAF2FB] text-[#1E4D8F] rounded-[6px] border border-[#DCE4EE] transition-colors"
+                    >
+                      +1 Hour
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('TOMORROW_10AM')}
+                      className="px-2 py-1 text-[11px] font-medium bg-[#F6F8FB] hover:bg-[#EAF2FB] text-[#1E4D8F] rounded-[6px] border border-[#DCE4EE] transition-colors"
+                    >
+                      Tomorrow 10 AM
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('IN_2_DAYS')}
+                      className="px-2 py-1 text-[11px] font-medium bg-[#F6F8FB] hover:bg-[#EAF2FB] text-[#1E4D8F] rounded-[6px] border border-[#DCE4EE] transition-colors"
+                    >
+                      In 2 Days
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('NEXT_MONDAY')}
+                      className="px-2 py-1 text-[11px] font-medium bg-[#F6F8FB] hover:bg-[#EAF2FB] text-[#1E4D8F] rounded-[6px] border border-[#DCE4EE] transition-colors"
+                    >
+                      Next Monday
+                    </button>
                   </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-semibold text-[#172B4D] block mb-1">Date</label>
+                      <input
+                        type="date"
+                        required
+                        value={followUpDate}
+                        onChange={(e) => setFollowUpDate(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D]"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-[#172B4D] block mb-1">Time</label>
+                      <input
+                        type="time"
+                        required
+                        value={followUpTime}
+                        onChange={(e) => setFollowUpTime(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-white border border-[#DCE4EE] rounded-[8px] text-xs text-[#172B4D]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] text-[#1E4D8F] bg-[#EAF2FB] p-2 rounded-[6px] flex items-center justify-between">
+                    <span>Scheduled for: {followUpDate} at {followUpTime}</span>
+                    <span className="font-mono text-[10px]">{displayTimezone}</span>
+                  </div>
+                </div>
+              ) : (selectedOutcome === 'NO_ANSWER' || selectedOutcome === 'BUSY') && (
+                <div className="p-3 bg-white rounded-[8px] border border-[#DCE4EE] space-y-2.5">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-[#172B4D]">
+                    <input
+                      type="checkbox"
+                      checked={scheduleFollowUp}
+                      onChange={(e) => setScheduleFollowUp(e.target.checked)}
+                      className="rounded border-[#DCE4EE] text-[#1E4D8F] focus:ring-[#1E4D8F]"
+                    />
+                    <span>Schedule Next Attempt Callback</span>
+                  </label>
+
+                  {scheduleFollowUp && (
+                    <div className="space-y-2 pt-2 border-t border-[#DCE4EE]">
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => applyPreset('1H')}
+                          className="px-2 py-0.5 text-[11px] font-medium bg-[#F6F8FB] hover:bg-[#EAF2FB] text-[#1E4D8F] rounded border border-[#DCE4EE]"
+                        >
+                          +1 Hour
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => applyPreset('TOMORROW_10AM')}
+                          className="px-2 py-0.5 text-[11px] font-medium bg-[#F6F8FB] hover:bg-[#EAF2FB] text-[#1E4D8F] rounded border border-[#DCE4EE]"
+                        >
+                          Tomorrow 10 AM
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="date"
+                          value={followUpDate}
+                          onChange={(e) => setFollowUpDate(e.target.value)}
+                          className="w-full px-2.5 py-1 bg-white border border-[#DCE4EE] rounded-[6px] text-xs"
+                        />
+                        <input
+                          type="time"
+                          value={followUpTime}
+                          onChange={(e) => setFollowUpTime(e.target.value)}
+                          className="w-full px-2.5 py-1 bg-white border border-[#DCE4EE] rounded-[6px] text-xs"
+                        />
+                      </div>
+                      <div className="text-[10px] text-[#64748B]">
+                        Next attempt: {followUpDate} at {followUpTime} ({displayTimezone})
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

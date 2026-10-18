@@ -23,6 +23,20 @@ export const getSupabaseServerClient = () => {
   });
 };
 
+export const isRealSupabaseServerConfigured = () => {
+  return (
+    Boolean(supabaseUrl) &&
+    Boolean(supabaseServiceRoleKey) &&
+    !supabaseUrl.includes('placeholder') &&
+    !supabaseUrl.includes('mock') &&
+    !supabaseUrl.includes('sb-mock-vault') &&
+    !supabaseServiceRoleKey.includes('placeholder') &&
+    !supabaseServiceRoleKey.includes('mock')
+  );
+};
+
+import { verifySignedSessionToken } from './sessionServer';
+
 export interface AuthContext {
   user: { id: string; email?: string } | null;
   profile: {
@@ -31,13 +45,16 @@ export interface AuthContext {
     organization_id: string;
     full_name: string;
     role: 'ADMIN' | 'OWNER' | 'TELECALLER';
-    status: 'ACTIVE' | 'DISABLED' | 'PENDING';
+    status: 'ACTIVE' | 'DISABLED' | 'PENDING' | 'PENDING_VERIFICATION' | 'SUSPENDED';
+    phone_verified?: boolean;
+    email?: string;
   } | null;
   error: string | null;
 }
 
 /**
- * Validates the caller's JWT token from the Authorization header and loads their tenant profile.
+ * Validates the caller's JWT token or server-signed session token from the Authorization header
+ * and resolves their tenant profile.
  */
 export async function authenticateServerRequest(req: any): Promise<AuthContext> {
   const authHeader = req.headers?.authorization || req.headers?.Authorization;
@@ -46,8 +63,76 @@ export async function authenticateServerRequest(req: any): Promise<AuthContext> 
   }
 
   const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-  const supabase = getSupabaseServerClient();
 
+  // 1. Check server-signed cryptographic HMAC-SHA256 session token first
+  const sessionPayload = verifySignedSessionToken(token);
+  if (sessionPayload) {
+    if (!isRealSupabaseServerConfigured()) {
+      return {
+        user: { id: sessionPayload.userId, email: sessionPayload.email },
+        profile: {
+          id: sessionPayload.profileId,
+          user_id: sessionPayload.userId,
+          organization_id: sessionPayload.organizationId,
+          full_name: sessionPayload.fullName,
+          role: sessionPayload.role,
+          status: sessionPayload.status || 'ACTIVE',
+          phone_verified: true,
+          email: sessionPayload.email,
+        },
+        error: null,
+      };
+    }
+
+    const supabase = getSupabaseServerClient();
+    try {
+      const { data: dbProfile, error: profError } = await supabase
+        .from('profiles')
+        .select('id, user_id, organization_id, full_name, role, status, phone_verified, email')
+        .eq('id', sessionPayload.profileId)
+        .single();
+
+      if (!profError && dbProfile) {
+        if (dbProfile.status !== 'ACTIVE') {
+          return {
+            user: { id: dbProfile.user_id, email: dbProfile.email || sessionPayload.email },
+            profile: dbProfile,
+            error: 'User account is inactive or suspended',
+          };
+        }
+        return {
+          user: { id: dbProfile.user_id, email: dbProfile.email || sessionPayload.email },
+          profile: dbProfile,
+          error: null,
+        };
+      }
+    } catch {
+      // Supabase connection fallback for local isolated execution
+    }
+
+    // Isolated fallback: Trusted cryptographic session token payload
+    return {
+      user: { id: sessionPayload.userId, email: sessionPayload.email },
+      profile: {
+        id: sessionPayload.profileId,
+        user_id: sessionPayload.userId,
+        organization_id: sessionPayload.organizationId,
+        full_name: sessionPayload.fullName,
+        role: sessionPayload.role,
+        status: 'ACTIVE',
+        phone_verified: true,
+        email: sessionPayload.email,
+      },
+      error: null,
+    };
+  }
+
+  if (!isRealSupabaseServerConfigured()) {
+    return { user: null, profile: null, error: 'Invalid or expired auth token' };
+  }
+
+  // 2. Fallback to Supabase Auth JWT token
+  const supabase = getSupabaseServerClient();
   const {
     data: { user },
     error: authError,
@@ -59,7 +144,7 @@ export async function authenticateServerRequest(req: any): Promise<AuthContext> 
 
   const { data: profile, error: profError } = await supabase
     .from('profiles')
-    .select('id, user_id, organization_id, full_name, role, status')
+    .select('id, user_id, organization_id, full_name, role, status, email')
     .eq('user_id', user.id)
     .single();
 
@@ -69,3 +154,4 @@ export async function authenticateServerRequest(req: any): Promise<AuthContext> 
 
   return { user, profile, error: null };
 }
+

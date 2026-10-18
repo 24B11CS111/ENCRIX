@@ -84,21 +84,29 @@ export default async function handler(req: any, res: any) {
       .from('call-recordings')
       .createSignedUrl(filePath, 60); // 60 seconds TTL
 
-    if (signError || !signedData?.signedUrl) {
-      // If storage file does not exist yet, return the recording URL stored on the call (e.g. from provider)
-      if (call.recording_url) {
-        return res.status(200).json({
-          callId: call.id,
-          recordingUrl: call.recording_url,
-          expiresIn: 60,
-        });
-      }
+    // 6. Log authorized recording access for compliance audit
+    try {
+      await supabase.from('security_events').insert({
+        organization_id: profile.organization_id,
+        user_id: profile.id,
+        user_name: profile.full_name,
+        event_type: 'RECORDING_ACCESSED',
+        severity: 'LOW',
+        description: `User ${profile.full_name} (${profile.role}) accessed recording for call ${call.id}`,
+        metadata: { callId: call.id, role: profile.role },
+      });
+    } catch {
+      // Audit log error handled
+    }
+
+    const finalUrl = signedData?.signedUrl || call.recording_url;
+    if (!finalUrl) {
       return res.status(404).json({ error: 'Call recording file not found in storage' });
     }
 
     return res.status(200).json({
       callId: call.id,
-      recordingUrl: signedData.signedUrl,
+      recordingUrl: finalUrl,
       expiresIn: 60,
     });
   } catch (err: any) {

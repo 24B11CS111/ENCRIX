@@ -18,7 +18,6 @@ import {
   CheckSquare,
   Square,
   Eye,
-  Shield,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { formatRelativeTime } from '@/lib/utils';
@@ -72,7 +71,7 @@ export const OwnerLeadsPage: React.FC = () => {
       ) {
         loadData();
       }
-    });
+    }, profile);
 
     return () => unsubscribe();
   }, [profile]);

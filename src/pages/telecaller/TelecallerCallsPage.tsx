@@ -6,10 +6,16 @@ import { formatDuration, formatDateTime } from '@/lib/utils';
 import { PhoneCall, Play, Volume2 } from 'lucide-react';
 import { EmptyState } from '@/components/common/EmptyState';
 
+import { useRef } from 'react';
+import { recordingService } from '@/services/telephony/recordingService';
+
 export const TelecallerCallsPage: React.FC = () => {
   const { profile } = useAuth();
   const [calls, setCalls] = useState<Call[]>([]);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     if (!profile) return;
@@ -19,10 +25,64 @@ export const TelecallerCallsPage: React.FC = () => {
       if (type === 'CALL_RECORDED' || type === 'CALL_OUTCOME_SAVED') {
         setCalls(db.getCalls(profile));
       }
-    });
+    }, profile);
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+    };
   }, [profile]);
+
+  const handlePlayRecording = async (call: Call) => {
+    if (playingId === call.id) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      setPlayingId(null);
+      return;
+    }
+
+    try {
+      setLoadingAudioId(call.id);
+      setPlaybackError(null);
+
+      let url = call.recording_url;
+      try {
+        const signed = await recordingService.fetchRecordingSignedUrl(call.id);
+        if (signed?.recordingUrl) {
+          url = signed.recordingUrl;
+        }
+      } catch {
+        // Fallback to call.recording_url
+      }
+
+      if (!url) {
+        throw new Error('Recording audio URL unavailable');
+      }
+
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => setPlayingId(null);
+      audio.onerror = () => {
+        setPlayingId(null);
+        setPlaybackError('Unable to stream recording audio.');
+      };
+
+      await audio.play().catch(() => {});
+      setPlayingId(call.id);
+    } catch (err: any) {
+      setPlaybackError(err.message || 'Error accessing recording');
+    } finally {
+      setLoadingAudioId(null);
+    }
+  };
+
 
   return (
     <div className="space-y-6">
@@ -98,17 +158,20 @@ export const TelecallerCallsPage: React.FC = () => {
                     <td className="py-3 px-4 text-right">
                       {call.recording_url && (
                         <button
-                          onClick={() => setPlayingId(playingId === call.id ? null : call.id)}
+                          onClick={() => handlePlayRecording(call)}
+                          disabled={loadingAudioId === call.id}
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[8px] text-[11px] font-medium border transition-colors ${
                             playingId === call.id
-                              ? 'bg-[#0B1F3A] border-[#0B1F3A] text-white'
+                              ? 'bg-[#0B1F3A] border-[#0B1F3A] text-white shadow-sm'
                               : 'bg-white border-[#DCE4EE] text-[#172B4D] hover:bg-[#F6F8FB]'
-                          }`}
+                          } disabled:opacity-50`}
                         >
-                          {playingId === call.id ? (
+                          {loadingAudioId === call.id ? (
+                            <span>Loading...</span>
+                          ) : playingId === call.id ? (
                             <>
                               <Volume2 className="w-3.5 h-3.5 animate-bounce" />
-                              <span>Playing</span>
+                              <span>Stop</span>
                             </>
                           ) : (
                             <>

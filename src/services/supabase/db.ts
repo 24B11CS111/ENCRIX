@@ -11,9 +11,27 @@ import {
   LeadStatus,
   UserRole,
   LeadAssignment,
+  OrganizationInvitation,
+  PendingRegistration,
+  OtpVerificationRecord,
+  OtpPurpose,
+  InvitationStatus,
+  StudentDetails,
+  DistributionMode,
+  UnassignedReason,
+  OrganizationDistributionConfig,
+  DistributionPreview,
+  DistributionResult,
+  getDerivedFollowUpStatus,
+  FollowUpStatus,
+  CallOutcomeType,
+  LeadPriority,
 } from '@/types';
-import { sanitizeLeadForRole, sanitizeLeadsForRole, maskPhoneNumber } from '@/lib/dataMasking';
+import { sanitizeLeadForRole, sanitizeLeadsForRole, maskPhoneNumber, maskName } from '@/lib/dataMasking';
 import { sanitizeFormulaInjection, sanitizeText } from '@/lib/validation';
+import { normalizePhoneNumber, formatMaskedPhone } from '@/lib/phoneNormalization';
+import { normalizeEmailAddress } from '@/lib/emailNormalization';
+import { generateNumericOtp, generateRandomToken, hashOtpCode, timingSafeCompare } from '@/lib/cryptoUtils';
 import { MAX_IMPORT_ROWS, IS_DEMO_MODE } from '@/lib/config';
 import { supabase, isRealSupabaseConfigured } from './client';
 import {
@@ -38,7 +56,7 @@ type RealtimeListener = (event: RealtimeEvent) => void;
 
 interface SubscriptionEntry {
   listener: RealtimeListener;
-  profile?: Profile;
+  profile?: Profile | null;
 }
 
 class LeadVaultDatabase {
@@ -53,6 +71,11 @@ class LeadVaultDatabase {
   private securityEvents: SecurityEvent[] = [];
   private activityLogs: ActivityLog[] = [];
   private leadAssignments: LeadAssignment[] = [];
+  private invitations: OrganizationInvitation[] = [];
+  private pendingRegistrations: PendingRegistration[] = [];
+  private phoneOtps: OtpVerificationRecord[] = [];
+  private _lastTestOtps: Map<string, string> = new Map();
+  private distributionConfigs: Map<string, OrganizationDistributionConfig> = new Map();
 
   private subscriptions: Set<SubscriptionEntry> = new Set();
   private broadcastChannel: BroadcastChannel | null = null;
@@ -89,6 +112,23 @@ class LeadVaultDatabase {
       this.securityEvents = [...DEMO_SECURITY_EVENTS];
       this.activityLogs = [...DEMO_ACTIVITY_LOGS];
       this.leadAssignments = [];
+      this.invitations = [];
+      this.pendingRegistrations = [];
+      this.phoneOtps = [];
+      this._lastTestOtps.clear();
+      this.distributionConfigs.clear();
+      this.orgs.forEach((org) => {
+        this.distributionConfigs.set(org.id, {
+          id: `dist-cfg-${org.id}`,
+          organization_id: org.id,
+          mode: org.id === 'org-vertex-001' ? 'ROUND_ROBIN' : 'MANUAL',
+          enabled_for_import: org.id === 'org-vertex-001',
+          max_workload: org.id === 'org-vertex-001' ? 50 : null,
+          eligible_telecaller_ids: [],
+          round_robin_index: 0,
+          updated_at: new Date().toISOString(),
+        });
+      });
     } else {
       // Production / Staging: 100% clean state, zero fake data
       this.orgs = [];
@@ -101,6 +141,11 @@ class LeadVaultDatabase {
       this.securityEvents = [];
       this.activityLogs = [];
       this.leadAssignments = [];
+      this.invitations = [];
+      this.pendingRegistrations = [];
+      this.phoneOtps = [];
+      this._lastTestOtps.clear();
+      this.distributionConfigs.clear();
     }
 
     // Cross-tab real-time sync with tenant context
@@ -127,6 +172,12 @@ class LeadVaultDatabase {
     if (profile.status === 'DISABLED') {
       throw new Error('Forbidden: Account has been suspended. All access revoked.');
     }
+    if (profile.status === 'SUSPENDED') {
+      throw new Error('Forbidden: Account is suspended. Application access denied.');
+    }
+    if (profile.status === 'PENDING_VERIFICATION') {
+      throw new Error('Forbidden: Account is pending phone verification.');
+    }
   }
 
   private emit(
@@ -148,6 +199,39 @@ class LeadVaultDatabase {
       } catch {
         // Fallback
       }
+    }
+  }
+
+  private sanitizeRealtimePayloadForTelecaller(event: RealtimeEvent): RealtimeEvent {
+    if (!event.payload || typeof event.payload !== 'object') {
+      return event;
+    }
+
+    try {
+      const clonedPayload = JSON.parse(JSON.stringify(event.payload));
+
+      // If payload is a FollowUp object, strictly strip phone fields and mask lead name
+      if (clonedPayload.scheduled_at || clonedPayload.lead_phone) {
+        delete clonedPayload.lead_phone;
+        delete clonedPayload.phone;
+        if (clonedPayload.lead_name) {
+          clonedPayload.lead_name = maskName(clonedPayload.lead_name);
+        }
+      }
+
+      // If payload is a Lead object, sanitize for telecaller role (masks name, phone, email)
+      if (clonedPayload.name && (clonedPayload.status || clonedPayload.lead_code)) {
+        return { ...event, payload: sanitizeLeadForRole(clonedPayload, 'TELECALLER') };
+      }
+
+      // If payload has a nested lead
+      if (clonedPayload.lead && typeof clonedPayload.lead === 'object') {
+        clonedPayload.lead = sanitizeLeadForRole(clonedPayload.lead, 'TELECALLER');
+      }
+
+      return { ...event, payload: clonedPayload };
+    } catch {
+      return event;
     }
   }
 
@@ -173,9 +257,60 @@ class LeadVaultDatabase {
           ) {
             return; // Drop other telecaller's event
           }
+
+          // Strict Telecaller Assignment & Lead Isolation:
+          if (sub.profile.role === 'TELECALLER') {
+            if (event.type === 'LEAD_CREATED' || event.type === 'LEAD_UPDATED') {
+              const lead = event.payload as Partial<Lead>;
+              if (!lead || lead.assigned_to !== sub.profile.id) {
+                return;
+              }
+            } else if (event.type === 'LEAD_DELETED') {
+              const payload = event.payload as { leadId?: string; lead?: Partial<Lead> };
+              const lead = payload?.lead || (payload?.leadId ? this.leads.find((l) => l.id === payload.leadId) : undefined);
+              if (lead && lead.assigned_to !== sub.profile.id) {
+                return;
+              }
+            } else if (event.type === 'LEADS_IMPORTED') {
+              return; // Telecallers do not receive bulk imported unassigned leads
+            } else if (event.type === 'LEADS_ASSIGNED') {
+              const assignPayload = event.payload as { leadIds?: string[]; telecallerId?: string };
+              if (assignPayload && assignPayload.telecallerId !== sub.profile.id) {
+                return;
+              }
+            } else if (event.type === 'LEADS_ASSIGNED_ROUND_ROBIN') {
+              return;
+            } else if (event.type === 'CALL_RECORDED') {
+              const call = event.payload as Partial<Call>;
+              if (call && call.telecaller_id && call.telecaller_id !== sub.profile.id) {
+                return;
+              }
+            } else if (event.type === 'CALL_OUTCOME_SAVED') {
+              const outcome = event.payload as Partial<CallOutcome>;
+              if (outcome && outcome.telecaller_id && outcome.telecaller_id !== sub.profile.id) {
+                return;
+              }
+            } else if (event.type === 'FOLLOWUP_CREATED' || event.type === 'FOLLOWUP_UPDATED') {
+              const followUp = event.payload as Partial<FollowUp>;
+              if (followUp && (followUp.assigned_to || (followUp as any).telecaller_id)) {
+                const assignedId = followUp.assigned_to || (followUp as any).telecaller_id;
+                if (assignedId !== sub.profile.id) {
+                  return;
+                }
+              }
+            } else if (event.type === 'INVITATIONS_UPDATED' || event.type === 'SECURITY_EVENT_RAISED') {
+              return;
+            }
+          }
         }
 
-        sub.listener(event);
+        // Always sanitize / mask lead contact details for telecaller listeners
+        let eventToDeliver = event;
+        if (sub.profile && sub.profile.role === 'TELECALLER') {
+          eventToDeliver = this.sanitizeRealtimePayloadForTelecaller(event);
+        }
+
+        sub.listener(eventToDeliver);
       } catch (e) {
         console.error('Realtime listener error:', e);
       }
@@ -185,7 +320,17 @@ class LeadVaultDatabase {
   /**
    * Subscribe to real-time events with tenant boundary enforcement
    */
-  public subscribe(listener: RealtimeListener, userProfile?: Profile): () => void {
+  public subscribe(listener: RealtimeListener, userProfile?: Profile | null): () => void {
+    // Prevent duplicate subscriptions for the same listener instance
+    for (const existing of this.subscriptions) {
+      if (existing.listener === listener) {
+        existing.profile = userProfile;
+        return () => {
+          this.subscriptions.delete(existing);
+        };
+      }
+    }
+
     const entry: SubscriptionEntry = { listener, profile: userProfile };
     this.subscriptions.add(entry);
 
@@ -230,6 +375,21 @@ class LeadVaultDatabase {
   }
 
   /**
+   * Clean up all subscriptions and channel connections (e.g. on logout or org switch)
+   */
+  public unsubscribeAll(): void {
+    this.subscriptions.clear();
+    this.supabaseChannels.forEach((channel) => {
+      try {
+        channel.unsubscribe?.();
+      } catch {
+        // Fallback
+      }
+    });
+    this.supabaseChannels.clear();
+  }
+
+  /**
    * Seed an isolated tenant for multi-tenant testing and staging
    */
   public seedTestTenant(org: Organization, tenantProfiles: Profile[], tenantLeads?: Lead[]) {
@@ -248,6 +408,20 @@ class LeadVaultDatabase {
         }
       });
     }
+  }
+
+  /**
+   * Reset tenant transient test data between test suite runs
+   */
+  public clearTenantTestData(orgId: string): void {
+    this.leads = this.leads.filter((l) => l.organization_id !== orgId);
+    this.followUps = this.followUps.filter((f) => f.organization_id !== orgId);
+    this.notifications = this.notifications.filter((n) => n.organization_id !== orgId);
+    this.activityLogs = this.activityLogs.filter((a) => a.organization_id !== orgId);
+    this.securityEvents = this.securityEvents.filter((s) => s.organization_id !== orgId);
+    this.leadAssignments = this.leadAssignments.filter((a) => a.organization_id !== orgId);
+    this.calls = this.calls.filter((c) => c.organization_id !== orgId);
+    this.outcomes = this.outcomes.filter((o) => o.organization_id !== orgId);
   }
 
   // ----------------------------------------------------
@@ -412,6 +586,707 @@ class LeadVaultDatabase {
     return this.profiles[index];
   }
 
+  public updateProfileRole(
+    profileId: string,
+    newRole: UserRole,
+    currentProfile: Profile
+  ): Profile {
+    this.ensureActive(currentProfile);
+
+    // Strict Role Escalation Prevention:
+    // Telecallers cannot change roles or self-promote
+    if (currentProfile.role === 'TELECALLER') {
+      throw new Error('Unauthorized: Telecallers cannot change user roles or self-promote.');
+    }
+
+    // Platform ADMIN role can only be assigned by existing ADMINs
+    if (newRole === 'ADMIN' && currentProfile.role !== 'ADMIN') {
+      throw new Error('Unauthorized: Platform ADMIN role can only be assigned by administrators.');
+    }
+
+    const index = this.profiles.findIndex((p) => p.id === profileId);
+    if (index === -1) throw new Error('User profile not found.');
+
+    const target = this.profiles[index];
+    if (target.organization_id !== currentProfile.organization_id && currentProfile.role !== 'ADMIN') {
+      throw new Error('Forbidden: Cannot modify users of another organization.');
+    }
+
+    // Telecaller cannot become Owner (Section 23, test 18)
+    if (target.role === 'TELECALLER' && newRole === 'OWNER' && currentProfile.role !== 'ADMIN') {
+      throw new Error('Forbidden: Telecaller cannot be promoted to Owner.');
+    }
+
+    // Telecaller cannot become Admin (Section 23, test 19)
+    if (target.role === 'TELECALLER' && newRole === 'ADMIN' && currentProfile.role !== 'ADMIN') {
+      throw new Error('Forbidden: Telecaller cannot become Admin.');
+    }
+
+    this.profiles[index] = { ...target, role: newRole, updated_at: new Date().toISOString() };
+    this.emit('TEAM_UPDATED', this.profiles[index], { organization_id: currentProfile.organization_id });
+    return this.profiles[index];
+  }
+
+  // ----------------------------------------------------
+  // ORGANIZATION INVITATIONS (Section 7 & 8)
+  // ----------------------------------------------------
+
+  public getInvitations(currentProfile: Profile): OrganizationInvitation[] {
+    this.ensureActive(currentProfile);
+    if (currentProfile.role === 'TELECALLER') {
+      throw new Error('Forbidden: Telecallers cannot access organization invitations.');
+    }
+    if (currentProfile.role === 'ADMIN') {
+      return [...this.invitations];
+    }
+    return this.invitations.filter((i) => i.organization_id === currentProfile.organization_id);
+  }
+
+  public getInvitationByToken(token: string): OrganizationInvitation | null {
+    const inv = this.invitations.find((i) => i.token === token);
+    if (!inv) return null;
+    if (new Date(inv.expires_at) < new Date() && inv.status === 'PENDING') {
+      inv.status = 'EXPIRED';
+      this.recordSecurityEvent({
+        organization_id: inv.organization_id,
+        event_type: 'INVITATION_EXPIRED',
+        severity: 'LOW',
+        description: `Invitation for ${inv.full_name} has expired.`,
+        metadata: { invitationId: inv.id, token },
+      });
+    }
+    return inv;
+  }
+
+  public createInvitation(
+    data: { full_name: string; email?: string; phone?: string },
+    currentProfile: Profile
+  ): OrganizationInvitation {
+    this.ensureActive(currentProfile);
+    if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
+      throw new Error('Unauthorized: Only Owners or Admins can invite team members.');
+    }
+
+    if (!data.email && !data.phone) {
+      throw new Error('Email address or phone number is required for invitation.');
+    }
+
+    let normEmail = data.email ? normalizeEmailAddress(data.email) : null;
+    if (data.email && !normEmail?.isValid) {
+      throw new Error(normEmail?.error || 'Invalid email address format.');
+    }
+
+    let normPhone: { isValid: boolean; normalized: string; masked: string; error?: string } | null = null;
+    if (data.phone && data.phone.trim()) {
+      normPhone = normalizePhoneNumber(data.phone);
+      if (!normPhone.isValid) {
+        throw new Error(normPhone.error || 'Invalid phone number format.');
+      }
+    }
+
+    // Check if user is already a member of this organization
+    const existingMember = this.profiles.find(
+      (p) =>
+        p.organization_id === currentProfile.organization_id &&
+        ((normEmail && p.email === normEmail.normalized) || (normPhone && p.phone === normPhone.normalized))
+    );
+    if (existingMember) {
+      throw new Error(`User is already a member of this organization (${existingMember.role}).`);
+    }
+
+    const org = this.orgs.find((o) => o.id === currentProfile.organization_id);
+    const token = generateRandomToken('inv');
+    const newInvitation: OrganizationInvitation = {
+      id: `inv-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      organization_id: currentProfile.organization_id,
+      organization_name: org?.name || 'ENCRIX Organization',
+      phone_number: normPhone?.normalized || undefined,
+      full_name: sanitizeText(data.full_name),
+      email: normEmail?.normalized || undefined,
+      invited_by: currentProfile.id,
+      role: 'TELECALLER',
+      status: 'PENDING',
+      token,
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      created_at: new Date().toISOString(),
+    };
+
+    this.invitations.push(newInvitation);
+
+    const targetDesc = normEmail?.masked || normPhone?.masked || 'telecaller';
+    this.recordSecurityEvent({
+      organization_id: currentProfile.organization_id,
+      user_id: currentProfile.id,
+      user_name: currentProfile.full_name,
+      event_type: 'INVITATION_CREATED',
+      severity: 'LOW',
+      description: `Owner ${currentProfile.full_name} created invitation for telecaller ${newInvitation.full_name} (${targetDesc})`,
+      metadata: { invitationId: newInvitation.id, targetEmail: normEmail?.masked, targetPhone: normPhone?.masked },
+    });
+
+    this.logActivity({
+      organization_id: currentProfile.organization_id,
+      user_id: currentProfile.id,
+      user_name: currentProfile.full_name,
+      user_role: currentProfile.role,
+      action: 'INVITATION_CREATED',
+      entity_type: 'invitation',
+      entity_id: newInvitation.id,
+      metadata: { targetName: newInvitation.full_name, targetEmail: normEmail?.masked, targetPhone: normPhone?.masked },
+    });
+
+    this.emit('INVITATIONS_UPDATED', newInvitation, { organization_id: currentProfile.organization_id });
+    return newInvitation;
+  }
+
+  public revokeInvitation(invitationId: string, currentProfile: Profile): void {
+    this.ensureActive(currentProfile);
+    if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
+      throw new Error('Unauthorized: Only Owners or Admins can revoke invitations.');
+    }
+
+    const inv = this.invitations.find((i) => i.id === invitationId);
+    if (!inv) throw new Error('Invitation not found.');
+
+    if (currentProfile.role !== 'ADMIN' && inv.organization_id !== currentProfile.organization_id) {
+      throw new Error('Forbidden: Cannot revoke invitations of another organization.');
+    }
+
+    inv.status = 'REVOKED';
+
+    this.logActivity({
+      organization_id: currentProfile.organization_id,
+      user_id: currentProfile.id,
+      user_name: currentProfile.full_name,
+      user_role: currentProfile.role,
+      action: 'INVITATION_REVOKED',
+      entity_type: 'invitation',
+      entity_id: inv.id,
+      metadata: { targetName: inv.full_name },
+    });
+
+    this.emit('INVITATIONS_UPDATED', inv, { organization_id: currentProfile.organization_id });
+  }
+
+  // ----------------------------------------------------
+  // OTP AUTHENTICATION & VERIFICATION ENGINE (Section 2, 3, 4, 6)
+  // ----------------------------------------------------
+
+  public requestOtp(params: {
+    phone?: string;
+    email?: string;
+    purpose: OtpPurpose;
+    registrationData?: {
+      companyName: string;
+      ownerName: string;
+      email?: string;
+      industry?: string;
+      companySize?: string;
+    };
+    inviteToken?: string;
+  }): {
+    success: boolean;
+    maskedPhone?: string;
+    maskedEmail?: string;
+    error?: string;
+    cooldownSeconds?: number;
+    expiresSeconds?: number;
+    expiresAt?: string;
+    resendAvailableAt?: string;
+  } {
+    const emailNorm = params.email ? normalizeEmailAddress(params.email) : null;
+    const phoneNorm = params.phone ? normalizePhoneNumber(params.phone) : null;
+
+    if (params.email && !emailNorm?.isValid) {
+      return { success: false, maskedEmail: '—', error: emailNorm?.error || 'Invalid email address format.' };
+    }
+
+    if (!params.email && params.phone && !phoneNorm?.isValid) {
+      return { success: false, maskedPhone: '—', error: phoneNorm?.error || 'Invalid phone number format.' };
+    }
+
+    if (!params.email && !params.phone) {
+      return { success: false, maskedPhone: '—', error: 'Email or phone number is required.' };
+    }
+
+    const identifier = emailNorm?.normalized || phoneNorm?.normalized || '';
+    const maskedContact = emailNorm?.masked || phoneNorm?.masked || '—';
+    const now = Date.now();
+
+    let targetOrgId: string | undefined;
+    if (params.purpose === 'INVITATION') {
+      if (!params.inviteToken) {
+        return { success: false, maskedPhone: phoneNorm?.masked, maskedEmail: emailNorm?.masked, error: 'Invitation token is required.' };
+      }
+      const inv = this.getInvitationByToken(params.inviteToken);
+      if (!inv || inv.status !== 'PENDING') {
+        return { success: false, maskedPhone: phoneNorm?.masked, maskedEmail: emailNorm?.masked, error: 'This invitation is invalid or has expired.' };
+      }
+      if (new Date(inv.expires_at) < new Date()) {
+        return { success: false, maskedPhone: phoneNorm?.masked, maskedEmail: emailNorm?.masked, error: 'This invitation has expired. Request a new invitation.' };
+      }
+      const invEmail = inv.email ? normalizeEmailAddress(inv.email) : null;
+      const invPhone = inv.phone_number ? normalizePhoneNumber(inv.phone_number) : null;
+      const matchesEmail = Boolean(invEmail?.isValid && emailNorm?.normalized === invEmail.normalized);
+      const matchesPhone = Boolean(invPhone?.isValid && phoneNorm?.normalized === invPhone.normalized);
+      if (!matchesEmail && !matchesPhone) {
+        return { success: false, maskedPhone: phoneNorm?.masked, maskedEmail: emailNorm?.masked, error: 'This contact does not match the invitation.' };
+      }
+      targetOrgId = inv.organization_id;
+    }
+
+    if (params.purpose === 'LOGIN') {
+      const existing = this.profiles.find((p) => (params.email ? p.email === emailNorm?.normalized : p.phone === phoneNorm?.normalized));
+      if (existing) {
+        targetOrgId = existing.organization_id;
+        if (existing.status === 'DISABLED') {
+          this.recordSecurityEvent({
+            organization_id: existing.organization_id,
+            user_id: existing.id,
+            user_name: existing.full_name,
+            event_type: 'DISABLED_ACCOUNT_LOGIN_ATTEMPT',
+            severity: 'HIGH',
+            description: `Disabled user ${existing.full_name} attempted to request login OTP`,
+            metadata: { maskedContact, userId: existing.id },
+          });
+          return { success: false, maskedPhone: phoneNorm?.masked, maskedEmail: emailNorm?.masked, error: 'Your account has been suspended. Please contact your organization owner.' };
+        }
+        if (existing.status === 'SUSPENDED') {
+          this.recordSecurityEvent({
+            organization_id: existing.organization_id,
+            user_id: existing.id,
+            user_name: existing.full_name,
+            event_type: 'ACCOUNT_SUSPENDED',
+            severity: 'HIGH',
+            description: `Suspended user ${existing.full_name} attempted to request login OTP`,
+            metadata: { maskedContact, userId: existing.id },
+          });
+          return { success: false, maskedPhone: phoneNorm?.masked, maskedEmail: emailNorm?.masked, error: 'Your account has been suspended. Access denied.' };
+        }
+      }
+    }
+
+    const recentOtps = this.phoneOtps.filter((o) => {
+      const matchesThisContact = (o.phone_number === identifier || o.email_address === identifier);
+      return matchesThisContact && o.purpose === params.purpose && now - new Date(o.created_at).getTime() < 15 * 60 * 1000;
+    });
+
+    if (recentOtps.length > 0) {
+      const latest = recentOtps[recentOtps.length - 1];
+      const resendAfterTime = new Date(latest.resend_after).getTime();
+      if (resendAfterTime > now) {
+        const remaining = Math.ceil((resendAfterTime - now) / 1000);
+        return {
+          success: false,
+          maskedPhone: phoneNorm?.masked,
+          maskedEmail: emailNorm?.masked,
+          error: `Please wait ${remaining} seconds before requesting a new code.`,
+          cooldownSeconds: remaining,
+          resendAvailableAt: latest.resend_after,
+          expiresAt: latest.expires_at,
+        };
+      }
+
+      if (recentOtps.length >= 5) {
+        this.recordSecurityEvent({
+          organization_id: targetOrgId,
+          event_type: 'OTP_RATE_LIMITED',
+          severity: 'HIGH',
+          description: `Strict rate limit triggered for ${maskedContact}`,
+          metadata: { maskedContact, purpose: params.purpose },
+        });
+        return {
+          success: false,
+          maskedPhone: phoneNorm?.masked,
+          maskedEmail: emailNorm?.masked,
+          error: 'Too many requests. Please try again later.',
+        };
+      }
+    }
+
+    const rawCode = generateNumericOtp();
+    const hash = hashOtpCode(identifier, rawCode);
+    const expiresAt = new Date(now + 5 * 60 * 1000).toISOString();
+    const resendAfter = new Date(now + 60 * 1000).toISOString();
+
+    const otpRecord: OtpVerificationRecord = {
+      id: `otp-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      phone_number: phoneNorm?.normalized || identifier,
+      email_address: emailNorm?.normalized || undefined,
+      purpose: params.purpose,
+      otp_hash: hash,
+      attempts: 0,
+      resend_after: resendAfter,
+      expires_at: expiresAt,
+      used: false,
+      created_at: new Date(now).toISOString(),
+    };
+    this.phoneOtps.push(otpRecord);
+
+    if (params.purpose === 'REGISTER' && params.registrationData) {
+      const pendingReg: PendingRegistration = {
+        id: `preg-${Date.now().toString(36)}`,
+        phone_number: phoneNorm?.normalized || identifier,
+        company_name: sanitizeText(params.registrationData.companyName),
+        owner_name: sanitizeText(params.registrationData.ownerName),
+        email: emailNorm?.normalized || params.registrationData.email?.trim(),
+        industry: params.registrationData.industry || 'General',
+        company_size: params.registrationData.companySize || '1-10',
+        otp_hash: hash,
+        attempts: 0,
+        resend_after: resendAfter,
+        expires_at: expiresAt,
+        created_at: new Date(now).toISOString(),
+      };
+      this.pendingRegistrations = this.pendingRegistrations.filter((p) => p.phone_number !== (phoneNorm?.normalized || identifier));
+      this.pendingRegistrations.push(pendingReg);
+    }
+
+    this._lastTestOtps.set(`${identifier}:${params.purpose}`, rawCode);
+
+    this.recordSecurityEvent({
+      organization_id: targetOrgId,
+      event_type: 'OTP_REQUESTED',
+      severity: 'LOW',
+      description: `OTP requested for ${params.purpose} verification: ${maskedContact}`,
+      metadata: { phoneMasked: phoneNorm?.masked, maskedContact, purpose: params.purpose },
+    });
+
+    return {
+      success: true,
+      maskedPhone: phoneNorm?.masked,
+      maskedEmail: emailNorm?.masked,
+      cooldownSeconds: 60,
+      expiresSeconds: 300,
+      expiresAt,
+      resendAvailableAt: resendAfter,
+    };
+  }
+
+  public verifyOtp(params: {
+    phone?: string;
+    email?: string;
+    otp: string;
+    purpose: OtpPurpose;
+    registrationData?: {
+      companyName: string;
+      ownerName: string;
+      email?: string;
+      industry?: string;
+      companySize?: string;
+    };
+    inviteToken?: string;
+  }): { success: boolean; profile?: Profile; organization?: Organization; role?: UserRole; error?: string } {
+    const emailNorm = params.email ? normalizeEmailAddress(params.email) : null;
+    const phoneNorm = params.phone ? normalizePhoneNumber(params.phone) : null;
+
+    if (params.email && !emailNorm?.isValid) {
+      return { success: false, error: emailNorm?.error || 'Invalid email address format.' };
+    }
+
+    if (!params.email && params.phone && !phoneNorm?.isValid) {
+      return { success: false, error: phoneNorm?.error || 'Invalid phone number format.' };
+    }
+
+    if (!params.email && !params.phone) {
+      return { success: false, error: 'Email or phone number is required.' };
+    }
+
+    const identifier = emailNorm?.normalized || phoneNorm?.normalized || '';
+    const maskedContact = emailNorm?.masked || phoneNorm?.masked || '—';
+    const candidateCode = params.otp.trim();
+    const now = new Date(Date.now());
+
+    if (!params.otp || !/^\d{6}$/.test(candidateCode)) {
+      return { success: false, error: 'Enter the 6-digit verification code.' };
+    }
+
+    let otpRecord: OtpVerificationRecord | undefined;
+    let pendingReg: PendingRegistration | undefined;
+
+    if (params.purpose === 'REGISTER') {
+      pendingReg = this.pendingRegistrations.find((p) => p.phone_number === identifier || (p.email && p.email === identifier));
+      otpRecord = this.phoneOtps
+        .filter((o) => (o.phone_number === identifier || o.email_address === identifier) && o.purpose === 'REGISTER' && !o.used)
+        .slice(-1)[0];
+    } else {
+      otpRecord = this.phoneOtps
+        .filter((o) => (o.phone_number === identifier || o.email_address === identifier) && o.purpose === params.purpose && !o.used)
+        .slice(-1)[0];
+    }
+
+    if (!otpRecord) {
+      return { success: false, error: 'No active verification code found. Request a new code.' };
+    }
+
+    if (new Date(otpRecord.expires_at) < now) {
+      return { success: false, error: 'That code has expired. Request a new code.' };
+    }
+
+    if (otpRecord.attempts >= 5) {
+      return { success: false, error: 'Too many attempts. Please request a new code.' };
+    }
+
+    const candidateHash = hashOtpCode(identifier, candidateCode);
+    const isMatch = timingSafeCompare(candidateHash, otpRecord.otp_hash);
+
+    if (!isMatch) {
+      otpRecord.attempts += 1;
+      if (pendingReg) pendingReg.attempts += 1;
+
+      this.recordSecurityEvent({
+        event_type: 'OTP_FAILED',
+        severity: 'MEDIUM',
+        description: `Failed OTP verification attempt (${otpRecord.attempts}/5) for ${maskedContact}`,
+        metadata: { maskedContact, attempts: otpRecord.attempts, purpose: params.purpose },
+      });
+
+      if (otpRecord.attempts >= 5) {
+        return { success: false, error: 'Too many attempts. Please request a new code.' };
+      }
+      return { success: false, error: 'Invalid verification code.' };
+    }
+
+    otpRecord.used = true;
+    if (pendingReg) {
+      this.pendingRegistrations = this.pendingRegistrations.filter((p) => p.id !== pendingReg!.id);
+    }
+    this._lastTestOtps.delete(`${identifier}:${params.purpose}`);
+
+    if (params.purpose === 'REGISTER') {
+      const regData = params.registrationData || pendingReg;
+      if (!regData || (!('companyName' in regData) && !('company_name' in regData))) {
+        return { success: false, error: 'Registration details missing.' };
+      }
+      const companyName = (regData as any).companyName || (regData as any).company_name;
+      const ownerName = (regData as any).ownerName || (regData as any).owner_name;
+      const industry = (regData as any).industry || 'General';
+      const companySize = (regData as any).companySize || '1-10';
+
+      const newOrg: Organization = {
+        id: `org-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+        name: sanitizeText(companyName),
+        slug: companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        owner_id: `user-${Date.now().toString(36)}`,
+        industry: sanitizeText(industry),
+        company_size: companySize,
+        status: 'ACTIVE',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      this.orgs.push(newOrg);
+
+      const newOwner: Profile = {
+        id: `prof-${Date.now().toString(36)}`,
+        user_id: newOrg.owner_id,
+        organization_id: newOrg.id,
+        full_name: sanitizeText(ownerName),
+        phone: phoneNorm?.normalized || undefined,
+        email: emailNorm?.normalized || (params.registrationData?.email || undefined),
+        email_verified: Boolean(emailNorm?.normalized),
+        phone_verified: Boolean(phoneNorm?.normalized),
+        role: 'OWNER',
+        status: 'ACTIVE',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      this.profiles.push(newOwner);
+
+      this.recordSecurityEvent({
+        organization_id: newOrg.id,
+        user_id: newOwner.id,
+        user_name: newOwner.full_name,
+        event_type: 'OTP_VERIFIED',
+        severity: 'LOW',
+        description: `Owner ${newOwner.full_name} verified contact: ${maskedContact}`,
+        metadata: { maskedContact, role: 'OWNER' },
+      });
+
+      this.recordSecurityEvent({
+        organization_id: newOrg.id,
+        user_id: newOwner.id,
+        user_name: newOwner.full_name,
+        event_type: 'ACCOUNT_CREATED',
+        severity: 'LOW',
+        description: `Organization ${newOrg.name} and Owner profile created.`,
+        metadata: { organizationId: newOrg.id, role: 'OWNER' },
+      });
+
+      this.recordSecurityEvent({
+        organization_id: newOrg.id,
+        user_id: newOwner.id,
+        user_name: newOwner.full_name,
+        event_type: 'LOGIN_SUCCESS',
+        severity: 'LOW',
+        description: `Owner ${newOwner.full_name} logged in successfully after registration.`,
+        metadata: { maskedContact, role: 'OWNER' },
+      });
+
+      return { success: true, profile: newOwner, organization: newOrg, role: 'OWNER' };
+    }
+
+    if (params.purpose === 'LOGIN') {
+      const profile = this.profiles.find((p) => (params.email ? p.email === emailNorm?.normalized : p.phone === phoneNorm?.normalized));
+      if (!profile) {
+        return { success: false, error: 'No account found with this email. Please register.' };
+      }
+
+      if (profile.status === 'PENDING_VERIFICATION') {
+        return { success: false, error: 'Your account is pending verification and cannot be accessed.' };
+      }
+      if (profile.status === 'SUSPENDED') {
+        this.recordSecurityEvent({
+          organization_id: profile.organization_id,
+          user_id: profile.id,
+          user_name: profile.full_name,
+          event_type: 'ACCOUNT_SUSPENDED',
+          severity: 'HIGH',
+          description: `Suspended user ${profile.full_name} attempted to log in`,
+          metadata: { maskedContact, userId: profile.id },
+        });
+        return { success: false, error: 'Your account has been suspended. Please contact your organization owner.' };
+      }
+      if (profile.status === 'DISABLED') {
+        this.recordSecurityEvent({
+          organization_id: profile.organization_id,
+          user_id: profile.id,
+          user_name: profile.full_name,
+          event_type: 'ACCOUNT_DISABLED',
+          severity: 'HIGH',
+          description: `Disabled user ${profile.full_name} attempted to log in`,
+          metadata: { maskedContact, userId: profile.id },
+        });
+        return { success: false, error: 'Your account has been suspended. Please contact your organization owner.' };
+      }
+
+      if (emailNorm?.normalized && !profile.email_verified) profile.email_verified = true;
+      if (phoneNorm?.normalized && !profile.phone_verified) profile.phone_verified = true;
+      const org = this.orgs.find((o) => o.id === profile.organization_id);
+
+      this.recordSecurityEvent({
+        organization_id: profile.organization_id,
+        user_id: profile.id,
+        user_name: profile.full_name,
+        event_type: 'OTP_VERIFIED',
+        severity: 'LOW',
+        description: `User ${profile.full_name} verified OTP for login`,
+        metadata: { maskedContact, role: profile.role },
+      });
+
+      this.recordSecurityEvent({
+        organization_id: profile.organization_id,
+        user_id: profile.id,
+        user_name: profile.full_name,
+        event_type: 'LOGIN_SUCCESS',
+        severity: 'LOW',
+        description: `User ${profile.full_name} logged in successfully via OTP.`,
+        metadata: { maskedContact, role: profile.role },
+      });
+
+      return { success: true, profile, organization: org, role: profile.role };
+    }
+
+    if (params.purpose === 'INVITATION') {
+      if (!params.inviteToken) {
+        return { success: false, error: 'Invitation token is required.' };
+      }
+      const inv = this.getInvitationByToken(params.inviteToken);
+      if (!inv || inv.status !== 'PENDING') {
+        return { success: false, error: 'This invitation is invalid or has expired.' };
+      }
+      if (new Date(inv.expires_at) < now) {
+        return { success: false, error: 'This invitation has expired. Request a new invitation.' };
+      }
+
+      // Check cross-tenant isolation: invitation from Org A cannot attach to Org B
+      const existingProf = this.profiles.find(
+        (p) =>
+          (phoneNorm?.normalized && p.phone === phoneNorm.normalized) ||
+          (emailNorm?.normalized && p.email === emailNorm.normalized)
+      );
+      let targetProfile: Profile;
+
+      if (existingProf) {
+        if (existingProf.organization_id !== inv.organization_id) {
+          return { success: false, error: 'This contact is already registered with another organization.' };
+        }
+        targetProfile = existingProf;
+      } else {
+        targetProfile = {
+          id: `tc-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+          user_id: `user-${Date.now().toString(36)}`,
+          organization_id: inv.organization_id,
+          full_name: inv.full_name,
+          phone: phoneNorm?.normalized || inv.phone_number || undefined,
+          email: emailNorm?.normalized || inv.email || undefined,
+          phone_verified: Boolean(phoneNorm?.normalized || inv.phone_number),
+          email_verified: Boolean(emailNorm?.normalized || inv.email),
+          role: 'TELECALLER', // strictly telecaller!
+          status: 'ACTIVE',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        this.profiles.push(targetProfile);
+      }
+
+      inv.status = 'ACCEPTED';
+      const org = this.orgs.find((o) => o.id === inv.organization_id);
+
+      this.recordSecurityEvent({
+        organization_id: inv.organization_id,
+        user_id: targetProfile.id,
+        user_name: targetProfile.full_name,
+        event_type: 'OTP_VERIFIED',
+        severity: 'LOW',
+        description: `Telecaller ${targetProfile.full_name} verified OTP for ${maskedContact}`,
+        metadata: { maskedContact, role: 'TELECALLER' },
+      });
+
+      this.recordSecurityEvent({
+        organization_id: inv.organization_id,
+        user_id: targetProfile.id,
+        user_name: targetProfile.full_name,
+        event_type: 'INVITATION_ACCEPTED',
+        severity: 'LOW',
+        description: `Telecaller ${targetProfile.full_name} accepted invitation and joined organization`,
+        metadata: { invitationId: inv.id, role: 'TELECALLER' },
+      });
+
+      this.recordSecurityEvent({
+        organization_id: inv.organization_id,
+        user_id: targetProfile.id,
+        user_name: targetProfile.full_name,
+        event_type: 'LOGIN_SUCCESS',
+        severity: 'LOW',
+        description: `Telecaller ${targetProfile.full_name} logged in to workspace`,
+        metadata: { role: 'TELECALLER' },
+      });
+
+      return { success: true, profile: targetProfile, organization: org, role: 'TELECALLER' };
+    }
+
+    return { success: false, error: 'Unsupported verification purpose.' };
+  }
+
+  /**
+   * Test Hook: ONLY returns code during local development / testing.
+   * In production mode (VITE_ENABLE_DEMO_SANDBOX=false and NODE_ENV=production), returns null.
+   */
+  public getTestOtp(identifier: string, purpose: OtpPurpose): string | null {
+    const isProduction = !IS_DEMO_MODE && process.env.NODE_ENV === 'production';
+    if (isProduction) {
+      return null;
+    }
+
+    const emailNorm = normalizeEmailAddress(identifier);
+    if (emailNorm.isValid) {
+      return this._lastTestOtps.get(`${emailNorm.normalized}:${purpose}`) || null;
+    }
+
+    const phoneNorm = normalizePhoneNumber(identifier);
+    return this._lastTestOtps.get(`${phoneNorm.normalized}:${purpose}`) || null;
+  }
+
   // ----------------------------------------------------
   // LEADS & DATA MASKING
   // ----------------------------------------------------
@@ -474,6 +1349,116 @@ class LeadVaultDatabase {
 
     // Return sanitized lead for telecaller, unmasked for owner/admin
     return sanitizeLeadForRole(lead, currentProfile.role);
+  }
+
+  /**
+   * Internal system helper for server routes. Not exposed to client UI.
+   */
+  public getAllRawLeadsForSystem(): Lead[] {
+    return [...this.leads];
+  }
+
+  /**
+   * Authorized Student Details Access for Telecallers & Owners.
+   * CRITICAL SECURITY INVARIANT: 'phone' is NEVER included in the returned StudentDetails.
+   * Telecallers cannot view leads from other tenants or unassigned leads.
+   */
+  public getStudentLeadDetails(leadId: string, currentProfile: Profile): StudentDetails {
+    this.ensureActive(currentProfile);
+    const lead = this.leads.find((l) => l.id === leadId);
+    if (!lead) {
+      throw new Error('Lead not found or unauthorized.');
+    }
+
+    // 1. Multi-Tenant Organization Isolation:
+    // Deny unauthorized requests without disclosing whether another organization's lead exists
+    if (currentProfile.role !== 'ADMIN' && lead.organization_id !== currentProfile.organization_id) {
+      this.recordSecurityEvent(
+        {
+          event_type: 'CROSS_TENANT_LEAD_ACCESS_ATTEMPT',
+          severity: 'CRITICAL',
+          description: `User ${currentProfile.full_name} (${currentProfile.id}) attempted unauthorized cross-tenant lead access to lead ${lead.id}.`,
+          metadata: { targetOrg: lead.organization_id, userOrg: currentProfile.organization_id, targetLeadId: leadId },
+        },
+        currentProfile
+      );
+      throw new Error('Lead not found or unauthorized.');
+    }
+
+    // 2. Telecaller Assignment Check:
+    // Telecaller can ONLY view leads assigned to them!
+    if (currentProfile.role === 'TELECALLER' && lead.assigned_to !== currentProfile.id) {
+      this.recordSecurityEvent(
+        {
+          event_type: 'UNAUTHORIZED_LEAD_ACCESS_ATTEMPT',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to view unassigned lead ${lead.lead_code}.`,
+          metadata: { targetLeadId: leadId, targetLeadCode: lead.lead_code },
+        },
+        currentProfile
+      );
+      throw new Error('Forbidden: You do not have permission to access this lead.');
+    }
+
+    // 3. Record lead-detail access audit log (without sensitive academic or contact values)
+    this.logActivity({
+      organization_id: currentProfile.organization_id,
+      user_id: currentProfile.id,
+      user_name: currentProfile.full_name,
+      user_role: currentProfile.role,
+      action: 'LEAD_DETAILS_ACCESSED',
+      entity_type: 'lead',
+      entity_id: lead.id,
+      metadata: { leadId: lead.id, leadCode: lead.lead_code, accessedAt: new Date().toISOString() },
+    });
+
+    // 4. Return strictly authorized student fields — ZERO PHONE EXPOSURE
+    const student: StudentDetails = {
+      id: lead.id,
+      organization_id: lead.organization_id,
+      lead_code: lead.lead_code,
+      name: lead.name,
+      email: currentProfile.role === 'TELECALLER' ? (lead.email ? '***@***.***' : undefined) : lead.email,
+      source: lead.source,
+      status: lead.status,
+      priority: lead.priority,
+      assigned_to: lead.assigned_to,
+      notes: lead.notes,
+      created_at: lead.created_at,
+      updated_at: lead.updated_at,
+      last_contacted_at: lead.last_contacted_at,
+      calls_count: lead.calls_count,
+
+      // Student and family details (null if not provided, no fabrication)
+      father_name: lead.father_name ?? (lead.metadata?.father_name as string | null) ?? null,
+      mother_name: lead.mother_name ?? (lead.metadata?.mother_name as string | null) ?? null,
+
+      // Examination and academic details
+      neet_score: lead.neet_score ?? (lead.metadata?.neet_score as number | null) ?? null,
+      neet_rank: lead.neet_rank ?? (lead.metadata?.neet_rank as number | null) ?? null,
+      neet_year: lead.neet_year ?? (lead.metadata?.neet_year as number | null) ?? null,
+      neet_attempts: lead.neet_attempts ?? (lead.metadata?.neet_attempts as number | null) ?? null,
+
+      eamcet_score: lead.eamcet_score ?? (lead.metadata?.eamcet_score as number | null) ?? null,
+      eamcet_rank: lead.eamcet_rank ?? (lead.metadata?.eamcet_rank as number | null) ?? null,
+      eamcet_year: lead.eamcet_year ?? (lead.metadata?.eamcet_year as number | null) ?? null,
+      eamcet_attempts: lead.eamcet_attempts ?? (lead.metadata?.eamcet_attempts as number | null) ?? null,
+
+      ipe_marks: lead.ipe_marks ?? (lead.metadata?.ipe_marks as number | null) ?? null,
+      ipe_percentage: lead.ipe_percentage ?? (lead.metadata?.ipe_percentage as number | null) ?? null,
+      ipe_year: lead.ipe_year ?? (lead.metadata?.ipe_year as number | null) ?? null,
+      ipe_attempts: lead.ipe_attempts ?? (lead.metadata?.ipe_attempts as number | null) ?? null,
+
+      // Approved student profile fields
+      category: lead.category ?? (lead.metadata?.category as string | null) ?? null,
+      gender: lead.gender ?? (lead.metadata?.gender as string | null) ?? null,
+      city: lead.city ?? (lead.metadata?.city as string | null) ?? null,
+      state: lead.state ?? (lead.metadata?.state as string | null) ?? null,
+      school_or_college: lead.school_or_college ?? (lead.metadata?.school_or_college as string | null) ?? null,
+      course_interest: lead.course_interest ?? (lead.metadata?.course_interest as string | null) ?? null,
+    };
+
+    return student;
   }
 
   /**
@@ -722,7 +1707,7 @@ class LeadVaultDatabase {
       notes?: string;
     }>,
     currentProfile: Profile
-  ): { imported: number; leads: Lead[] } {
+  ): { imported: number; leads: Lead[]; distribution?: DistributionResult | null } {
     this.ensureActive(currentProfile);
     if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
       throw new Error('Unauthorized: Only Owners can import leads.');
@@ -748,6 +1733,7 @@ class LeadVaultDatabase {
         priority: rec.priority || 'MEDIUM',
         status: 'NEW',
         assigned_to: null,
+        unassigned_reason: 'MANUAL_UNASSIGNED',
         notes: rec.notes ? sanitizeText(rec.notes) : 'Imported via CSV/XLSX wizard',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -768,8 +1754,22 @@ class LeadVaultDatabase {
       metadata: { count: newLeads.length, source: 'CSV_IMPORT' },
     });
 
-    this.emit('LEADS_IMPORTED', { count: newLeads.length }, { organization_id: currentProfile.organization_id });
-    return { imported: newLeads.length, leads: newLeads };
+    // Check if organization has configured automatic distribution for imports
+    let distributionResult: DistributionResult | null = null;
+    const config = this.getDistributionConfig(currentProfile);
+    if (config.enabled_for_import && config.mode !== 'MANUAL') {
+      try {
+        distributionResult = this.distributeLeads(
+          { leadIds: newLeads.map((l) => l.id), mode: config.mode },
+          currentProfile
+        );
+      } catch (distErr) {
+        console.warn('Auto-distribution on import failed, leads remained in unassigned queue:', distErr);
+      }
+    }
+
+    this.emit('LEADS_IMPORTED', { count: newLeads.length, distribution: distributionResult }, { organization_id: currentProfile.organization_id });
+    return { imported: newLeads.length, leads: newLeads, distribution: distributionResult };
   }
 
   /**
@@ -808,88 +1808,821 @@ class LeadVaultDatabase {
   }
 
   // ----------------------------------------------------
-  // LEAD ASSIGNMENTS (MANUAL & ROUND-ROBIN)
+  // PHASE 20: SMART LEAD DISTRIBUTION & WORKLOAD BALANCING
   // ----------------------------------------------------
 
-  public assignLeads(
-    leadIds: string[],
-    telecallerId: string,
-    currentProfile: Profile
-  ): number {
+  public getDistributionConfig(currentProfile: Profile): OrganizationDistributionConfig {
     this.ensureActive(currentProfile);
     if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
-      throw new Error('Unauthorized: Only Owners can assign leads.');
+      throw new Error('Unauthorized: Only Owners and Admins can view distribution configuration.');
     }
 
-    const telecaller = this.profiles.find((p) => p.id === telecallerId);
-    if (!telecaller || (telecaller.organization_id !== currentProfile.organization_id && currentProfile.role !== 'ADMIN')) {
-      throw new Error('Invalid telecaller selected.');
+    let config = this.distributionConfigs.get(currentProfile.organization_id);
+    if (!config) {
+      config = {
+        id: `dist-cfg-${currentProfile.organization_id}`,
+        organization_id: currentProfile.organization_id,
+        mode: 'MANUAL',
+        enabled_for_import: false,
+        max_workload: null,
+        eligible_telecaller_ids: [],
+        round_robin_index: 0,
+        updated_at: new Date().toISOString(),
+      };
+      this.distributionConfigs.set(currentProfile.organization_id, config);
     }
+    return { ...config };
+  }
 
-    // Verify all leads belong to this organization (Section 4 Cross-Tenant Assignment Check)
-    const unauthorizedLead = this.leads.find(
-      (l) => leadIds.includes(l.id) && l.organization_id !== currentProfile.organization_id && currentProfile.role !== 'ADMIN'
-    );
-    if (unauthorizedLead) {
+  public updateDistributionConfig(
+    updates: Partial<OrganizationDistributionConfig>,
+    currentProfile: Profile
+  ): OrganizationDistributionConfig {
+    this.ensureActive(currentProfile);
+    if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
       this.recordSecurityEvent(
         {
-          event_type: 'CROSS_TENANT_ASSIGNMENT_ATTEMPT',
+          event_type: 'UNAUTHORIZED_DISTRIBUTION_CONFIG_ATTEMPT',
           severity: 'HIGH',
-          description: `Attempted to assign lead ${unauthorizedLead.lead_code} belonging to another organization.`,
-          metadata: { targetLeadId: unauthorizedLead.id },
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to update distribution config.`,
+          metadata: { updates },
         },
         currentProfile
       );
-      throw new Error('Forbidden: Cannot assign leads belonging to another organization.');
+      throw new Error('Unauthorized: Only Owners and Admins can modify distribution configuration.');
     }
 
-    let updatedCount = 0;
-    this.leads = this.leads.map((l) => {
-      if (leadIds.includes(l.id) && (l.organization_id === currentProfile.organization_id || currentProfile.role === 'ADMIN')) {
-        updatedCount++;
-        return {
-          ...l,
-          assigned_to: telecallerId,
-          status: l.status === 'NEW' ? 'ASSIGNED' : l.status,
-          updated_at: new Date().toISOString(),
-        };
-      }
-      return l;
-    });
+    if (updates.organization_id && updates.organization_id !== currentProfile.organization_id && currentProfile.role !== 'ADMIN') {
+      throw new Error('Forbidden: Cannot modify distribution configuration of another organization.');
+    }
 
-    // Notify telecaller
-    this.createNotification({
+    const existing = this.getDistributionConfig(currentProfile);
+
+    if (updates.mode && !['MANUAL', 'ROUND_ROBIN', 'WORKLOAD_BALANCED'].includes(updates.mode)) {
+      throw new Error(`Invalid distribution mode: ${updates.mode}`);
+    }
+
+    if (updates.max_workload !== undefined && updates.max_workload !== null) {
+      const val = Number(updates.max_workload);
+      if (!Number.isInteger(val) || val <= 0) {
+        throw new Error('max_workload must be a positive integer or null.');
+      }
+      updates.max_workload = val;
+    }
+
+    if (updates.eligible_telecaller_ids !== undefined) {
+      for (const tcId of updates.eligible_telecaller_ids) {
+        const tc = this.profiles.find(
+          (p) => p.id === tcId && (p.organization_id === currentProfile.organization_id || currentProfile.role === 'ADMIN') && p.role === 'TELECALLER'
+        );
+        if (!tc) {
+          throw new Error(`Invalid eligible telecaller ID: ${tcId}`);
+        }
+      }
+    }
+
+    const updatedConfig: OrganizationDistributionConfig = {
+      ...existing,
+      ...updates,
       organization_id: currentProfile.organization_id,
-      user_id: telecallerId,
-      type: 'LEAD_ASSIGNED',
-      title: 'New Leads Assigned',
-      message: `${updatedCount} new leads assigned to your queue by ${currentProfile.full_name}.`,
-      link: '/telecaller/leads',
-    });
+      updated_at: new Date().toISOString(),
+      updated_by: currentProfile.id,
+    };
+
+    this.distributionConfigs.set(currentProfile.organization_id, updatedConfig);
 
     this.logActivity({
       organization_id: currentProfile.organization_id,
       user_id: currentProfile.id,
       user_name: currentProfile.full_name,
       user_role: currentProfile.role,
-      action: 'LEAD_ASSIGNED',
-      entity_type: 'lead',
-      metadata: { count: updatedCount, assignedTo: telecaller.full_name },
+      action: 'DISTRIBUTION_CONFIG_UPDATED',
+      entity_type: 'distribution_config',
+      entity_id: updatedConfig.id,
+      metadata: {
+        mode: updatedConfig.mode,
+        max_workload: updatedConfig.max_workload,
+        enabled_for_import: updatedConfig.enabled_for_import,
+        eligible_count: updatedConfig.eligible_telecaller_ids.length,
+      },
     });
 
-    leadIds.forEach((leadId) => {
-      this.leadAssignments.push({
-        id: `asgn-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
-        organization_id: currentProfile.organization_id,
-        lead_id: leadId,
-        user_id: telecallerId,
-        assigned_by: currentProfile.id,
-        assigned_at: new Date().toISOString(),
+    this.emit('DISTRIBUTION_CONFIG_UPDATED', updatedConfig, { organization_id: currentProfile.organization_id });
+    return { ...updatedConfig };
+  }
+
+  public getEligibleTelecallers(
+    currentProfile: Profile,
+    configOverride?: Partial<OrganizationDistributionConfig>
+  ): Profile[] {
+    this.ensureActive(currentProfile);
+    const orgId = currentProfile.organization_id;
+    const config = configOverride
+      ? { ...this.getDistributionConfig(currentProfile), ...configOverride }
+      : this.getDistributionConfig(currentProfile);
+
+    let eligible = this.profiles.filter(
+      (p) => p.organization_id === orgId && p.role === 'TELECALLER' && p.status === 'ACTIVE'
+    );
+
+    if (config.eligible_telecaller_ids && config.eligible_telecaller_ids.length > 0) {
+      eligible = eligible.filter((p) => config.eligible_telecaller_ids.includes(p.id));
+    }
+
+    return eligible.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  public getOpenLeadCount(telecallerId: string, orgId: string): number {
+    const OPEN_LEAD_STATUSES: LeadStatus[] = ['NEW', 'ASSIGNED', 'CONTACTED', 'INTERESTED', 'FOLLOW_UP'];
+    return this.leads.filter(
+      (l) => l.organization_id === orgId && l.assigned_to === telecallerId && OPEN_LEAD_STATUSES.includes(l.status)
+    ).length;
+  }
+
+  public previewDistribution(
+    leadIds: string[],
+    modeOverride?: DistributionMode,
+    currentProfile?: Profile
+  ): DistributionPreview {
+    if (!currentProfile) throw new Error('Authentication required.');
+    this.ensureActive(currentProfile);
+    if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
+      throw new Error('Unauthorized: Only Owners or Admins can preview lead distribution.');
+    }
+
+    const config = this.getDistributionConfig(currentProfile);
+    const mode = modeOverride || config.mode;
+    const orgId = currentProfile.organization_id;
+
+    const validLeadIds = leadIds.filter((id) =>
+      this.leads.some((l) => l.id === id && (l.organization_id === orgId || currentProfile.role === 'ADMIN'))
+    );
+
+    const total = validLeadIds.length;
+    if (total === 0) {
+      return {
+        mode,
+        total_leads: 0,
+        assignable_count: 0,
+        unassigned_count: 0,
+        unassigned_reason: null,
+        telecaller_breakdown: [],
+      };
+    }
+
+    if (mode === 'MANUAL') {
+      return {
+        mode,
+        total_leads: total,
+        assignable_count: 0,
+        unassigned_count: total,
+        unassigned_reason: 'MANUAL_UNASSIGNED',
+        telecaller_breakdown: [],
+      };
+    }
+
+    const eligible = this.getEligibleTelecallers(currentProfile);
+    if (eligible.length === 0) {
+      const allOrgTelecallers = this.profiles.filter((p) => p.organization_id === orgId && p.role === 'TELECALLER');
+      let reason: UnassignedReason = 'NO_ELIGIBLE_TELECALLERS';
+      if (allOrgTelecallers.length === 0) {
+        reason = 'EMPTY_TEAM';
+      } else if (config.eligible_telecaller_ids && config.eligible_telecaller_ids.length > 0) {
+        reason = 'EXCLUDED_POOL';
+      }
+
+      return {
+        mode,
+        total_leads: total,
+        assignable_count: 0,
+        unassigned_count: total,
+        unassigned_reason: reason,
+        telecaller_breakdown: [],
+      };
+    }
+
+    const telecallerState = eligible.map((tc) => {
+      const currentOpen = this.getOpenLeadCount(tc.id, orgId);
+      return {
+        telecaller_id: tc.id,
+        telecaller_name: tc.full_name,
+        current_open_leads: currentOpen,
+        leads_to_assign: 0,
+        projected_open_leads: currentOpen,
+        at_capacity: config.max_workload !== null && currentOpen >= config.max_workload,
+      };
+    });
+
+    let assignedCount = 0;
+    let unassignedCount = 0;
+    let unassignedReason: UnassignedReason | null = null;
+    const maxCap = config.max_workload;
+
+    if (mode === 'ROUND_ROBIN') {
+      let cursor = config.round_robin_index % eligible.length;
+      for (let i = 0; i < total; i++) {
+        let assignedToIdx = -1;
+        for (let attempt = 0; attempt < eligible.length; attempt++) {
+          const checkIdx = (cursor + attempt) % eligible.length;
+          const candidate = telecallerState[checkIdx];
+          if (maxCap === null || candidate.projected_open_leads < maxCap) {
+            assignedToIdx = checkIdx;
+            cursor = (checkIdx + 1) % eligible.length;
+            break;
+          }
+        }
+
+        if (assignedToIdx !== -1) {
+          telecallerState[assignedToIdx].leads_to_assign += 1;
+          telecallerState[assignedToIdx].projected_open_leads += 1;
+          if (maxCap !== null && telecallerState[assignedToIdx].projected_open_leads >= maxCap) {
+            telecallerState[assignedToIdx].at_capacity = true;
+          }
+          assignedCount++;
+        } else {
+          unassignedCount = total - assignedCount;
+          unassignedReason = 'CAPACITY_REACHED';
+          break;
+        }
+      }
+    } else if (mode === 'WORKLOAD_BALANCED') {
+      for (let i = 0; i < total; i++) {
+        let bestIdx = -1;
+        let minOpen = Infinity;
+
+        for (let j = 0; j < telecallerState.length; j++) {
+          const candidate = telecallerState[j];
+          if (maxCap !== null && candidate.projected_open_leads >= maxCap) {
+            continue;
+          }
+          if (candidate.projected_open_leads < minOpen) {
+            minOpen = candidate.projected_open_leads;
+            bestIdx = j;
+          }
+        }
+
+        if (bestIdx !== -1) {
+          telecallerState[bestIdx].leads_to_assign += 1;
+          telecallerState[bestIdx].projected_open_leads += 1;
+          if (maxCap !== null && telecallerState[bestIdx].projected_open_leads >= maxCap) {
+            telecallerState[bestIdx].at_capacity = true;
+          }
+          assignedCount++;
+        } else {
+          unassignedCount = total - assignedCount;
+          unassignedReason = 'CAPACITY_REACHED';
+          break;
+        }
+      }
+    }
+
+    return {
+      mode,
+      total_leads: total,
+      assignable_count: assignedCount,
+      unassigned_count: unassignedCount,
+      unassigned_reason: unassignedReason,
+      telecaller_breakdown: telecallerState,
+    };
+  }
+
+  public distributeLeads(
+    params: {
+      leadIds: string[];
+      mode?: DistributionMode;
+      targetTelecallerId?: string;
+      reason?: string;
+      isReassignment?: boolean;
+    },
+    currentProfile: Profile
+  ): DistributionResult {
+    this.ensureActive(currentProfile);
+    if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
+      this.recordSecurityEvent(
+        {
+          event_type: 'UNAUTHORIZED_DISTRIBUTION_ATTEMPT',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to distribute leads. Blocked.`,
+          metadata: { leadCount: params.leadIds?.length },
+        },
+        currentProfile
+      );
+      throw new Error('Forbidden: Telecallers are not authorized to distribute or assign leads.');
+    }
+
+    const orgId = currentProfile.organization_id;
+    const config = this.getDistributionConfig(currentProfile);
+    const mode = params.mode || config.mode;
+    const leadIds = params.leadIds || [];
+
+    if (leadIds.length === 0) {
+      return {
+        success: true,
+        mode,
+        total_requested: 0,
+        assigned_count: 0,
+        unassigned_count: 0,
+        assignments: {},
+        unassigned_lead_ids: [],
+        unassigned_reason: null,
+      };
+    }
+
+    const crossTenantLead = this.leads.find(
+      (l) => leadIds.includes(l.id) && l.organization_id !== orgId && currentProfile.role !== 'ADMIN'
+    );
+    if (crossTenantLead) {
+      this.recordSecurityEvent(
+        {
+          event_type: 'CROSS_TENANT_ASSIGNMENT_ATTEMPT',
+          severity: 'HIGH',
+          description: `Attempted to assign lead ${crossTenantLead.lead_code} belonging to another organization.`,
+          metadata: { targetLeadId: crossTenantLead.id },
+        },
+        currentProfile
+      );
+      throw new Error('Forbidden: Cannot assign leads belonging to another organization.');
+    }
+
+    const assignments: Record<string, number> = {};
+    const unassignedLeadIds: string[] = [];
+    let unassignedReason: UnassignedReason | null = null;
+    let assignedCount = 0;
+
+    // Direct assignment to a specific telecaller
+    if (params.targetTelecallerId) {
+      const targetTc = this.profiles.find(
+        (p) => p.id === params.targetTelecallerId && (p.organization_id === orgId || currentProfile.role === 'ADMIN') && p.role === 'TELECALLER'
+      );
+      if (!targetTc) {
+        throw new Error('Invalid telecaller selected.');
+      }
+      if (targetTc.status !== 'ACTIVE') {
+        throw new Error('Selected telecaller is not active.');
+      }
+
+      assignments[targetTc.id] = 0;
+
+      leadIds.forEach((leadId) => {
+        const leadIndex = this.leads.findIndex((l) => l.id === leadId);
+        if (leadIndex !== -1) {
+          const lead = this.leads[leadIndex];
+          const prevUserId = lead.assigned_to || undefined;
+          this.leads[leadIndex] = {
+            ...lead,
+            assigned_to: targetTc.id,
+            status: lead.status === 'NEW' ? 'ASSIGNED' : lead.status,
+            unassigned_reason: null,
+            reassigned_at: params.isReassignment ? new Date().toISOString() : lead.reassigned_at,
+            reassign_reason: params.reason ? sanitizeText(params.reason) : lead.reassign_reason,
+            updated_at: new Date().toISOString(),
+          };
+
+          this.leadAssignments.push({
+            id: `asgn-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+            organization_id: orgId,
+            lead_id: leadId,
+            user_id: targetTc.id,
+            assigned_by: currentProfile.id,
+            assigned_at: new Date().toISOString(),
+            previous_user_id: prevUserId,
+            reassign_reason: params.reason ? sanitizeText(params.reason) : undefined,
+            mode: 'MANUAL',
+          });
+
+          assignments[targetTc.id]++;
+          assignedCount++;
+        }
       });
+
+      if (assignedCount > 0) {
+        this.createNotification({
+          organization_id: orgId,
+          user_id: targetTc.id,
+          type: 'LEAD_ASSIGNED',
+          title: 'New Leads Assigned',
+          message: `${assignedCount} new leads assigned to your queue by ${currentProfile.full_name}.`,
+          link: '/telecaller/leads',
+        });
+      }
+
+      this.logActivity({
+        organization_id: orgId,
+        user_id: currentProfile.id,
+        user_name: currentProfile.full_name,
+        user_role: currentProfile.role,
+        action: params.isReassignment ? 'LEAD_REASSIGNED' : 'LEAD_ASSIGNED',
+        entity_type: 'lead',
+        metadata: {
+          mode: 'MANUAL',
+          assignedCount,
+          assignedTo: targetTc.full_name,
+          reason: params.reason ? sanitizeText(params.reason) : undefined,
+        },
+      });
+
+      this.emit('LEADS_ASSIGNED', { leadIds, telecallerId: targetTc.id }, { organization_id: orgId });
+
+      return {
+        success: true,
+        mode: 'MANUAL',
+        total_requested: leadIds.length,
+        assigned_count: assignedCount,
+        unassigned_count: 0,
+        assignments,
+        unassigned_lead_ids: [],
+        unassigned_reason: null,
+      };
+    }
+
+    // Manual mode without specific telecaller: queue into unassigned pool
+    if (mode === 'MANUAL') {
+      leadIds.forEach((leadId) => {
+        const idx = this.leads.findIndex((l) => l.id === leadId);
+        if (idx !== -1) {
+          this.leads[idx] = {
+            ...this.leads[idx],
+            assigned_to: null,
+            unassigned_reason: 'MANUAL_UNASSIGNED',
+            updated_at: new Date().toISOString(),
+          };
+          unassignedLeadIds.push(leadId);
+        }
+      });
+
+      return {
+        success: true,
+        mode: 'MANUAL',
+        total_requested: leadIds.length,
+        assigned_count: 0,
+        unassigned_count: unassignedLeadIds.length,
+        assignments: {},
+        unassigned_lead_ids: unassignedLeadIds,
+        unassigned_reason: 'MANUAL_UNASSIGNED',
+      };
+    }
+
+    // Automated modes: ROUND_ROBIN and WORKLOAD_BALANCED
+    const eligible = this.getEligibleTelecallers(currentProfile);
+    if (eligible.length === 0) {
+      const allOrgTelecallers = this.profiles.filter((p) => p.organization_id === orgId && p.role === 'TELECALLER');
+      let reason: UnassignedReason = 'NO_ELIGIBLE_TELECALLERS';
+      if (allOrgTelecallers.length === 0) {
+        reason = 'EMPTY_TEAM';
+      } else if (config.eligible_telecaller_ids && config.eligible_telecaller_ids.length > 0) {
+        reason = 'EXCLUDED_POOL';
+      }
+
+      leadIds.forEach((leadId) => {
+        const idx = this.leads.findIndex((l) => l.id === leadId);
+        if (idx !== -1) {
+          this.leads[idx] = {
+            ...this.leads[idx],
+            assigned_to: null,
+            unassigned_reason: reason,
+            updated_at: new Date().toISOString(),
+          };
+          unassignedLeadIds.push(leadId);
+        }
+      });
+
+      this.logActivity({
+        organization_id: orgId,
+        user_id: currentProfile.id,
+        user_name: currentProfile.full_name,
+        user_role: currentProfile.role,
+        action: 'ASSIGNMENT_FAILED',
+        entity_type: 'lead',
+        metadata: {
+          mode,
+          count: leadIds.length,
+          reason,
+        },
+      });
+
+      return {
+        success: false,
+        mode,
+        total_requested: leadIds.length,
+        assigned_count: 0,
+        unassigned_count: unassignedLeadIds.length,
+        assignments: {},
+        unassigned_lead_ids: unassignedLeadIds,
+        unassigned_reason: reason,
+      };
+    }
+
+    eligible.forEach((tc) => {
+      assignments[tc.id] = 0;
     });
 
-    this.emit('LEADS_ASSIGNED', { leadIds, telecallerId }, { organization_id: currentProfile.organization_id });
-    return updatedCount;
+    const openCounts: Record<string, number> = {};
+    eligible.forEach((tc) => {
+      openCounts[tc.id] = this.getOpenLeadCount(tc.id, orgId);
+    });
+
+    const maxCap = config.max_workload;
+
+    if (mode === 'ROUND_ROBIN') {
+      let cursor = config.round_robin_index % eligible.length;
+
+      leadIds.forEach((leadId) => {
+        let chosenIdx = -1;
+        for (let attempt = 0; attempt < eligible.length; attempt++) {
+          const checkIdx = (cursor + attempt) % eligible.length;
+          const candidate = eligible[checkIdx];
+          if (maxCap === null || openCounts[candidate.id] < maxCap) {
+            chosenIdx = checkIdx;
+            cursor = (checkIdx + 1) % eligible.length;
+            break;
+          }
+        }
+
+        const leadIndex = this.leads.findIndex((l) => l.id === leadId);
+        if (leadIndex === -1) return;
+
+        if (chosenIdx !== -1) {
+          const assignedTc = eligible[chosenIdx];
+          openCounts[assignedTc.id]++;
+          assignments[assignedTc.id]++;
+          assignedCount++;
+
+          this.leads[leadIndex] = {
+            ...this.leads[leadIndex],
+            assigned_to: assignedTc.id,
+            status: this.leads[leadIndex].status === 'NEW' ? 'ASSIGNED' : this.leads[leadIndex].status,
+            unassigned_reason: null,
+            updated_at: new Date().toISOString(),
+          };
+
+          this.leadAssignments.push({
+            id: `asgn-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+            organization_id: orgId,
+            lead_id: leadId,
+            user_id: assignedTc.id,
+            assigned_by: currentProfile.id,
+            assigned_at: new Date().toISOString(),
+            mode: 'ROUND_ROBIN',
+          });
+        } else {
+          unassignedReason = 'CAPACITY_REACHED';
+          unassignedLeadIds.push(leadId);
+          this.leads[leadIndex] = {
+            ...this.leads[leadIndex],
+            assigned_to: null,
+            unassigned_reason: 'CAPACITY_REACHED',
+            updated_at: new Date().toISOString(),
+          };
+        }
+      });
+
+      config.round_robin_index = cursor;
+      config.updated_at = new Date().toISOString();
+      this.distributionConfigs.set(orgId, config);
+
+    } else if (mode === 'WORKLOAD_BALANCED') {
+      leadIds.forEach((leadId) => {
+        let bestTc: Profile | null = null;
+        let minCount = Infinity;
+
+        for (const tc of eligible) {
+          if (maxCap !== null && openCounts[tc.id] >= maxCap) {
+            continue;
+          }
+          if (openCounts[tc.id] < minCount) {
+            minCount = openCounts[tc.id];
+            bestTc = tc;
+          }
+        }
+
+        const leadIndex = this.leads.findIndex((l) => l.id === leadId);
+        if (leadIndex === -1) return;
+
+        if (bestTc) {
+          openCounts[bestTc.id]++;
+          assignments[bestTc.id]++;
+          assignedCount++;
+
+          this.leads[leadIndex] = {
+            ...this.leads[leadIndex],
+            assigned_to: bestTc.id,
+            status: this.leads[leadIndex].status === 'NEW' ? 'ASSIGNED' : this.leads[leadIndex].status,
+            unassigned_reason: null,
+            updated_at: new Date().toISOString(),
+          };
+
+          this.leadAssignments.push({
+            id: `asgn-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+            organization_id: orgId,
+            lead_id: leadId,
+            user_id: bestTc.id,
+            assigned_by: currentProfile.id,
+            assigned_at: new Date().toISOString(),
+            mode: 'WORKLOAD_BALANCED',
+          });
+        } else {
+          unassignedReason = 'CAPACITY_REACHED';
+          unassignedLeadIds.push(leadId);
+          this.leads[leadIndex] = {
+            ...this.leads[leadIndex],
+            assigned_to: null,
+            unassigned_reason: 'CAPACITY_REACHED',
+            updated_at: new Date().toISOString(),
+          };
+        }
+      });
+    }
+
+    eligible.forEach((tc) => {
+      const count = assignments[tc.id] || 0;
+      if (count > 0) {
+        this.createNotification({
+          organization_id: orgId,
+          user_id: tc.id,
+          type: 'LEAD_ASSIGNED',
+          title: `${mode === 'WORKLOAD_BALANCED' ? 'Workload-Balanced' : 'Round-Robin'} Lead Assignment`,
+          message: `${count} leads assigned to your queue via automated ${mode.toLowerCase().replace('_', ' ')} distribution.`,
+          link: '/telecaller/leads',
+        });
+      }
+    });
+
+    this.logActivity({
+      organization_id: orgId,
+      user_id: currentProfile.id,
+      user_name: currentProfile.full_name,
+      user_role: currentProfile.role,
+      action: assignedCount > 0 ? 'LEAD_ASSIGNED' : 'ASSIGNMENT_FAILED',
+      entity_type: 'lead',
+      metadata: {
+        mode,
+        requestedCount: leadIds.length,
+        assignedCount,
+        unassignedCount: unassignedLeadIds.length,
+        unassignedReason: unassignedLeadIds.length > 0 ? unassignedReason : undefined,
+        telecallerDistribution: assignments,
+      },
+    });
+
+    this.emit('LEADS_DISTRIBUTED', {
+      mode,
+      assignedCount,
+      unassignedCount: unassignedLeadIds.length,
+      assignments,
+    }, { organization_id: orgId });
+
+    return {
+      success: assignedCount > 0,
+      mode,
+      total_requested: leadIds.length,
+      assigned_count: assignedCount,
+      unassigned_count: unassignedLeadIds.length,
+      assignments,
+      unassigned_lead_ids: unassignedLeadIds,
+      unassigned_reason: unassignedReason,
+    };
+  }
+
+  public reassignLead(
+    leadId: string,
+    newTelecallerId: string,
+    reason: string,
+    currentProfile: Profile
+  ): Lead {
+    this.ensureActive(currentProfile);
+    if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
+      this.recordSecurityEvent(
+        {
+          event_type: 'UNAUTHORIZED_LEAD_REASSIGN_ATTEMPT',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to reassign lead ${leadId}. Blocked.`,
+          metadata: { leadId },
+        },
+        currentProfile
+      );
+      throw new Error('Forbidden: Telecallers are not authorized to reassign leads.');
+    }
+
+    if (!reason || !reason.trim()) {
+      throw new Error('Reassignment reason is mandatory.');
+    }
+
+    const orgId = currentProfile.organization_id;
+    const leadIndex = this.leads.findIndex((l) => l.id === leadId);
+    if (leadIndex === -1) {
+      throw new Error('Lead not found.');
+    }
+
+    const lead = this.leads[leadIndex];
+    if (lead.organization_id !== orgId && currentProfile.role !== 'ADMIN') {
+      throw new Error('Forbidden: Cannot reassign lead belonging to another organization.');
+    }
+
+    const newTelecaller = this.profiles.find(
+      (p) => p.id === newTelecallerId && (p.organization_id === orgId || currentProfile.role === 'ADMIN') && p.role === 'TELECALLER'
+    );
+    if (!newTelecaller) {
+      throw new Error('Invalid new telecaller selected.');
+    }
+    if (newTelecaller.status !== 'ACTIVE') {
+      throw new Error('Selected telecaller is not active.');
+    }
+
+    if (lead.assigned_to === newTelecallerId) {
+      throw new Error('Lead is already assigned to this telecaller.');
+    }
+
+    const config = this.getDistributionConfig(currentProfile);
+    if (config.max_workload !== null) {
+      const currentOpen = this.getOpenLeadCount(newTelecallerId, orgId);
+      if (currentOpen >= config.max_workload) {
+        throw new Error(`Telecaller has reached maximum capacity (${config.max_workload} leads).`);
+      }
+    }
+
+    const previousUserId = lead.assigned_to || null;
+    const sanitizedReason = sanitizeText(reason.trim());
+
+    this.leadAssignments.forEach((asgn) => {
+      if (asgn.lead_id === leadId && !asgn.unassigned_at) {
+        asgn.unassigned_at = new Date().toISOString();
+      }
+    });
+
+    const updatedLead: Lead = {
+      ...lead,
+      assigned_to: newTelecallerId,
+      status: lead.status === 'NEW' ? 'ASSIGNED' : lead.status,
+      unassigned_reason: null,
+      reassigned_at: new Date().toISOString(),
+      reassign_reason: sanitizedReason,
+      updated_at: new Date().toISOString(),
+    };
+
+    this.leads[leadIndex] = updatedLead;
+
+    // Phase 21: Cascade lead reassignment to all active follow-ups for this lead
+    this.followUps.forEach((fup) => {
+      if (
+        fup.lead_id === leadId &&
+        (fup.status === 'SCHEDULED' || fup.status === 'PENDING' || fup.status === 'DUE' || fup.status === 'OVERDUE')
+      ) {
+        fup.assigned_to = newTelecallerId;
+        fup.updated_at = new Date().toISOString();
+      }
+    });
+
+    this.leadAssignments.push({
+      id: `asgn-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      organization_id: orgId,
+      lead_id: leadId,
+      user_id: newTelecallerId,
+      assigned_by: currentProfile.id,
+      assigned_at: new Date().toISOString(),
+      previous_user_id: previousUserId || undefined,
+      reassign_reason: sanitizedReason,
+      mode: 'MANUAL',
+    });
+
+    this.createNotification({
+      organization_id: orgId,
+      user_id: newTelecallerId,
+      type: 'LEAD_ASSIGNED',
+      title: 'Lead Reassigned to You',
+      message: `Lead ${lead.lead_code} has been reassigned to you by ${currentProfile.full_name}. Reason: ${sanitizedReason}`,
+      link: '/telecaller/leads',
+    });
+
+    this.logActivity({
+      organization_id: orgId,
+      user_id: currentProfile.id,
+      user_name: currentProfile.full_name,
+      user_role: currentProfile.role,
+      action: 'LEAD_REASSIGNED',
+      entity_type: 'lead',
+      entity_id: leadId,
+      metadata: {
+        leadCode: lead.lead_code,
+        previousUserId,
+        newUserId: newTelecallerId,
+        reason: sanitizedReason,
+      },
+    });
+
+    this.emit('LEAD_REASSIGNED', updatedLead, { organization_id: orgId });
+    return sanitizeLeadForRole(updatedLead, currentProfile.role);
+  }
+
+  public assignLeads(
+    leadIds: string[],
+    telecallerId: string,
+    currentProfile: Profile
+  ): number {
+    const result = this.distributeLeads(
+      { leadIds, targetTelecallerId: telecallerId },
+      currentProfile
+    );
+    return result.assigned_count;
   }
 
   public assignRoundRobin(
@@ -931,19 +2664,20 @@ class LeadVaultDatabase {
           user_id: assignedTc,
           assigned_by: currentProfile.id,
           assigned_at: new Date().toISOString(),
+          mode: 'ROUND_ROBIN',
         });
 
         return {
           ...lead,
           assigned_to: assignedTc,
           status: lead.status === 'NEW' ? 'ASSIGNED' : lead.status,
+          unassigned_reason: null,
           updated_at: new Date().toISOString(),
         };
       }
       return lead;
     });
 
-    // Send notifications to each assigned telecaller
     activeTelecallerIds.forEach((tcId) => {
       const count = distribution[tcId] || 0;
       if (count > 0) {
@@ -1156,6 +2890,9 @@ class LeadVaultDatabase {
       notes?: string;
       followUpDate?: string;
       followUpTime?: string;
+      followUpReason?: string;
+      followUpPriority?: LeadPriority;
+      timezone?: string;
     },
     currentProfile: Profile
   ): CallOutcome {
@@ -1258,8 +2995,10 @@ class LeadVaultDatabase {
         {
           lead_id: data.lead_id,
           scheduled_at: `${data.followUpDate}T${data.followUpTime || '11:00'}:00Z`,
-          priority: data.outcome === 'POSITIVE' ? 'HIGH' : 'MEDIUM',
+          priority: data.followUpPriority || (data.outcome === 'POSITIVE' ? 'HIGH' : 'MEDIUM'),
           notes: data.notes,
+          reason: data.followUpReason || data.notes,
+          timezone: data.timezone || 'UTC',
         },
         currentProfile
       );
@@ -1305,33 +3044,64 @@ class LeadVaultDatabase {
 
   public getFollowUps(currentProfile: Profile): FollowUp[] {
     this.ensureActive(currentProfile);
+    let list: FollowUp[];
     if (currentProfile.role === 'ADMIN') {
-      return [...this.followUps];
+      list = [...this.followUps];
+    } else {
+      const orgFollowUps = this.followUps.filter(
+        (f) => f.organization_id === currentProfile.organization_id
+      );
+      if (currentProfile.role === 'OWNER') {
+        list = orgFollowUps;
+      } else {
+        // Telecaller only sees their assigned follow-ups with masked phone
+        list = orgFollowUps.filter((f) => f.assigned_to === currentProfile.id);
+      }
     }
 
-    const orgFollowUps = this.followUps.filter(
-      (f) => f.organization_id === currentProfile.organization_id
-    );
+    return list.map((f) => {
+      const derivedStatus = getDerivedFollowUpStatus(f);
+      const isTelecaller = currentProfile.role === 'TELECALLER';
+      const assignedProfile = this.profiles.find((p) => p.id === f.assigned_to);
 
-    if (currentProfile.role === 'OWNER') {
-      return orgFollowUps;
-    }
+      return {
+        ...f,
+        status: derivedStatus,
+        assigned_profile: assignedProfile,
+        lead_name: f.lead_name
+          ? (isTelecaller ? sanitizeLeadForRole({ ...f, name: f.lead_name } as unknown as Lead, 'TELECALLER').name : f.lead_name)
+          : '—',
+        lead_phone: isTelecaller
+          ? undefined
+          : (f.lead_phone ? (currentProfile.role === 'ADMIN' ? f.lead_phone : maskPhoneNumber(f.lead_phone)) : '—'),
+      };
+    });
+  }
 
-    // Telecaller only sees their assigned follow-ups with masked phone
-    const myFollowUps = orgFollowUps.filter((f) => f.assigned_to === currentProfile.id);
-    return myFollowUps.map((f) => ({
-      ...f,
-      lead_name: f.lead_name ? sanitizeLeadForRole({ ...f, name: f.lead_name } as unknown as Lead, 'TELECALLER').name : '—',
-      lead_phone: f.lead_phone ? maskPhoneNumber(f.lead_phone) : '—',
-    }));
+  public createFollowUp(
+    data: {
+      lead_id: string;
+      scheduled_at: string;
+      priority?: LeadPriority;
+      notes?: string;
+      reason?: string;
+      timezone?: string;
+      assigned_to?: string;
+    },
+    currentProfile: Profile
+  ): FollowUp {
+    return this.scheduleFollowUp(data, currentProfile);
   }
 
   public scheduleFollowUp(
     data: {
       lead_id: string;
       scheduled_at: string;
-      priority: FollowUp['priority'];
+      priority?: LeadPriority;
       notes?: string;
+      reason?: string;
+      timezone?: string;
+      assigned_to?: string;
     },
     currentProfile: Profile
   ): FollowUp {
@@ -1346,43 +3116,190 @@ class LeadVaultDatabase {
 
     // Telecaller Assignment Isolation
     if (currentProfile.role === 'TELECALLER' && lead.assigned_to !== currentProfile.id) {
+      this.recordSecurityEvent(
+        {
+          event_type: 'UNAUTHORIZED_FOLLOWUP_ATTEMPT',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to schedule follow-up on unassigned lead ${lead.id}. Blocked.`,
+          metadata: { leadId: lead.id },
+        },
+        currentProfile
+      );
       throw new Error('Forbidden: Cannot schedule follow-ups on leads not assigned to you.');
     }
 
+    // Validate scheduled_at
+    const parsedDate = new Date(data.scheduled_at);
+    if (isNaN(parsedDate.getTime())) {
+      throw new Error('Invalid scheduled_at timestamp.');
+    }
+
+    // Target assigned telecaller
+    let assignedTelecallerId = currentProfile.id;
+    if (currentProfile.role === 'OWNER' || currentProfile.role === 'ADMIN') {
+      if (data.assigned_to) {
+        const target = this.profiles.find(
+          (p) => p.id === data.assigned_to && p.organization_id === lead.organization_id && p.status === 'ACTIVE'
+        );
+        if (!target) {
+          throw new Error('Invalid assigned_to telecaller specified.');
+        }
+        assignedTelecallerId = target.id;
+      } else if (lead.assigned_to) {
+        assignedTelecallerId = lead.assigned_to;
+      }
+    }
+
+    // Duplicate Prevention / Superseding active follow-ups for this lead
+    this.followUps.forEach((f) => {
+      if (
+        f.lead_id === data.lead_id &&
+        (f.status === 'SCHEDULED' || f.status === 'PENDING' || f.status === 'DUE' || f.status === 'OVERDUE')
+      ) {
+        f.status = 'RESCHEDULED';
+        f.rescheduled_at = new Date().toISOString();
+        f.reschedule_reason = 'Superseded by new scheduled follow-up';
+        f.updated_at = new Date().toISOString();
+      }
+    });
+
     const newFollowUp: FollowUp = {
-      id: `fup-${Date.now().toString(36)}`,
-      organization_id: currentProfile.organization_id,
+      id: `fup-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      organization_id: lead.organization_id,
       lead_id: data.lead_id,
       lead_code: lead.lead_code,
       lead_name: lead.name,
       lead_phone: lead.phone,
-      assigned_to: currentProfile.id,
-      scheduled_at: data.scheduled_at,
-      status: 'PENDING',
+      assigned_to: assignedTelecallerId,
+      created_by: currentProfile.id,
+      scheduled_at: parsedDate.toISOString(),
+      timezone: data.timezone || 'UTC',
+      status: 'SCHEDULED',
       priority: data.priority || 'MEDIUM',
       notes: data.notes ? sanitizeText(data.notes) : undefined,
+      reason: data.reason ? sanitizeText(data.reason) : (data.notes ? sanitizeText(data.notes) : undefined),
+      reschedule_count: 0,
+      reminded_at: null,
+      overdue_notified_at: null,
+      owner_alerted_at: null,
+      escalated_at: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
     this.followUps.unshift(newFollowUp);
 
+    // Update lead status to FOLLOW_UP if currently NEW, ASSIGNED, or CONTACTED
+    if (lead.status === 'NEW' || lead.status === 'ASSIGNED' || lead.status === 'CONTACTED') {
+      lead.status = 'FOLLOW_UP';
+      lead.updated_at = new Date().toISOString();
+    }
+
     this.logActivity({
-      organization_id: currentProfile.organization_id,
+      organization_id: lead.organization_id,
       user_id: currentProfile.id,
       user_name: currentProfile.full_name,
       user_role: currentProfile.role,
       action: 'FOLLOWUP_CREATED',
       entity_type: 'follow_up',
       entity_id: newFollowUp.id,
-      metadata: { leadCode: lead.lead_code, scheduledAt: data.scheduled_at },
+      metadata: { leadCode: lead.lead_code, scheduledAt: newFollowUp.scheduled_at },
     });
 
-    this.emit('FOLLOWUP_CREATED', newFollowUp, { organization_id: currentProfile.organization_id });
+    this.emit('FOLLOWUP_CREATED', newFollowUp, { organization_id: lead.organization_id });
     return newFollowUp;
   }
 
-  public completeFollowUp(id: string, currentProfile: Profile): FollowUp {
+  public rescheduleFollowUp(
+    followUpId: string,
+    newScheduledAt: string,
+    reason: string,
+    currentProfile: Profile
+  ): FollowUp {
+    this.ensureActive(currentProfile);
+    if (!reason || !reason.trim()) {
+      throw new Error('Reschedule reason is mandatory.');
+    }
+
+    const parsedDate = new Date(newScheduledAt);
+    if (isNaN(parsedDate.getTime())) {
+      throw new Error('Invalid scheduled timestamp.');
+    }
+
+    const index = this.followUps.findIndex((f) => f.id === followUpId);
+    if (index === -1) throw new Error('Follow-up not found.');
+
+    const fup = this.followUps[index];
+    if (currentProfile.role !== 'ADMIN' && fup.organization_id !== currentProfile.organization_id) {
+      throw new Error('Forbidden: Follow-up belongs to another organization.');
+    }
+
+    if (currentProfile.role === 'TELECALLER' && fup.assigned_to !== currentProfile.id) {
+      this.recordSecurityEvent(
+        {
+          event_type: 'UNAUTHORIZED_FOLLOWUP_MODIFICATION',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to reschedule follow-up ${followUpId} assigned to ${fup.assigned_to}. Blocked.`,
+          metadata: { followUpId },
+        },
+        currentProfile
+      );
+      throw new Error("Forbidden: Cannot reschedule another telecaller's follow-up.");
+    }
+
+    if (fup.status === 'COMPLETED') {
+      throw new Error('Cannot reschedule an already completed follow-up.');
+    }
+    if (fup.status === 'CANCELLED') {
+      throw new Error('Cannot reschedule a cancelled follow-up.');
+    }
+
+    const previousDueAt = fup.scheduled_at;
+    const sanitizedReason = sanitizeText(reason.trim());
+
+    this.followUps[index] = {
+      ...fup,
+      previous_due_at: previousDueAt,
+      scheduled_at: parsedDate.toISOString(),
+      rescheduled_at: new Date().toISOString(),
+      reschedule_reason: sanitizedReason,
+      reschedule_count: (fup.reschedule_count || 0) + 1,
+      status: 'SCHEDULED',
+      reminded_at: null, // Reset reminder flag so it reminds again before new due time
+      overdue_notified_at: null, // Reset overdue alert flag
+      owner_alerted_at: null, // Reset owner overdue alert flag
+      updated_at: new Date().toISOString(),
+    };
+
+    const updated = this.followUps[index];
+
+    this.logActivity({
+      organization_id: fup.organization_id,
+      user_id: currentProfile.id,
+      user_name: currentProfile.full_name,
+      user_role: currentProfile.role,
+      action: 'FOLLOWUP_RESCHEDULED',
+      entity_type: 'follow_up',
+      entity_id: fup.id,
+      metadata: {
+        leadCode: fup.lead_code,
+        previousDueAt,
+        newScheduledAt: updated.scheduled_at,
+        rescheduleReason: sanitizedReason,
+        rescheduleCount: updated.reschedule_count,
+      },
+    });
+
+    this.emit('FOLLOWUP_UPDATED', updated, { organization_id: fup.organization_id });
+    return updated;
+  }
+
+  public completeFollowUp(
+    id: string,
+    currentProfile: Profile,
+    outcomeNotes?: string,
+    outcome?: CallOutcomeType | string
+  ): FollowUp {
     this.ensureActive(currentProfile);
     const index = this.followUps.findIndex((f) => f.id === id);
     if (index === -1) throw new Error('Follow-up not found.');
@@ -1393,17 +3310,419 @@ class LeadVaultDatabase {
     }
 
     if (currentProfile.role === 'TELECALLER' && fup.assigned_to !== currentProfile.id) {
+      this.recordSecurityEvent(
+        {
+          event_type: 'UNAUTHORIZED_FOLLOWUP_MODIFICATION',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to complete follow-up ${id} assigned to ${fup.assigned_to}. Blocked.`,
+          metadata: { followUpId: id },
+        },
+        currentProfile
+      );
       throw new Error("Forbidden: Cannot complete another telecaller's follow-up.");
+    }
+
+    if (fup.status === 'CANCELLED') {
+      throw new Error('Cannot complete a cancelled follow-up.');
     }
 
     this.followUps[index] = {
       ...fup,
       status: 'COMPLETED',
+      completed_at: new Date().toISOString(),
+      outcome: outcome || fup.outcome || 'COMPLETED',
+      outcome_notes: outcomeNotes ? sanitizeText(outcomeNotes) : fup.outcome_notes,
       updated_at: new Date().toISOString(),
     };
 
-    this.emit('FOLLOWUP_UPDATED', this.followUps[index], { organization_id: currentProfile.organization_id });
-    return this.followUps[index];
+    const updated = this.followUps[index];
+
+    this.logActivity({
+      organization_id: fup.organization_id,
+      user_id: currentProfile.id,
+      user_name: currentProfile.full_name,
+      user_role: currentProfile.role,
+      action: 'FOLLOWUP_COMPLETED',
+      entity_type: 'follow_up',
+      entity_id: fup.id,
+      metadata: {
+        leadCode: fup.lead_code,
+        completedAt: updated.completed_at,
+        outcome: updated.outcome,
+      },
+    });
+
+    this.emit('FOLLOWUP_UPDATED', updated, { organization_id: fup.organization_id });
+    return updated;
+  }
+
+  public cancelFollowUp(
+    id: string,
+    reason: string,
+    currentProfile: Profile
+  ): FollowUp {
+    this.ensureActive(currentProfile);
+    if (!reason || !reason.trim()) {
+      throw new Error('Cancellation reason is mandatory.');
+    }
+
+    const index = this.followUps.findIndex((f) => f.id === id);
+    if (index === -1) throw new Error('Follow-up not found.');
+
+    const fup = this.followUps[index];
+    if (currentProfile.role !== 'ADMIN' && fup.organization_id !== currentProfile.organization_id) {
+      throw new Error('Forbidden: Follow-up belongs to another organization.');
+    }
+
+    if (currentProfile.role === 'TELECALLER' && fup.assigned_to !== currentProfile.id) {
+      this.recordSecurityEvent(
+        {
+          event_type: 'UNAUTHORIZED_FOLLOWUP_MODIFICATION',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to cancel follow-up ${id} assigned to ${fup.assigned_to}. Blocked.`,
+          metadata: { followUpId: id },
+        },
+        currentProfile
+      );
+      throw new Error("Forbidden: Cannot cancel another telecaller's follow-up.");
+    }
+
+    if (fup.status === 'COMPLETED') {
+      throw new Error('Cannot cancel an already completed follow-up.');
+    }
+
+    const sanitizedReason = sanitizeText(reason.trim());
+
+    this.followUps[index] = {
+      ...fup,
+      status: 'CANCELLED',
+      notes: fup.notes ? `${fup.notes} [Cancelled: ${sanitizedReason}]` : `Cancelled: ${sanitizedReason}`,
+      updated_at: new Date().toISOString(),
+    };
+
+    const updated = this.followUps[index];
+
+    this.logActivity({
+      organization_id: fup.organization_id,
+      user_id: currentProfile.id,
+      user_name: currentProfile.full_name,
+      user_role: currentProfile.role,
+      action: 'FOLLOWUP_CANCELLED',
+      entity_type: 'follow_up',
+      entity_id: fup.id,
+      metadata: {
+        leadCode: fup.lead_code,
+        reason: sanitizedReason,
+      },
+    });
+
+    this.emit('FOLLOWUP_UPDATED', updated, { organization_id: fup.organization_id });
+    return updated;
+  }
+
+  public escalateFollowUp(
+    id: string,
+    newTelecallerId: string,
+    reason: string,
+    currentProfile: Profile
+  ): FollowUp {
+    this.ensureActive(currentProfile);
+    if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
+      this.recordSecurityEvent(
+        {
+          event_type: 'UNAUTHORIZED_FOLLOWUP_ESCALATE_ATTEMPT',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to escalate/reassign follow-up ${id}. Blocked.`,
+          metadata: { followUpId: id },
+        },
+        currentProfile
+      );
+      throw new Error('Forbidden: Telecallers are not authorized to escalate or reassign follow-ups.');
+    }
+
+    if (!reason || !reason.trim()) {
+      throw new Error('Escalation reason is mandatory.');
+    }
+
+    const index = this.followUps.findIndex((f) => f.id === id);
+    if (index === -1) throw new Error('Follow-up not found.');
+
+    const fup = this.followUps[index];
+    if (currentProfile.role !== 'ADMIN' && fup.organization_id !== currentProfile.organization_id) {
+      throw new Error('Forbidden: Follow-up belongs to another organization.');
+    }
+
+    const newTelecaller = this.profiles.find(
+      (p) =>
+        p.id === newTelecallerId &&
+        (p.organization_id === fup.organization_id || currentProfile.role === 'ADMIN') &&
+        p.role === 'TELECALLER'
+    );
+    if (!newTelecaller) {
+      throw new Error('Invalid new telecaller selected.');
+    }
+    if (newTelecaller.status !== 'ACTIVE') {
+      throw new Error('Selected telecaller is not active.');
+    }
+
+    const previousUserId = fup.assigned_to;
+    const sanitizedReason = sanitizeText(reason.trim());
+
+    this.followUps[index] = {
+      ...fup,
+      assigned_to: newTelecallerId,
+      escalated_at: new Date().toISOString(),
+      escalated_by: currentProfile.id,
+      escalation_reason: sanitizedReason,
+      updated_at: new Date().toISOString(),
+    };
+
+    const updated = this.followUps[index];
+
+    // Cascade update lead assigned_to if lead exists
+    const lead = this.leads.find((l) => l.id === fup.lead_id);
+    if (lead) {
+      lead.assigned_to = newTelecallerId;
+      lead.updated_at = new Date().toISOString();
+    }
+
+    // In-app notification for the newly assigned telecaller
+    this.createNotification({
+      organization_id: fup.organization_id,
+      user_id: newTelecallerId,
+      type: 'FOLLOW_UP_ESCALATED',
+      title: 'Follow-Up Escalated to You',
+      message: `Follow-up for ${fup.lead_code || 'lead'} was escalated to you by ${currentProfile.full_name}. Reason: ${sanitizedReason}`,
+      link: '/telecaller/follow-ups',
+    });
+
+    this.logActivity({
+      organization_id: fup.organization_id,
+      user_id: currentProfile.id,
+      user_name: currentProfile.full_name,
+      user_role: currentProfile.role,
+      action: 'FOLLOWUP_ESCALATED',
+      entity_type: 'follow_up',
+      entity_id: fup.id,
+      metadata: {
+        leadCode: fup.lead_code,
+        previousUserId,
+        newTelecallerId,
+        reason: sanitizedReason,
+      },
+    });
+
+    this.emit('FOLLOWUP_UPDATED', updated, { organization_id: fup.organization_id });
+    return updated;
+  }
+
+  public getLeadsWithoutNextAction(currentProfile: Profile): Lead[] {
+    this.ensureActive(currentProfile);
+    const orgId = currentProfile.organization_id;
+    const leads = this.leads.filter((l) => {
+      if (currentProfile.role !== 'ADMIN' && l.organization_id !== orgId) return false;
+      // Exclude terminal / closed states
+      if (
+        l.status === 'CONVERTED' ||
+        l.status === 'NOT_INTERESTED' ||
+        l.status === 'INVALID' ||
+        l.status === 'DO_NOT_CONTACT'
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+    // Active follow-ups that haven't been completed or cancelled
+    const activeLeadIds = new Set(
+      this.followUps
+        .filter(
+          (f) =>
+            f.status === 'SCHEDULED' ||
+            f.status === 'PENDING' ||
+            f.status === 'DUE' ||
+            f.status === 'OVERDUE'
+        )
+        .map((f) => f.lead_id)
+    );
+
+    const leadsWithoutAction = leads.filter((l) => !activeLeadIds.has(l.id));
+
+    return sanitizeLeadsForRole(leadsWithoutAction, currentProfile.role);
+  }
+
+  public getFollowUpOverviewMetrics(currentProfile: Profile) {
+    this.ensureActive(currentProfile);
+    const all = this.getFollowUps(currentProfile);
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime();
+
+    const dueToday = all.filter((f) => {
+      if (f.status === 'COMPLETED' || f.status === 'CANCELLED' || f.status === 'RESCHEDULED') return false;
+      const sched = new Date(f.scheduled_at).getTime();
+      return f.status === 'DUE' || (sched >= startOfToday && sched <= endOfToday && f.status !== 'OVERDUE');
+    }).length;
+
+    const overdue = all.filter((f) => f.status === 'OVERDUE').length;
+
+    const upcoming = all.filter((f) => {
+      if (f.status === 'COMPLETED' || f.status === 'CANCELLED' || f.status === 'RESCHEDULED') return false;
+      const sched = new Date(f.scheduled_at).getTime();
+      return sched > endOfToday && f.status !== 'OVERDUE';
+    }).length;
+
+    const completed = all.filter((f) => f.status === 'COMPLETED').length;
+    const leadsWithoutNextAction = this.getLeadsWithoutNextAction(currentProfile).length;
+
+    // Telecaller breakdown
+    const telecallers = this.getEligibleTelecallers(currentProfile);
+    const telecallerBreakdown = telecallers.map((tc) => {
+      const tcFollowUps = all.filter((f) => f.assigned_to === tc.id);
+      return {
+        telecaller_id: tc.id,
+        telecaller_name: tc.full_name,
+        total_assigned: tcFollowUps.length,
+        scheduled: tcFollowUps.filter((f) => f.status === 'SCHEDULED' || f.status === 'PENDING' || f.status === 'DUE').length,
+        overdue: tcFollowUps.filter((f) => f.status === 'OVERDUE').length,
+        completed: tcFollowUps.filter((f) => f.status === 'COMPLETED').length,
+        open_leads: this.getOpenLeadCount(tc.id, currentProfile.organization_id),
+      };
+    });
+
+    return {
+      dueToday,
+      overdue,
+      upcoming,
+      completed,
+      leadsWithoutNextAction,
+      telecallerBreakdown,
+    };
+  }
+
+  public processFollowUpReminders(
+    currentProfile?: Profile,
+    referenceTime: Date = new Date()
+  ): { remindedCount: number; overdueCount: number } {
+    if (currentProfile) {
+      this.ensureActive(currentProfile);
+    }
+
+    const now = referenceTime.getTime();
+    const fifteenMinutesMs = 15 * 60 * 1000;
+    let remindedCount = 0;
+    let overdueCount = 0;
+
+    const targetFollowUps = this.followUps.filter((f) => {
+      if (currentProfile && currentProfile.role !== 'ADMIN') {
+        if (f.organization_id !== currentProfile.organization_id) return false;
+      }
+      return f.status === 'SCHEDULED' || f.status === 'PENDING' || f.status === 'DUE' || f.status === 'OVERDUE';
+    });
+
+    for (const fup of targetFollowUps) {
+      // Safe concurrency processing claim per record
+      if ((fup as any)._is_processing) continue;
+      (fup as any)._is_processing = true;
+
+      try {
+        const scheduledTime = new Date(fup.scheduled_at).getTime();
+
+        // 1. Upcoming reminder (within 15m of due time, scheduledTime >= now, not yet reminded)
+        if (!fup.reminded_at && scheduledTime >= now && (scheduledTime - now) <= fifteenMinutesMs) {
+          try {
+            this.createNotification({
+              organization_id: fup.organization_id,
+              user_id: fup.assigned_to,
+              type: 'FOLLOW_UP_DUE',
+              title: 'Follow-Up Due Soon',
+              message: `Upcoming callback for ${fup.lead_code || 'lead'} is scheduled at ${new Date(fup.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`,
+              link: '/telecaller/follow-ups',
+            });
+
+            this.logActivity({
+              organization_id: fup.organization_id,
+              user_id: fup.assigned_to,
+              action: 'FOLLOWUP_REMINDER_SENT',
+              entity_type: 'follow_up',
+              entity_id: fup.id,
+              metadata: {
+                leadCode: fup.lead_code,
+                scheduledAt: fup.scheduled_at,
+                type: 'UPCOMING_REMINDER',
+              },
+            });
+
+            fup.reminded_at = referenceTime.toISOString();
+            fup.updated_at = referenceTime.toISOString();
+            remindedCount++;
+          } catch (err) {
+            console.error('Failed to dispatch upcoming reminder:', err);
+            // Failed notification remains un-stamped so it is retryable
+          }
+        }
+
+        // 2. Telecaller overdue notification (now > scheduledTime, not yet notified as overdue)
+        if (!fup.overdue_notified_at && now > scheduledTime) {
+          try {
+            this.createNotification({
+              organization_id: fup.organization_id,
+              user_id: fup.assigned_to,
+              type: 'FOLLOW_UP_OVERDUE',
+              title: 'Follow-Up Overdue',
+              message: `Scheduled callback for ${fup.lead_code || 'lead'} was due at ${new Date(fup.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} and is now overdue.`,
+              link: '/telecaller/follow-ups',
+            });
+
+            fup.overdue_notified_at = referenceTime.toISOString();
+            fup.updated_at = referenceTime.toISOString();
+            overdueCount++;
+          } catch (err) {
+            console.error('Failed to dispatch telecaller overdue notification:', err);
+          }
+        }
+
+        // 3. Owner overdue alert (now - scheduledTime >= 30 mins, not yet alerted)
+        // Completely independent of telecaller overdue alert so telecaller alert cannot suppress owner alert
+        const thirtyMinutesMs = 30 * 60 * 1000;
+        if (!fup.owner_alerted_at && (now - scheduledTime) >= thirtyMinutesMs) {
+          try {
+            const owner = this.profiles.find(
+              (p) => p.organization_id === fup.organization_id && p.role === 'OWNER' && p.status === 'ACTIVE'
+            );
+            if (owner) {
+              this.createNotification({
+                organization_id: fup.organization_id,
+                user_id: owner.id,
+                type: 'FOLLOW_UP_OVERDUE',
+                title: 'Overdue Lead Callback',
+                message: `Lead ${fup.lead_code || 'lead'} is overdue for follow-up (assigned to agent). Review for escalation.`,
+                link: '/owner/follow-ups',
+              });
+            }
+
+            fup.owner_alerted_at = referenceTime.toISOString();
+            fup.updated_at = referenceTime.toISOString();
+          } catch (err) {
+            console.error('Failed to dispatch owner overdue alert:', err);
+          }
+        }
+      } finally {
+        (fup as any)._is_processing = false;
+      }
+    }
+
+    return { remindedCount, overdueCount };
+  }
+
+  public markAllNotificationsRead(currentProfile: Profile): void {
+    this.ensureActive(currentProfile);
+    this.notifications.forEach((n) => {
+      if (n.organization_id === currentProfile.organization_id && n.user_id === currentProfile.id) {
+        n.read = true;
+      }
+    });
+    this.emit('NOTIFICATION_READ', { all: true }, { organization_id: currentProfile.organization_id });
   }
 
   // ----------------------------------------------------
@@ -1497,37 +3816,43 @@ class LeadVaultDatabase {
   }
 
   public recordSecurityEvent(
-    data: Omit<SecurityEvent, 'id' | 'organization_id' | 'created_at'>,
-    currentProfile: Profile
+    data: Omit<SecurityEvent, 'id' | 'organization_id' | 'created_at'> & { organization_id?: string; user_id?: string; user_name?: string },
+    currentProfile?: Profile
   ): SecurityEvent {
+    const orgId = data.organization_id || currentProfile?.organization_id || 'system';
+    const userId = data.user_id || currentProfile?.id;
+    const userName = data.user_name || currentProfile?.full_name || 'System';
+
     const event: SecurityEvent = {
       ...data,
       description: sanitizeText(data.description),
-      id: `sec-${Date.now().toString(36)}`,
-      organization_id: currentProfile.organization_id,
-      user_id: currentProfile.id,
-      user_name: currentProfile.full_name,
+      id: `sec-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      organization_id: orgId,
+      user_id: userId,
+      user_name: userName,
       created_at: new Date().toISOString(),
     };
 
     this.securityEvents.unshift(event);
 
-    // Notify organization owner
-    const owner = this.profiles.find(
-      (p) => p.organization_id === currentProfile.organization_id && p.role === 'OWNER'
-    );
-    if (owner) {
-      this.createNotification({
-        organization_id: currentProfile.organization_id,
-        user_id: owner.id,
-        type: 'SECURITY_ALERT',
-        title: `Security Alert: ${event.event_type}`,
-        message: event.description,
-        link: '/owner/security',
-      });
+    // Notify organization owner if org exists
+    if (orgId && orgId !== 'system') {
+      const owner = this.profiles.find(
+        (p) => p.organization_id === orgId && p.role === 'OWNER'
+      );
+      if (owner) {
+        this.createNotification({
+          organization_id: orgId,
+          user_id: owner.id,
+          type: 'SECURITY_ALERT',
+          title: `Security Alert: ${event.event_type}`,
+          message: event.description,
+          link: '/owner/security',
+        });
+      }
     }
 
-    this.emit('SECURITY_EVENT_RAISED', event, { organization_id: currentProfile.organization_id });
+    this.emit('SECURITY_EVENT_RAISED', event, { organization_id: orgId });
     return event;
   }
 

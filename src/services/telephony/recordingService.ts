@@ -67,6 +67,40 @@ export class RecordingService {
       expiresInSeconds: 60,
     };
   }
+
+  /**
+   * Fetches a short-lived (60s) pre-signed recording URL from the server API gateway.
+   */
+  public async fetchRecordingSignedUrl(
+    callId: string
+  ): Promise<{ recordingUrl: string; expiresInSeconds: number }> {
+    const token =
+      typeof window !== 'undefined'
+        ? localStorage.getItem('leadvault_session_token') ||
+          (() => {
+            try {
+              return JSON.parse(localStorage.getItem('leadvault_session') || '{}').sessionToken || '';
+            } catch {
+              return '';
+            }
+          })()
+        : '';
+
+    const res = await fetch(`/api/telephony/recording?callId=${encodeURIComponent(callId)}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to access call recording');
+    }
+
+    return {
+      recordingUrl: data.recordingUrl,
+      expiresInSeconds: data.expiresIn || 60,
+    };
+  }
 }
 
 export const recordingService = new RecordingService();
+

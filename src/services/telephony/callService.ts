@@ -4,6 +4,7 @@ import { ITelephonyProvider } from './provider';
 import { MockTelephonyProvider } from './mockProvider';
 import { TwilioTelephonyProvider } from './twilioProvider';
 import { TELEPHONY_PROVIDER } from '@/lib/config';
+import { isLiveApiMode, authService } from '@/services/auth/authService';
 
 export class CallService {
   private provider: ITelephonyProvider;
@@ -34,8 +35,43 @@ export class CallService {
     const { leadId, callerProfile } = params;
 
     // 1. Verify caller active status
-    if (callerProfile.status === 'DISABLED') {
+    if (callerProfile.status === 'DISABLED' || callerProfile.status === 'SUSPENDED') {
       throw new Error('Access denied: Caller account is suspended');
+    }
+
+    // 2. In live API mode, dispatch call through secure serverless endpoint
+    if (isLiveApiMode() && typeof window !== 'undefined') {
+      const token = authService.getSessionToken();
+      const res = await fetch('/api/telephony/call', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ leadId }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to dispatch outbound call');
+      }
+
+      const session: TelephonySession = {
+        callId: data.callId,
+        leadId,
+        telecallerId: callerProfile.id,
+        maskedPhoneNumber: data.maskedPhone,
+        status: data.status || 'INITIATED',
+        startedAt: new Date(),
+        durationSeconds: 0,
+        isMuted: false,
+      };
+
+      return {
+        session,
+        consentNotice:
+          'Authorized call placed via ENCRIX Twilio Gateway. Compliant with TRAI/FCC calling standards; recorded for compliance.',
+      };
     }
 
     // 2. Fetch lead from database using caller's authorization context
