@@ -23,6 +23,7 @@ CREATE INDEX IF NOT EXISTS idx_call_recordings_call_id ON public.call_recordings
 CREATE INDEX IF NOT EXISTS idx_call_recordings_org_id ON public.call_recordings(organization_id);
 
 -- Storage & Data Isolation Policy on call_recordings
+DROP POLICY IF EXISTS "Tenant members can access own call_recordings" ON public.call_recordings;
 CREATE POLICY "Tenant members can access own call_recordings"
     ON public.call_recordings
     FOR SELECT
@@ -39,10 +40,7 @@ CREATE POLICY "Tenant members can access own call_recordings"
                     p.role = 'TELECALLER' AND EXISTS (
                         SELECT 1 FROM public.calls c
                         WHERE c.id = call_recordings.call_id
-                        AND (c.telecaller_id = p.id OR EXISTS (
-                            SELECT 1 FROM public.leads l
-                            WHERE l.id = c.lead_id AND l.assigned_to = p.id
-                        ))
+                        AND c.telecaller_id = p.id
                     )
                 )
             )
@@ -57,8 +55,43 @@ CREATE INDEX IF NOT EXISTS idx_security_events_org_type ON public.security_event
 CREATE INDEX IF NOT EXISTS idx_organization_invitations_token ON public.organization_invitations(token);
 
 -- 3. Trigger for Realtime Publication
--- Ensures calls, leads, follow_ups, and security_events publish full record payloads
-ALTER PUBLICATION supabase_realtime ADD TABLE public.calls;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.leads;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.follow_ups;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.security_events;
+-- Ensures calls, leads, follow_ups, and security_events publish full record payloads.
+-- Safely checks pg_publication_tables to prevent duplicate_object errors if already added.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime'
+          AND schemaname = 'public'
+          AND tablename = 'calls'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.calls;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime'
+          AND schemaname = 'public'
+          AND tablename = 'leads'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.leads;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime'
+          AND schemaname = 'public'
+          AND tablename = 'follow_ups'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.follow_ups;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime'
+          AND schemaname = 'public'
+          AND tablename = 'security_events'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.security_events;
+    END IF;
+END $$;
