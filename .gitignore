@@ -33,3 +33,6 @@ supabase/.temp/
 audit-*.txt
 audit-*.json
 production-audit*.json
+
+.vercel
+.env*

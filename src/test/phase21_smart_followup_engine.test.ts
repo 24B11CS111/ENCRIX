@@ -521,7 +521,6 @@ describe('ENCRIX Phase 21: Smart Follow-Up Engine & Overdue Escalation', () => {
           },
           body: {
             referenceTime: now,
-            organizationId: orgAId,
           },
         });
         return cronReminderHandler(req, res).then(() => res);
@@ -632,7 +631,6 @@ describe('ENCRIX Phase 21: Smart Follow-Up Engine & Overdue Escalation', () => {
         },
         body: {
           referenceTime: now,
-          organizationId: orgAId,
         },
       });
 
