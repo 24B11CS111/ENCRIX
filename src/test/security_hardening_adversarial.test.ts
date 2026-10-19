@@ -194,15 +194,14 @@ describe('LEADVAULT Phase 11: Adversarial Security & Penetration Validation', ()
   // 3. PHONE NUMBER SECURITY & ZERO-LEAKAGE AUDIT (Sections 5 & 6)
   // =========================================================================
   describe('Phone Number Security & Data Masking Audit (Sections 5 & 6)', () => {
-    it('Telecaller query results return masked phone numbers and masked names', () => {
+    it('Telecaller query results return ZERO phone digits (phone omitted completely)', () => {
       const arjunLeads = db.getLeads(telecallerArjun);
       expect(arjunLeads.length).toBeGreaterThan(0);
 
       arjunLeads.forEach((lead) => {
-        // Phone must contain masking asterisks
-        expect(lead.phone).toMatch(/\*+/);
-        // Phone must NOT be raw 10-digit unmasked
-        expect(lead.phone).not.toMatch(/^\+91\s?\d{10}$/);
+        // Zero-Phone Invariant: phone must be strictly undefined and omitted
+        expect(lead.phone).toBeUndefined();
+        expect('phone' in lead).toBe(false);
 
         // Name must be first name + initial
         expect(lead.name).toMatch(/^[A-Za-z]+\s[A-Z]\.$/);

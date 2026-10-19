@@ -46,3 +46,23 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+# Environment secrets
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Build and local tooling
+node_modules/
+dist/
+.vercel/
+.dart_tool/
+.flutter-plugins-dependencies
+build/
+
+# Local secrets and backups
+*.pem
+*.key
+*.p12
+*.pfx
+*.sql.backup

@@ -19,14 +19,7 @@ export class RecordingService {
     if (profile.role === 'OWNER') return true;
 
     if (profile.role === 'TELECALLER') {
-      if (call.telecaller_id === profile.id) return true;
-      try {
-        const lead = db.getLeadById(call.lead_id, profile);
-        if (lead && lead.assigned_to === profile.id) return true;
-      } catch {
-        return false;
-      }
-      return false;
+      return call.telecaller_id === profile.id;
     }
 
     return false;
@@ -60,10 +53,21 @@ export class RecordingService {
       throw new Error('Forbidden: You do not have permission to access this call recording');
     }
 
+    if (!call.recording_url) {
+      throw new Error('Call recording not found or unavailable');
+    }
+
+    // Fail closed: Never expose raw Twilio provider recording URLs
+    if (call.recording_url.includes('api.twilio.com') || call.recording_url.includes('twilio.com')) {
+      throw new Error('Provider recording URL must not be accessed directly; storage sync required');
+    }
+
+    const signedUrl = call.recording_url.startsWith('http')
+      ? call.recording_url
+      : `https://storage.encrix.internal/recordings/${call.recording_url}?token=signed_${Date.now()}`;
+
     return {
-      recordingUrl:
-        call.recording_url ||
-        `https://storage.encrix.internal/recordings/${call.organization_id}/${call.id}.mp3?token=signed_${Date.now()}`,
+      recordingUrl: signedUrl,
       expiresInSeconds: 60,
     };
   }

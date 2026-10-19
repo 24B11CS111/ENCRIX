@@ -118,7 +118,7 @@ BEGIN
     END IF;
 
     -- 5. Create secure call audit record
-    call_session_id := uuid_generate_v4();
+    call_session_id := extensions.uuid_generate_v4();
     INSERT INTO public.calls (
         id,
         organization_id,

@@ -42,7 +42,7 @@ describe('Phase 12: Supabase Staging Environment & RLS Verification', () => {
     }
   });
 
-  it('4. Staging RLS Contract: Telecallers only receive their own assigned leads with masked numbers', () => {
+  it('4. Staging RLS Contract: Telecallers only receive their own assigned leads with zero phone exposure', () => {
     const arjun = db.getProfiles({ role: 'ADMIN', organization_id: '' } as Profile).find((p) => p.id === 'tc-arjun-01')!;
     const arjunLeads = db.getLeads(arjun);
 
@@ -50,7 +50,7 @@ describe('Phase 12: Supabase Staging Environment & RLS Verification', () => {
 
     for (const lead of arjunLeads) {
       expect(lead.assigned_to).toBe(arjun.id);
-      expect(lead.phone).toMatch(/^\+91 \*{6}\d{4}$/);
+      expect(lead.phone).toBeUndefined();
       // Ensure customer full surname is protected
       expect(lead.name).not.toMatch(/\s[A-Z][a-z]{3,}$/);
     }

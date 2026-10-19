@@ -107,7 +107,7 @@ export const OwnerLeadsPage: React.FC = () => {
     const matchSearch =
       lead.lead_code.toLowerCase().includes(search.toLowerCase()) ||
       lead.name.toLowerCase().includes(search.toLowerCase()) ||
-      lead.phone.includes(search) ||
+      (lead.phone && lead.phone.includes(search)) ||
       (lead.email && lead.email.toLowerCase().includes(search.toLowerCase())) ||
       lead.source.toLowerCase().includes(search.toLowerCase());
 

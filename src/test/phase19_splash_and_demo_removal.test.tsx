@@ -13,6 +13,14 @@ import { authService } from '@/services/auth/authService';
 import { db } from '@/services/supabase/db';
 import { DEMO_PROFILES, DEMO_ORGS } from '@/services/supabase/demoData';
 
+vi.mock('@/services/supabase/client', async () => {
+  const actual = await vi.importActual<any>('@/services/supabase/client');
+  return {
+    ...actual,
+    isRealSupabaseConfigured: () => false,
+  };
+});
+
 describe('ENCRIX Phase 19: Premium Startup Animation & Demo UI Removal', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -207,8 +215,18 @@ describe('ENCRIX Phase 19: Premium Startup Animation & Demo UI Removal', () => {
 
   // 4. Truthful Security Indicator in Header
   describe('4. Truthful Security Indicator in Header', () => {
-    it('truthfully reports Security Alert when high/critical anomalies exist in tenant audit', () => {
+    const owner = DEMO_PROFILES.find((p) => p.role === 'OWNER' && p.organization_id === 'org-vertex-001')!;
+
+    it('truthfully reports Security Alert when high/critical anomalies exist in tenant audit', async () => {
       // org-vertex-001 has active security events in demoData
+      vi.spyOn(authService, 'getSessionToken').mockReturnValue('mock-owner-token');
+      vi.spyOn(authService, 'restoreServerSession').mockResolvedValue({
+        authenticated: true,
+        profile: owner,
+        organization: DEMO_ORGS[0],
+        role: 'OWNER',
+      });
+
       render(
         <MemoryRouter>
           <AuthProvider>
@@ -217,12 +235,23 @@ describe('ENCRIX Phase 19: Premium Startup Animation & Demo UI Removal', () => {
         </MemoryRouter>
       );
 
+      await act(async () => {
+        vi.runAllTimers();
+      });
+
       const indicator = screen.getByTestId('navbar-security-indicator');
       expect(indicator).toBeInTheDocument();
       expect(indicator).toHaveTextContent(/Security Alert/i);
     });
 
-    it('truthfully reports System Secure when organization audit events are clean', () => {
+    it('truthfully reports System Secure when organization audit events are clean', async () => {
+      vi.spyOn(authService, 'getSessionToken').mockReturnValue('mock-owner-token');
+      vi.spyOn(authService, 'restoreServerSession').mockResolvedValue({
+        authenticated: true,
+        profile: owner,
+        organization: DEMO_ORGS[0],
+        role: 'OWNER',
+      });
       vi.spyOn(db, 'getSecurityEvents').mockReturnValue([]);
 
       render(
@@ -232,6 +261,10 @@ describe('ENCRIX Phase 19: Premium Startup Animation & Demo UI Removal', () => {
           </AuthProvider>
         </MemoryRouter>
       );
+
+      await act(async () => {
+        vi.runAllTimers();
+      });
 
       const indicator = screen.getByTestId('navbar-security-indicator');
       expect(indicator).toBeInTheDocument();

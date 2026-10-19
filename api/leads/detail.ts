@@ -4,6 +4,13 @@ import {
   isRealSupabaseServerConfigured,
 } from '../_lib/supabaseServer';
 import { db } from '../../src/services/supabase/db';
+import {
+  scrubPhoneFromText,
+  maskName,
+  stripDigitsFromText,
+  redactLongDigitsFromText,
+  sanitizeStudentName,
+} from '../../src/lib/dataMasking';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET' && req.method !== 'POST') {
@@ -71,15 +78,26 @@ export default async function handler(req: any, res: any) {
     if (profile.role !== 'ADMIN' && lead.organization_id !== profile.organization_id) {
       if (isRealSupabaseServerConfigured()) {
         const supabase = getSupabaseServerClient();
-        await supabase.from('security_events').insert({
-          organization_id: lead.organization_id,
-          user_id: profile.id,
-          user_name: profile.full_name,
-          event_type: 'CROSS_TENANT_LEAD_ACCESS_ATTEMPT',
-          severity: 'CRITICAL',
-          description: `User ${profile.full_name} (${profile.id}) from ${profile.organization_id} attempted to access cross-tenant lead ${lead.id}`,
-          metadata: { targetOrg: lead.organization_id, userOrg: profile.organization_id, leadId: lead.id },
-        });
+        await supabase.from('security_events').insert([
+          {
+            organization_id: lead.organization_id,
+            user_id: profile.id,
+            user_name: profile.full_name,
+            event_type: 'CROSS_TENANT_LEAD_ACCESS_ATTEMPT',
+            severity: 'CRITICAL',
+            description: `User ${profile.full_name} (${profile.id}) from ${profile.organization_id} attempted to access cross-tenant lead ${lead.id}`,
+            metadata: { targetOrg: lead.organization_id, userOrg: profile.organization_id, leadId: lead.id },
+          },
+          {
+            organization_id: profile.organization_id,
+            user_id: profile.id,
+            user_name: profile.full_name,
+            event_type: 'CROSS_TENANT_LEAD_ACCESS_ATTEMPT',
+            severity: 'CRITICAL',
+            description: `User ${profile.full_name} (${profile.id}) from ${profile.organization_id} attempted to access cross-tenant lead ${lead.id}`,
+            metadata: { targetOrg: lead.organization_id, userOrg: profile.organization_id, leadId: lead.id },
+          },
+        ]);
       } else {
         db.recordSecurityEvent(
           {
@@ -91,6 +109,18 @@ export default async function handler(req: any, res: any) {
           },
           profile as any
         );
+        if (profile.organization_id && profile.organization_id !== lead.organization_id) {
+          db.recordSecurityEvent(
+            {
+              organization_id: profile.organization_id,
+              event_type: 'CROSS_TENANT_LEAD_ACCESS_ATTEMPT',
+              severity: 'CRITICAL',
+              description: `User ${profile.full_name} (${profile.id}) from ${profile.organization_id} attempted to access cross-tenant lead ${lead.id}`,
+              metadata: { targetOrg: lead.organization_id, userOrg: profile.organization_id, leadId: lead.id },
+            },
+            profile as any
+          );
+        }
       }
 
       return res.status(404).json({ error: 'Lead not found or unauthorized' });
@@ -154,25 +184,33 @@ export default async function handler(req: any, res: any) {
 
     // 7. Construct and Return Authorized Student Details (ZERO PHONE EXPOSURE)
     // Only permitted fields are included. Missing fields are gracefully null (never fabricated).
+    const isTelecaller = profile.role === 'TELECALLER';
+    const rawFather = (lead.father_name ?? lead.metadata?.father_name) as string | null;
+    const rawMother = (lead.mother_name ?? lead.metadata?.mother_name) as string | null;
+    const rawCity = (lead.city ?? lead.metadata?.city) as string | null;
+    const rawState = (lead.state ?? lead.metadata?.state) as string | null;
+    const rawSchool = (lead.school_or_college ?? lead.metadata?.school_or_college) as string | null;
+    const rawCourse = (lead.course_interest ?? lead.metadata?.course_interest) as string | null;
+
     const studentPayload = {
       id: lead.id,
       organization_id: lead.organization_id,
       lead_code: lead.lead_code,
-      name: lead.name,
-      email: profile.role === 'TELECALLER' ? undefined : lead.email,
+      name: isTelecaller ? sanitizeStudentName(lead.name) : lead.name,
+      email: isTelecaller ? undefined : lead.email,
       source: lead.source,
       status: lead.status,
       priority: lead.priority,
       assigned_to: lead.assigned_to,
-      notes: lead.notes,
+      notes: isTelecaller ? scrubPhoneFromText(lead.notes) : lead.notes,
       created_at: lead.created_at,
       updated_at: lead.updated_at,
       last_contacted_at: lead.last_contacted_at,
       calls_count: lead.calls_count,
 
-      // Family details
-      father_name: lead.father_name ?? (lead.metadata?.father_name as string | null) ?? null,
-      mother_name: lead.mother_name ?? (lead.metadata?.mother_name as string | null) ?? null,
+      // Family details (digits stripped for telecaller to prevent phone smuggling)
+      father_name: isTelecaller ? (stripDigitsFromText(rawFather) ?? null) : (rawFather ?? null),
+      mother_name: isTelecaller ? (stripDigitsFromText(rawMother) ?? null) : (rawMother ?? null),
 
       // Academic and examination details
       neet_score: lead.neet_score ?? (lead.metadata?.neet_score as number | null) ?? null,
@@ -193,10 +231,10 @@ export default async function handler(req: any, res: any) {
       // Approved student profile fields
       category: lead.category ?? (lead.metadata?.category as string | null) ?? null,
       gender: lead.gender ?? (lead.metadata?.gender as string | null) ?? null,
-      city: lead.city ?? (lead.metadata?.city as string | null) ?? null,
-      state: lead.state ?? (lead.metadata?.state as string | null) ?? null,
-      school_or_college: lead.school_or_college ?? (lead.metadata?.school_or_college as string | null) ?? null,
-      course_interest: lead.course_interest ?? (lead.metadata?.course_interest as string | null) ?? null,
+      city: isTelecaller ? (stripDigitsFromText(rawCity) ?? null) : (rawCity ?? null),
+      state: isTelecaller ? (stripDigitsFromText(rawState) ?? null) : (rawState ?? null),
+      school_or_college: isTelecaller ? (redactLongDigitsFromText(rawSchool) ?? null) : (rawSchool ?? null),
+      course_interest: isTelecaller ? (redactLongDigitsFromText(rawCourse) ?? null) : (rawCourse ?? null),
     };
 
     return res.status(200).json(studentPayload);

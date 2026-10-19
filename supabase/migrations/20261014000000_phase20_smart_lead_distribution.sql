@@ -6,7 +6,7 @@
 
 -- 1. DISTRIBUTION CONFIGURATIONS TABLE
 CREATE TABLE IF NOT EXISTS public.distribution_configs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE UNIQUE,
     mode VARCHAR(50) NOT NULL DEFAULT 'MANUAL' CHECK (mode IN ('MANUAL', 'ROUND_ROBIN', 'WORKLOAD_BALANCED')),
     enabled_for_import BOOLEAN NOT NULL DEFAULT FALSE,

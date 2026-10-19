@@ -1,11 +1,11 @@
 -- LEADVAULT: Master Production Database Schema & RLS Policies
 -- Multi-Tenant Secure Telecaller CRM
 -- Extension: UUID generation
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
 
 -- 1. ORGANIZATIONS
 CREATE TABLE IF NOT EXISTS public.organizations (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     slug VARCHAR(100) UNIQUE NOT NULL,
     owner_id UUID NOT NULL,
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS public.organizations (
 
 -- 2. PROFILES (Extends Supabase auth.users)
 CREATE TABLE IF NOT EXISTS public.profiles (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     user_id UUID UNIQUE NOT NULL,
     organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
     full_name VARCHAR(255) NOT NULL,
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 
 -- 3. LEADS
 CREATE TABLE IF NOT EXISTS public.leads (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     lead_code VARCHAR(50) NOT NULL,
     name VARCHAR(255) NOT NULL,
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS public.leads (
 
 -- 4. LEAD ASSIGNMENTS
 CREATE TABLE IF NOT EXISTS public.lead_assignments (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     lead_id UUID NOT NULL REFERENCES public.leads(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS public.lead_assignments (
 
 -- 5. CALLS
 CREATE TABLE IF NOT EXISTS public.calls (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     lead_id UUID NOT NULL REFERENCES public.leads(id) ON DELETE CASCADE,
     telecaller_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS public.calls (
 
 -- 6. CALL OUTCOMES
 CREATE TABLE IF NOT EXISTS public.call_outcomes (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     call_id UUID NOT NULL REFERENCES public.calls(id) ON DELETE CASCADE,
     lead_id UUID NOT NULL REFERENCES public.leads(id) ON DELETE CASCADE,
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS public.call_outcomes (
 
 -- 7. FOLLOW UPS
 CREATE TABLE IF NOT EXISTS public.follow_ups (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     lead_id UUID NOT NULL REFERENCES public.leads(id) ON DELETE CASCADE,
     assigned_to UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS public.follow_ups (
 
 -- 8. MESSAGES
 CREATE TABLE IF NOT EXISTS public.messages (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     lead_id UUID REFERENCES public.leads(id) ON DELETE CASCADE,
     sender_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -145,7 +145,7 @@ CREATE TABLE IF NOT EXISTS public.messages (
 
 -- 9. NOTIFICATIONS
 CREATE TABLE IF NOT EXISTS public.notifications (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     type VARCHAR(50) NOT NULL,
@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS public.notifications (
 
 -- 10. ACTIVITY LOGS
 CREATE TABLE IF NOT EXISTS public.activity_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
     action VARCHAR(100) NOT NULL,
@@ -170,7 +170,7 @@ CREATE TABLE IF NOT EXISTS public.activity_logs (
 
 -- 11. SECURITY EVENTS
 CREATE TABLE IF NOT EXISTS public.security_events (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
     event_type VARCHAR(100) NOT NULL,
@@ -182,7 +182,7 @@ CREATE TABLE IF NOT EXISTS public.security_events (
 
 -- 12. USER SESSIONS / AUDIT
 CREATE TABLE IF NOT EXISTS public.user_sessions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
     last_login TIMESTAMPTZ DEFAULT NOW(),

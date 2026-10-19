@@ -138,7 +138,7 @@ describe('Phase 12: Production Telephony Gateway & Twilio Signature Tests', () =
 
     expect(dispatchResult.session.callId).toBeDefined();
     expect(dispatchResult.session.leadId).toBe(targetLead.id);
-    expect(dispatchResult.session.maskedPhoneNumber).toBe('+91 ******3210');
+    expect(dispatchResult.session.maskedPhoneNumber).toBeUndefined();
     // Ensure raw phone is not returned to caller
     expect((dispatchResult.session as unknown as Record<string, unknown>).phoneNumber).toBeUndefined();
   });

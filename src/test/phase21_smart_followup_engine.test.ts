@@ -991,11 +991,11 @@ describe('ENCRIX Phase 21: Smart Follow-Up Engine & Overdue Escalation', () => {
   // ==========================================================================
   describe('10. Owner Metrics & Leads Without Next Action', () => {
     it('provides accurate overview metrics and telecaller breakdown', () => {
-      // Create one due today
+      // Create one due today (1 minute in future, so status is dynamically DUE)
       db.createFollowUp(
         {
           lead_id: testLeadA1.id,
-          scheduled_at: new Date(Date.now() + 3600000).toISOString(),
+          scheduled_at: new Date(Date.now() + 60000).toISOString(),
           priority: 'HIGH',
         },
         telecallerA1

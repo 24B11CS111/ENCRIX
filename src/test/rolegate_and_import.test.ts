@@ -70,9 +70,10 @@ describe('LEADVAULT Form Validation & Role Gate Rules', () => {
     expect(ownerView.name).toBe('Aditya Srivastava');
     expect(ownerView.email).toBe('aditya.s@example.com');
 
-    // Telecaller receives masked details
+    // Telecaller receives zero phone exposure (strictly no digits)
     const telecallerView = sanitizeLeadForRole(rawLead, 'TELECALLER');
-    expect(telecallerView.phone).toContain('***');
+    expect(telecallerView.phone).toBeUndefined();
+    expect('phone' in telecallerView).toBe(false);
     expect(telecallerView.name).toBe('Aditya S.');
     expect(telecallerView.email).toContain('***');
   });

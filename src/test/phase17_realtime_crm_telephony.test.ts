@@ -439,11 +439,10 @@ describe('ENCRIX Phase 17: Real-Time Telecalling CRM & Production Telephony', ()
       });
     });
 
-    it('masks customer phone numbers in telecaller lead queue', () => {
+    it('omits customer phone numbers completely in telecaller lead queue (zero digits)', () => {
       const leads = db.getLeads(telecallerA1);
       leads.forEach((l) => {
-        // Masked phone format contains bullet or bullet character (••••)
-        expect(l.phone).toMatch(/[•*X\s]/);
+        expect(l.phone).toBeUndefined();
       });
     });
 
@@ -492,7 +491,7 @@ describe('ENCRIX Phase 17: Real-Time Telecalling CRM & Production Telephony', ()
     });
 
     it('sanitizes real-time lead updates before broadcasting to telecallers', () => {
-      let receivedLeadPhone = '';
+      let receivedLeadPhone: string | undefined = '';
       const unsubscribe = db.subscribe(({ type, payload }) => {
         if (type === 'LEAD_UPDATED') {
           const lead = payload as Lead;
@@ -505,7 +504,7 @@ describe('ENCRIX Phase 17: Real-Time Telecalling CRM & Production Telephony', ()
       const targetLead = leads.find((l) => l.assigned_to === telecallerA1.id);
       if (targetLead) {
         db.updateLead(targetLead.id, { notes: 'Updated notes' }, ownerA);
-        expect(receivedLeadPhone).toMatch(/[•*X\s]/);
+        expect(receivedLeadPhone).toBeUndefined();
       }
 
       unsubscribe();

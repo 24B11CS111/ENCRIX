@@ -27,7 +27,7 @@ import {
   CallOutcomeType,
   LeadPriority,
 } from '@/types';
-import { sanitizeLeadForRole, sanitizeLeadsForRole, maskPhoneNumber, maskName } from '@/lib/dataMasking';
+import { sanitizeLeadForRole, sanitizeLeadsForRole, maskPhoneNumber, maskName, scrubPhoneFromText } from '@/lib/dataMasking';
 import { sanitizeFormulaInjection, sanitizeText } from '@/lib/validation';
 import { normalizePhoneNumber, formatMaskedPhone } from '@/lib/phoneNormalization';
 import { normalizeEmailAddress } from '@/lib/emailNormalization';
@@ -210,21 +210,49 @@ class LeadVaultDatabase {
     try {
       const clonedPayload = JSON.parse(JSON.stringify(event.payload));
 
-      // If payload is a FollowUp object, strictly strip phone fields and mask lead name
-      if (clonedPayload.scheduled_at || clonedPayload.lead_phone) {
-        delete clonedPayload.lead_phone;
-        delete clonedPayload.phone;
+      // 1. Unconditionally strip all direct phone properties from telecaller realtime payloads
+      delete clonedPayload.phone;
+      delete clonedPayload.lead_phone;
+      delete clonedPayload.phone_number;
+      delete clonedPayload.raw_phone;
+      delete clonedPayload.customer_phone;
+      delete clonedPayload.masked_phone;
+      delete clonedPayload.maskedPhoneNumber;
+
+      // 2. Scrub any phone numbers from metadata
+      if (clonedPayload.metadata && typeof clonedPayload.metadata === 'object') {
+        delete clonedPayload.metadata.phone;
+        delete clonedPayload.metadata.phone_number;
+        delete clonedPayload.metadata.raw_phone;
+        delete clonedPayload.metadata.mobile;
+        delete clonedPayload.metadata.contact_phone;
+      }
+
+      // 3. Scrub any free-text phone references from notes
+      if (typeof clonedPayload.notes === 'string') {
+        clonedPayload.notes = scrubPhoneFromText(clonedPayload.notes);
+      }
+
+      // 4. If payload is a FollowUp object, mask lead name
+      if (clonedPayload.scheduled_at || clonedPayload.lead_id) {
         if (clonedPayload.lead_name) {
           clonedPayload.lead_name = maskName(clonedPayload.lead_name);
         }
       }
 
-      // If payload is a Lead object, sanitize for telecaller role (masks name, phone, email)
+      // 5. If payload is a Call object, mask lead name
+      if (clonedPayload.duration_seconds !== undefined || clonedPayload.telecaller_id) {
+        if (clonedPayload.lead_name) {
+          clonedPayload.lead_name = maskName(clonedPayload.lead_name);
+        }
+      }
+
+      // 6. If payload is a Lead object, run through strict role sanitizer
       if (clonedPayload.name && (clonedPayload.status || clonedPayload.lead_code)) {
         return { ...event, payload: sanitizeLeadForRole(clonedPayload, 'TELECALLER') };
       }
 
-      // If payload has a nested lead
+      // 7. If payload has a nested lead
       if (clonedPayload.lead && typeof clonedPayload.lead === 'object') {
         clonedPayload.lead = sanitizeLeadForRole(clonedPayload.lead, 'TELECALLER');
       }
@@ -623,6 +651,105 @@ class LeadVaultDatabase {
     }
 
     this.profiles[index] = { ...target, role: newRole, updated_at: new Date().toISOString() };
+    this.emit('TEAM_UPDATED', this.profiles[index], { organization_id: currentProfile.organization_id });
+    return this.profiles[index];
+  }
+
+  /**
+   * Safe Profile Update with Strict Privilege Escalation Protection.
+   * Users can only update their own non-privileged profile fields (full_name, avatar_url).
+   * Elevating roles, changing organization_id, or self-unsuspension is strictly prohibited.
+   */
+  public updateProfile(
+    profileId: string,
+    updates: Partial<Profile>,
+    currentProfile: Profile
+  ): Profile {
+    const index = this.profiles.findIndex((p) => p.id === profileId);
+    if (index === -1) throw new Error('User profile not found.');
+
+    const target = this.profiles[index];
+
+    // Multi-tenant isolation: non-admins cannot touch other organizations
+    if (target.organization_id !== currentProfile.organization_id && currentProfile.role !== 'ADMIN') {
+      this.recordSecurityEvent(
+        {
+          event_type: 'CROSS_TENANT_ACCESS_VIOLATION',
+          severity: 'CRITICAL',
+          description: `User ${currentProfile.full_name} (${currentProfile.id}) attempted to modify profile in another organization.`,
+          metadata: { targetProfileId: profileId, targetOrg: target.organization_id },
+        },
+        currentProfile
+      );
+      throw new Error('Forbidden: Cannot modify profiles in another organization.');
+    }
+
+    // Privilege Protection 1: Non-admins cannot alter organization_id
+    if (updates.organization_id && updates.organization_id !== target.organization_id && currentProfile.role !== 'ADMIN') {
+      this.recordSecurityEvent(
+        {
+          event_type: 'ROLE_ESCALATION_ATTEMPT',
+          severity: 'CRITICAL',
+          description: `User ${currentProfile.full_name} attempted to transfer profile to another organization.`,
+          metadata: { targetOrg: updates.organization_id },
+        },
+        currentProfile
+      );
+      throw new Error('Privilege Violation: Changing organization_id is strictly restricted to system administrators.');
+    }
+
+    // Privilege Protection 2: Self-elevation of user role
+    if (updates.role && updates.role !== target.role) {
+      if (currentProfile.id === target.id) {
+        this.recordSecurityEvent(
+          {
+            event_type: 'ROLE_ESCALATION_ATTEMPT',
+            severity: 'CRITICAL',
+            description: `User ${currentProfile.full_name} attempted self-elevation to role ${updates.role}.`,
+            metadata: { attemptedRole: updates.role },
+          },
+          currentProfile
+        );
+        throw new Error('Privilege Violation: Self-elevation of user role is strictly prohibited.');
+      }
+      if (currentProfile.role !== 'ADMIN' && currentProfile.role !== 'OWNER') {
+        throw new Error('Privilege Violation: Only Owners and Admins can modify user roles.');
+      }
+      if (target.role === 'TELECALLER' && (updates.role === 'OWNER' || updates.role === 'ADMIN') && currentProfile.role !== 'ADMIN') {
+        throw new Error('Privilege Violation: Telecaller role cannot be promoted to Owner or Admin.');
+      }
+    }
+
+    // Privilege Protection 3: Account status tampering (e.g. self-unsuspend)
+    if (updates.status && updates.status !== target.status) {
+      if (currentProfile.id === target.id && (target.status === 'DISABLED' || target.status === 'SUSPENDED' || currentProfile.status === 'DISABLED' || currentProfile.status === 'SUSPENDED')) {
+        this.recordSecurityEvent(
+          {
+            event_type: 'SUSPENDED_ACCOUNT_TAMPERING',
+            severity: 'CRITICAL',
+            description: `Suspended user ${currentProfile.full_name} attempted self-reactivation.`,
+          },
+          currentProfile
+        );
+        throw new Error('Privilege Violation: Suspended users cannot reactivate their own accounts.');
+      }
+      if (currentProfile.role !== 'ADMIN' && currentProfile.role !== 'OWNER') {
+        throw new Error('Privilege Violation: Only Owners and Admins can modify account statuses.');
+      }
+    }
+
+    this.ensureActive(currentProfile);
+
+    // Apply authorized safe updates
+    this.profiles[index] = {
+      ...target,
+      full_name: updates.full_name ? sanitizeText(updates.full_name) : target.full_name,
+      avatar_url: updates.avatar_url ?? target.avatar_url,
+      role: updates.role ?? target.role,
+      status: updates.status ?? target.status,
+      updated_at: new Date().toISOString(),
+    };
+
     this.emit('TEAM_UPDATED', this.profiles[index], { organization_id: currentProfile.organization_id });
     return this.profiles[index];
   }
@@ -1475,7 +1602,7 @@ class LeadVaultDatabase {
       (l) =>
         l.lead_code.toLowerCase().includes(normalized) ||
         l.name.toLowerCase().includes(normalized) ||
-        l.phone.toLowerCase().includes(normalized) ||
+        (l.phone && l.phone.toLowerCase().includes(normalized)) ||
         (l.email && l.email.toLowerCase().includes(normalized)) ||
         l.source.toLowerCase().includes(normalized)
     );
@@ -1509,7 +1636,7 @@ class LeadVaultDatabase {
       throw new Error('Forbidden: Lead belongs to another organization.');
     }
 
-    return lead.phone;
+    return lead.phone || '';
   }
 
   /**
@@ -1530,7 +1657,7 @@ class LeadVaultDatabase {
       throw new Error('Forbidden: Telecaller cannot call unassigned lead.');
     }
 
-    return lead.phone;
+    return lead.phone || '';
   }
 
   public createLead(
@@ -1546,7 +1673,7 @@ class LeadVaultDatabase {
     const newLead: Lead = {
       ...leadData,
       name: sanitizeText(leadData.name),
-      phone: leadData.phone.trim(),
+      phone: leadData.phone ? leadData.phone.trim() : '',
       email: leadData.email ? leadData.email.trim() : undefined,
       source: sanitizeText(leadData.source || 'Direct'),
       notes: leadData.notes ? sanitizeText(leadData.notes) : undefined,
@@ -3074,6 +3201,9 @@ class LeadVaultDatabase {
         lead_phone: isTelecaller
           ? undefined
           : (f.lead_phone ? (currentProfile.role === 'ADMIN' ? f.lead_phone : maskPhoneNumber(f.lead_phone)) : '—'),
+        notes: isTelecaller && f.notes ? scrubPhoneFromText(f.notes) : f.notes,
+        reason: isTelecaller && f.reason ? scrubPhoneFromText(f.reason) : f.reason,
+        escalation_reason: isTelecaller && f.escalation_reason ? scrubPhoneFromText(f.escalation_reason) : f.escalation_reason,
       };
     });
   }
@@ -3731,9 +3861,19 @@ class LeadVaultDatabase {
 
   public getNotifications(currentProfile: Profile): Notification[] {
     this.ensureActive(currentProfile);
-    return this.notifications.filter(
-      (n) => n.organization_id === currentProfile.organization_id && n.user_id === currentProfile.id
-    );
+    const isTelecaller = currentProfile.role === 'TELECALLER';
+    return this.notifications
+      .filter(
+        (n) => n.organization_id === currentProfile.organization_id && n.user_id === currentProfile.id
+      )
+      .map((n) => {
+        if (!isTelecaller) return n;
+        return {
+          ...n,
+          title: scrubPhoneFromText(n.title) || n.title,
+          message: scrubPhoneFromText(n.message) || n.message,
+        };
+      });
   }
 
   public markNotificationRead(id: string): void {

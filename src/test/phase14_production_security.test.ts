@@ -228,19 +228,19 @@ describe('ENCRIX Phase 14: Production Security & Telephony Verification Suite', 
       ownerA
     );
 
-    // 1. In lead lists, phone number is masked for telecallers
+    // 1. In lead lists, phone number is completely omitted for telecallers
     const telecallerLeads = db.getLeads(telecallerA);
     const listedLead = telecallerLeads.find((l) => l.id === leadA.id);
     expect(listedLead).toBeDefined();
-    expect(listedLead?.phone).toBe('+91 ******3003');
-    expect(listedLead?.phone).not.toBe(rawPhoneNumber);
+    expect(listedLead?.phone).toBeUndefined();
+    expect((listedLead as any)?.raw_phone).toBeUndefined();
 
-    // 2. Dispatch call returns masked phone number, never raw phone
+    // 2. Dispatch call returns zero phone digits to telecaller client
     const dispatchResult = await callService.dispatchCall({
       leadId: leadA.id,
       callerProfile: telecallerA,
     });
-    expect(dispatchResult.session.maskedPhoneNumber).toBe('+91 ******3003');
+    expect(dispatchResult.session.maskedPhoneNumber).toBeUndefined();
     expect((dispatchResult.session as unknown as Record<string, unknown>).phoneNumber).toBeUndefined();
     expect((dispatchResult.session as unknown as Record<string, unknown>).customerPhone).toBeUndefined();
   });
@@ -466,7 +466,7 @@ describe('ENCRIX Phase 14: Production Security & Telephony Verification Suite', 
 
     expect(dispatchA.session.callId).toBeDefined();
     expect(dispatchA.session.status).toBe('INITIATED');
-    expect(dispatchA.session.maskedPhoneNumber).toBe('+91 ******4001');
+    expect(dispatchA.session.maskedPhoneNumber).toBeUndefined();
 
     // Lead status updated to CONTACTED
     const updatedLeadA = db.getLeadById(leadA.id, telecallerA);

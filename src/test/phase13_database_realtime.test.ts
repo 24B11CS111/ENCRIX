@@ -352,8 +352,8 @@ describe('ENCRIX Phase 13: Database-Driven Real-Time & Multi-Tenant Staging Suit
       db.assignLeads([lead.id], telecallerA.id, ownerA);
 
       const telecallerLeads = db.getLeads(telecallerA);
-      expect(telecallerLeads[0].phone).not.toBe('+91 98765 43210');
-      expect(telecallerLeads[0].phone).toContain('***');
+      expect(telecallerLeads[0].phone).toBeUndefined();
+      expect('phone' in telecallerLeads[0]).toBe(false);
     });
 
     it('blocks telecallers from bulk lead export and automatically logs a security violation incident', () => {

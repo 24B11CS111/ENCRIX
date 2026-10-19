@@ -130,12 +130,26 @@ export class TelephonyWebhookHandler {
     );
 
     if (targetCall) {
+      let canonicalRecordingPath = targetCall.recording_url;
+      if (recordingUrl) {
+        // Enforce SSRF validation and trusted Twilio host
+        const isTwilioOrStorage =
+          recordingUrl.startsWith('https://api.twilio.com') ||
+          recordingUrl.startsWith('https://recording.twilio.com') ||
+          recordingUrl.startsWith('https://storage.encrix.internal');
+
+        if (isTwilioOrStorage) {
+          // Persist the canonical private Storage path, NEVER the raw provider URL
+          canonicalRecordingPath = `${targetCall.organization_id}/${targetCall.id}.mp3`;
+        }
+      }
+
       db.updateCall(
         targetCall.id,
         {
           status: mappedStatus,
           duration_seconds: duration !== undefined ? duration : targetCall.duration_seconds,
-          recording_url: recordingUrl || targetCall.recording_url,
+          recording_url: canonicalRecordingPath,
           ended_at: mappedStatus === 'COMPLETED' ? new Date().toISOString() : undefined,
         },
         { role: 'ADMIN', organization_id: targetCall.organization_id } as Profile

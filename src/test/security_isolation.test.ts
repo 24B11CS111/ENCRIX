@@ -106,14 +106,15 @@ describe('LEADVAULT Security & Multi-Tenant Data Isolation (RLS)', () => {
     }).toThrow(/Forbidden/);
   });
 
-  it('DATA MASKING: Telecallers receive masked phone numbers and names', () => {
+  it('ZERO PHONE INVARIANT: Telecallers receive no phone digits and omitted phone property', () => {
     const arjunLeads = db.getLeads(telecallerArjun);
     expect(arjunLeads.length).toBeGreaterThan(0);
 
     const firstLead = arjunLeads[0];
 
-    // Phone must contain masking asterisks, e.g. ******3210
-    expect(firstLead.phone).toContain('***');
+    // Phone must be completely undefined and omitted
+    expect(firstLead.phone).toBeUndefined();
+    expect('phone' in firstLead).toBe(false);
 
     // Name must be formatted with initial, e.g. "Rahul K."
     if (firstLead.name.includes(' ')) {

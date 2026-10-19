@@ -662,10 +662,10 @@ describe('ENCRIX Phase 15: OTP-First Authentication & Verified Onboarding Suite'
       // 4. Owner assigns lead to telecaller
       db.assignLeads([lead.id], telecaller.id, owner);
 
-      // 5. Telecaller queries leads (must see MASKED phone)
+      // 5. Telecaller queries leads (must see ZERO phone digits - phone omitted)
       const tcLeads = db.getLeads(telecaller);
       const assignedLead = tcLeads.find((l) => l.id === lead.id)!;
-      expect(assignedLead.phone).toBe('+91 ******6655');
+      expect(assignedLead.phone).toBeUndefined();
 
       // 6. Telecaller initiates call via CallService
       const mockProvider = new MockTelephonyProvider();

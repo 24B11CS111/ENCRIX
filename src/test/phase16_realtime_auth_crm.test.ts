@@ -251,7 +251,7 @@ describe('ENCRIX Phase 16: Real-Time Production Authentication & Live CRM Test S
   });
 
   // 10. Telecaller realtime assignment
-  it('10. Telecaller realtime assignment: telecaller receives immediate event with masked phone when assigned', () => {
+  it('10. Telecaller realtime assignment: telecaller receives immediate event with ZERO phone exposure when assigned', () => {
     const telecaller = db.getProfiles({ role: 'ADMIN', organization_id: '' } as Profile).find((p) => p.role === 'TELECALLER')!;
     const owner = db.getProfiles({ role: 'ADMIN', organization_id: '' } as Profile).find((p) => p.role === 'OWNER')!;
 
@@ -276,8 +276,8 @@ describe('ENCRIX Phase 16: Real-Time Production Authentication & Live CRM Test S
     expect(deliveredEvent).not.toBeNull();
     const payload = (deliveredEvent as any)?.payload;
     expect(payload.assigned_to).toBe(telecaller.id);
-    expect(payload.phone).not.toBe(rawPhone);
-    expect(payload.phone).toContain('***');
+    expect(payload.phone).toBeUndefined();
+    expect('phone' in payload).toBe(false);
 
     unsub();
   });

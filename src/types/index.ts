@@ -187,7 +187,7 @@ export interface Lead {
   organization_id: string;
   lead_code: string;
   name: string;
-  phone: string; // Stored securely; masked for telecallers
+  phone?: string; // Stored securely on server; strictly omitted for telecallers (Zero-Phone Invariant)
   email?: string;
   source: string;
   status: LeadStatus;

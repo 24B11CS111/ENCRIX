@@ -17,10 +17,8 @@ export class MockTelephonyProvider implements ITelephonyProvider {
       callId,
       leadId: params.leadId,
       telecallerId: params.telecallerId,
-      maskedPhoneNumber: rawPhone
-        ? maskPhoneNumber(rawPhone)
-        : 'Masked (Carrier Direct)',
       status: 'INITIATED',
+      maskedPhoneNumber: undefined, // Zero-Phone Invariant: strictly zero phone digits returned to client
       startedAt: new Date(),
       durationSeconds: 0,
       isMuted: false,

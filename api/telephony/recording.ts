@@ -1,4 +1,10 @@
-import { authenticateServerRequest, getSupabaseServerClient } from '../_lib/supabaseServer';
+import {
+  authenticateServerRequest,
+  getSupabaseServerClient,
+  isRealSupabaseServerConfigured,
+} from '../_lib/supabaseServer';
+import { db } from '../../src/services/supabase/db';
+import { Profile } from '../../src/types';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') {
@@ -24,13 +30,26 @@ export default async function handler(req: any, res: any) {
     const supabase = getSupabaseServerClient();
 
     // 2. Fetch call record
-    const { data: call, error: callError } = await supabase
-      .from('calls')
-      .select('id, organization_id, lead_id, telecaller_id, recording_url')
-      .eq('id', callId)
-      .single();
+    let call: any = null;
+    if (isRealSupabaseServerConfigured()) {
+      const { data, error: callError } = await supabase
+        .from('calls')
+        .select('id, organization_id, lead_id, telecaller_id, recording_url')
+        .eq('id', callId)
+        .single();
 
-    if (callError || !call) {
+      if (!callError && data) {
+        call = data;
+      }
+    } else {
+      const allCalls = db.getCalls({ role: 'ADMIN', organization_id: '' } as Profile);
+      const found = allCalls.find((c) => c.id === callId);
+      if (found) {
+        call = found;
+      }
+    }
+
+    if (!call) {
       return res.status(404).json({ error: 'Call record not found' });
     }
 
@@ -48,43 +67,54 @@ export default async function handler(req: any, res: any) {
       return res.status(403).json({ error: 'Forbidden: Cannot access recordings belonging to another organization' });
     }
 
-    // 4. Role Authorization: If TELECALLER, verify assignment or initiator
+    // 4. Role Authorization: If TELECALLER, strictly verify they initiated this call
     if (profile.role === 'TELECALLER') {
-      const isInitiator = call.telecaller_id === profile.id;
-      let isAssigned = false;
-
-      if (!isInitiator && call.lead_id) {
-        const { data: lead } = await supabase
-          .from('leads')
-          .select('assigned_to')
-          .eq('id', call.lead_id)
-          .single();
-        if (lead && lead.assigned_to === profile.id) {
-          isAssigned = true;
-        }
-      }
-
-      if (!isInitiator && !isAssigned) {
+      if (call.telecaller_id !== profile.id) {
         await supabase.from('security_events').insert({
           organization_id: profile.organization_id,
           user_id: profile.id,
           user_name: profile.full_name,
           event_type: 'UNAUTHORIZED_RECORDING_ACCESS_ATTEMPT',
           severity: 'HIGH',
-          description: `Telecaller ${profile.full_name} attempted to access recording for unassigned call ${call.id}`,
-          metadata: { callId: call.id, telecallerId: profile.id },
+          description: `Telecaller ${profile.full_name} (${profile.id}) attempted to access recording for call ${call.id} initiated by another caller (${call.telecaller_id})`,
+          metadata: { callId: call.id, telecallerId: profile.id, callTelecallerId: call.telecaller_id },
         });
-        return res.status(403).json({ error: 'Forbidden: You can only access recordings of calls assigned to you' });
+        return res.status(403).json({ error: 'Forbidden: You can only access recordings of calls initiated by you' });
       }
     }
 
-    // 5. Generate Signed URL from private storage bucket with short expiration
+    // 5. Generate Signed URL from private storage bucket with short expiration (60 seconds)
+    // Canonical path: {organization_id}/{call_id}.mp3
     const filePath = `${call.organization_id}/${call.id}.mp3`;
-    const { data: signedData, error: signError } = await supabase.storage
-      .from('call-recordings')
-      .createSignedUrl(filePath, 60); // 60 seconds TTL
 
-    // 6. Log authorized recording access for compliance audit
+    let signedUrl: string | null = null;
+    if (isRealSupabaseServerConfigured()) {
+      const { data: signedData, error: signError } = await supabase.storage
+        .from('call-recordings')
+        .createSignedUrl(filePath, 60);
+
+      if (signError || !signedData?.signedUrl) {
+        return res.status(404).json({ error: 'Call recording file not found in storage or signing failed' });
+      }
+      signedUrl = signedData.signedUrl;
+    } else {
+      // In offline / test sandbox environment, verify recording exists
+      if (!call.recording_url) {
+        return res.status(404).json({ error: 'Call recording file not found in storage' });
+      }
+      // Fail closed: NEVER return a raw Twilio provider URL
+      if (call.recording_url.includes('api.twilio.com') || call.recording_url.includes('twilio.com')) {
+        return res.status(502).json({ error: 'Recording must be synced to private storage before access' });
+      }
+      signedUrl = `https://storage.encrix.internal/recordings/${filePath}?token=signed_mock_${Date.now()}`;
+    }
+
+    // Fail closed: Never return fallback to provider URL
+    if (!signedUrl) {
+      return res.status(404).json({ error: 'Call recording file not found in storage' });
+    }
+
+    // 6. Log authorized recording access for compliance audit (never log signed URLs or tokens)
     try {
       await supabase.from('security_events').insert({
         organization_id: profile.organization_id,
@@ -99,14 +129,9 @@ export default async function handler(req: any, res: any) {
       // Audit log error handled
     }
 
-    const finalUrl = signedData?.signedUrl || call.recording_url;
-    if (!finalUrl) {
-      return res.status(404).json({ error: 'Call recording file not found in storage' });
-    }
-
     return res.status(200).json({
       callId: call.id,
-      recordingUrl: finalUrl,
+      recordingUrl: signedUrl,
       expiresIn: 60,
     });
   } catch (err: any) {

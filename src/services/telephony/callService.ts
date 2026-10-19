@@ -60,7 +60,7 @@ export class CallService {
         callId: data.callId,
         leadId,
         telecallerId: callerProfile.id,
-        maskedPhoneNumber: data.maskedPhone,
+        maskedPhoneNumber: callerProfile.role === 'TELECALLER' ? undefined : data.maskedPhone,
         status: data.status || 'INITIATED',
         startedAt: new Date(),
         durationSeconds: 0,
@@ -142,6 +142,10 @@ export class CallService {
         provider: this.provider.name,
       },
     });
+
+    if (callerProfile.role === 'TELECALLER') {
+      delete session.maskedPhoneNumber;
+    }
 
     return {
       session,

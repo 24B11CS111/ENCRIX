@@ -17,7 +17,7 @@ CREATE INDEX IF NOT EXISTS idx_profiles_phone_verified ON public.profiles(phone_
 
 -- 2. ORGANIZATION INVITATIONS TABLE (Tenant-Scoped Telecaller Invitations)
 CREATE TABLE IF NOT EXISTS public.organization_invitations (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     phone_number VARCHAR(50) NOT NULL,
     full_name VARCHAR(255) NOT NULL,
@@ -69,7 +69,7 @@ CREATE POLICY "Service role full access on organization_invitations"
 
 -- 3. PENDING REGISTRATIONS TABLE (Server-Only Pending Owner Registrations)
 CREATE TABLE IF NOT EXISTS public.pending_registrations (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     phone_number VARCHAR(50) UNIQUE NOT NULL,
     company_name VARCHAR(255) NOT NULL,
     owner_name VARCHAR(255) NOT NULL,
@@ -98,7 +98,7 @@ CREATE POLICY "Service role only access to pending_registrations"
 
 -- 4. PHONE OTPS TABLE (Server-Side OTP Lifecycle Tracking)
 CREATE TABLE IF NOT EXISTS public.phone_otps (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     phone_number VARCHAR(50) NOT NULL,
     purpose VARCHAR(50) NOT NULL CHECK (purpose IN ('LOGIN', 'REGISTER', 'INVITATION')),
     otp_hash VARCHAR(255) NOT NULL,
