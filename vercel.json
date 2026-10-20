@@ -1,10 +1,4 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/follow-up-reminders",
-      "schedule": "*/5 * * * *"
-    }
-  ],
   "rewrites": [
     {
       "source": "/api/(.*)",
