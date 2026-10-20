@@ -2,9 +2,9 @@ import {
   authenticateServerRequest,
   getSupabaseServerClient,
   isRealSupabaseServerConfigured,
-} from '../_lib/supabaseServer';
-import { db } from '../../src/services/supabase/db';
-import { Profile } from '../../src/types';
+} from '../_lib/supabaseServer.js';
+import { db } from '../../src/services/supabase/db.js';
+import type { Profile } from '../../src/types/index.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') {

@@ -27,7 +27,10 @@ function localApiServerPlugin(): Plugin {
 
         try {
           const urlPath = req.url.split('?')[0];
-          const relativePath = urlPath.replace(/^\/api\//, '');
+          const requestedPath = urlPath.replace(/^\/api\//, '');
+          const relativePath = requestedPath === 'followups/reminders'
+            ? 'cron/follow-up-reminders'
+            : requestedPath;
           const tsFilePath = path.resolve(__dirname, 'api', `${relativePath}.ts`);
 
           if (!fs.existsSync(tsFilePath)) {

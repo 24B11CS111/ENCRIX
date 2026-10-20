@@ -1,13 +1,13 @@
-import { getSupabaseServerClient } from '../_lib/supabaseServer';
+import { getSupabaseServerClient } from '../_lib/supabaseServer.js';
 import {
   generateSecureOtp,
   hashOtp,
   sendVerificationEmail,
   OTP_CONFIG,
   serverOtpStore,
-} from '../_lib/otpServer';
-import { normalizeEmail } from '../../src/lib/emailNormalization';
-import { normalizePhoneNumber } from '../../src/lib/phoneNormalization';
+} from '../_lib/otpServer.js';
+import { normalizeEmail } from '../../src/lib/emailNormalization.js';
+import { normalizePhoneNumber } from '../../src/lib/phoneNormalization.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -96,7 +96,7 @@ export default async function handler(req: any, res: any) {
     try {
       const { data: recentOtps } = await supabase
         .from('email_otps')
-        .select('created_at, resend_after')
+        .select('created_at, resend_after, expires_at')
         .eq('email', normalizedEmail)
         .eq('purpose', purpose)
         .gt('created_at', new Date(now.getTime() - OTP_CONFIG.WINDOW_MS).toISOString())

@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { getRequiredServerSecret } from './serverSecret';
+import { getRequiredServerSecret } from './serverSecret.js';
 
 export interface SessionPayload {
   userId: string;

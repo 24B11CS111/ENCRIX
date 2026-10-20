@@ -1,4 +1,4 @@
-import {
+import type {
   Lead,
   Profile,
   Call,
@@ -22,11 +22,11 @@ import {
   OrganizationDistributionConfig,
   DistributionPreview,
   DistributionResult,
-  getDerivedFollowUpStatus,
   FollowUpStatus,
   CallOutcomeType,
   LeadPriority,
-} from '@/types';
+} from '../../types/index.js';
+import { getDerivedFollowUpStatus } from '../../types/index.js';
 import {
   sanitizeLeadForRole,
   sanitizeLeadsForRole,
@@ -34,13 +34,12 @@ import {
   maskName,
   scrubPhoneFromText,
   redactLongDigitsFromText,
-} from '@/lib/dataMasking';
-import { sanitizeFormulaInjection, sanitizeText } from '@/lib/validation';
-import { normalizePhoneNumber, formatMaskedPhone } from '@/lib/phoneNormalization';
-import { normalizeEmailAddress } from '@/lib/emailNormalization';
-import { generateNumericOtp, generateRandomToken, hashOtpCode, timingSafeCompare } from '@/lib/cryptoUtils';
-import { MAX_IMPORT_ROWS, IS_DEMO_MODE } from '@/lib/config';
-import { supabase, isRealSupabaseConfigured } from './client';
+} from '../../lib/dataMasking.js';
+import { sanitizeFormulaInjection, sanitizeText } from '../../lib/validation.js';
+import { normalizePhoneNumber, formatMaskedPhone } from '../../lib/phoneNormalization.js';
+import { normalizeEmailAddress } from '../../lib/emailNormalization.js';
+import { generateNumericOtp, generateRandomToken, hashOtpCode, timingSafeCompare } from '../../lib/cryptoUtils.js';
+import { MAX_IMPORT_ROWS, IS_DEMO_MODE } from '../../lib/config.js';
 import {
   DEMO_ORGS,
   DEMO_PROFILES,
@@ -50,7 +49,7 @@ import {
   DEMO_NOTIFICATIONS,
   DEMO_SECURITY_EVENTS,
   DEMO_ACTIVITY_LOGS,
-} from './demoData';
+} from './demoData.js';
 
 export type RealtimeEvent = {
   type: string;
@@ -389,38 +388,49 @@ class LeadVaultDatabase {
     const entry: SubscriptionEntry = { listener, profile: userProfile };
     this.subscriptions.add(entry);
 
-    // If real Supabase is configured and profile has organization_id, connect scoped Supabase Realtime channel
-    if (isRealSupabaseConfigured() && userProfile?.organization_id) {
+    // The browser-only Supabase client is loaded only for a browser Realtime subscription.
+    // Server API imports of this module never initialize the browser client.
+    if (typeof window !== 'undefined' && userProfile?.organization_id) {
       const orgId = userProfile.organization_id;
       if (!this.supabaseChannels.has(orgId)) {
-        try {
-          const channel = supabase
-            .channel(`encrix_org_${orgId}`)
-            .on(
-              'postgres_changes',
-              {
-                event: '*',
-                schema: 'public',
-                filter: `organization_id=eq.${orgId}`,
-              },
-              (payload) => {
-                this.notifyListeners({
-                  type:
-                    payload.eventType === 'INSERT'
-                      ? 'RECORD_INSERTED'
-                      : payload.eventType === 'UPDATE'
-                      ? 'RECORD_UPDATED'
-                      : 'RECORD_DELETED',
-                  payload,
-                  organization_id: orgId,
-                });
-              }
-            )
-            .subscribe();
-          this.supabaseChannels.set(orgId, channel);
-        } catch {
-          // Channel fallback
-        }
+        void import('./client.js')
+          .then(({ supabase, isRealSupabaseConfigured }) => {
+            if (
+              !isRealSupabaseConfigured() ||
+              !this.subscriptions.has(entry) ||
+              this.supabaseChannels.has(orgId)
+            ) {
+              return;
+            }
+
+            const channel = supabase
+              .channel(`encrix_org_${orgId}`)
+              .on(
+                'postgres_changes',
+                {
+                  event: '*',
+                  schema: 'public',
+                  filter: `organization_id=eq.${orgId}`,
+                },
+                (payload) => {
+                  this.notifyListeners({
+                    type:
+                      payload.eventType === 'INSERT'
+                        ? 'RECORD_INSERTED'
+                        : payload.eventType === 'UPDATE'
+                        ? 'RECORD_UPDATED'
+                        : 'RECORD_DELETED',
+                    payload,
+                    organization_id: orgId,
+                  });
+                }
+              )
+              .subscribe();
+            this.supabaseChannels.set(orgId, channel);
+          })
+          .catch(() => {
+            // Keep the local event subscription when browser Supabase Realtime is unavailable.
+          });
       }
     }
 

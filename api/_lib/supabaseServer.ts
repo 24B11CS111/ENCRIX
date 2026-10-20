@@ -35,7 +35,7 @@ export const isRealSupabaseServerConfigured = () => {
   );
 };
 
-import { verifySignedSessionToken } from './sessionServer';
+import { verifySignedSessionToken } from './sessionServer.js';
 
 export interface AuthContext {
   user: { id: string; email?: string } | null;

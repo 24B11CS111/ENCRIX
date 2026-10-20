@@ -1,7 +1,7 @@
-import { getSupabaseServerClient } from '../_lib/supabaseServer';
-import { verifyOtpHash, OTP_CONFIG, serverOtpStore } from '../_lib/otpServer';
-import { createSignedSessionToken } from '../_lib/sessionServer';
-import { normalizeEmail } from '../../src/lib/emailNormalization';
+import { getSupabaseServerClient } from '../_lib/supabaseServer.js';
+import { verifyOtpHash, OTP_CONFIG, serverOtpStore } from '../_lib/otpServer.js';
+import { createSignedSessionToken } from '../_lib/sessionServer.js';
+import { normalizeEmail } from '../../src/lib/emailNormalization.js';
 
 
 export default async function handler(req: any, res: any) {

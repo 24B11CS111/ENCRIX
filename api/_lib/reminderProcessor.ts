@@ -1,7 +1,7 @@
 import crypto from 'crypto';
-import { getSupabaseServerClient, isRealSupabaseServerConfigured } from './supabaseServer';
-import { isLiveEmailConfigured } from './otpServer';
-import { db } from '../../src/services/supabase/db';
+import { getSupabaseServerClient, isRealSupabaseServerConfigured } from './supabaseServer.js';
+import { isLiveEmailConfigured } from './otpServer.js';
+import { db } from '../../src/services/supabase/db.js';
 
 export interface ProcessRemindersOptions {
   referenceTime?: Date;

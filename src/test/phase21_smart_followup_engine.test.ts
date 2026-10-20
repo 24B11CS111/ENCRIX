@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { db } from '@/services/supabase/db';
 import { Profile, Lead, FollowUp, getDerivedFollowUpStatus } from '@/types';
 import cronReminderHandler from '../../api/cron/follow-up-reminders';
-import followUpRemindersAliasHandler from '../../api/followups/reminders';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
 
 // Mock HTTP Request/Response helper for Serverless API tests
@@ -640,7 +640,15 @@ describe('ENCRIX Phase 21: Smart Follow-Up Engine & Overdue Escalation', () => {
       expect(res.body.remindedCount).toBeGreaterThanOrEqual(1);
     });
 
-    it('authorizes endpoint via /api/followups/reminders alias with Owner signed session', async () => {
+    it('configures /api/followups/reminders as an alias to the secured cron endpoint', () => {
+      const config = JSON.parse(readFileSync('vercel.json', 'utf8'));
+      expect(config.rewrites[0]).toEqual({
+        source: '/api/followups/reminders',
+        destination: '/api/cron/follow-up-reminders',
+      });
+    });
+
+    it('authorizes the secured cron endpoint with an Owner signed session', async () => {
       const sessionToken = createSignedSessionToken({
         profileId: ownerA.id,
         userId: ownerA.user_id,
@@ -661,7 +669,7 @@ describe('ENCRIX Phase 21: Smart Follow-Up Engine & Overdue Escalation', () => {
         },
       });
 
-      await followUpRemindersAliasHandler(req, res);
+      await cronReminderHandler(req, res);
       expect(res.statusCode).toBe(200);
       expect(res.body.success).toBe(true);
     });

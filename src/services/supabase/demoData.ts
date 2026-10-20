@@ -1,4 +1,4 @@
-import {
+import type {
   Organization,
   Profile,
   Lead,
@@ -8,7 +8,7 @@ import {
   Notification,
   ActivityLog,
   SecurityEvent,
-} from '@/types';
+} from '../../types/index.js';
 
 export const DEMO_ORGS: Organization[] = [
   {

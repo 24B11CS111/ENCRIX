@@ -1,4 +1,4 @@
-import { getTwilioServerConfig } from '../_lib/twilioServer';
+import { getTwilioServerConfig } from '../_lib/twilioServer.js';
 
 export default async function handler(req: any, res: any) {
   const config = getTwilioServerConfig();

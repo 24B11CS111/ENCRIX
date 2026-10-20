@@ -1,8 +1,8 @@
-import { getSupabaseServerClient, isRealSupabaseServerConfigured } from '../_lib/supabaseServer';
-import { getTwilioServerConfig, verifyTwilioSignature } from '../_lib/twilioServer';
-import { downloadAndStoreRecording, validateTwilioRecordingUrl } from '../_lib/recordingPipeline';
-import { db } from '../../src/services/supabase/db';
-import { Profile } from '../../src/types';
+import { getSupabaseServerClient, isRealSupabaseServerConfigured } from '../_lib/supabaseServer.js';
+import { getTwilioServerConfig, verifyTwilioSignature } from '../_lib/twilioServer.js';
+import { downloadAndStoreRecording, validateTwilioRecordingUrl } from '../_lib/recordingPipeline.js';
+import { db } from '../../src/services/supabase/db.js';
+import type { Profile } from '../../src/types/index.js';
 
 // In-memory idempotency tracking for sandbox / offline execution
 const processedWebhookEvents = new Set<string>();

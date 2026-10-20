@@ -1,8 +1,8 @@
-import { authenticateServerRequest, isRealSupabaseServerConfigured } from '../_lib/supabaseServer';
+import { authenticateServerRequest, isRealSupabaseServerConfigured } from '../_lib/supabaseServer.js';
 import {
   processFollowUpReminders,
   timingSafeCompare,
-} from '../_lib/reminderProcessor';
+} from '../_lib/reminderProcessor.js';
 
 /**
  * Serverless Cron Endpoint for Follow-Up Reminders & Overdue Escalations

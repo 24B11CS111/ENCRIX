@@ -1,7 +1,7 @@
 import crypto from 'crypto';
-import { authenticateServerRequest, getSupabaseServerClient } from '../_lib/supabaseServer';
-import { normalizePhoneNumber } from '../../src/lib/phoneNormalization';
-import { normalizeEmail } from '../../src/lib/emailNormalization';
+import { authenticateServerRequest, getSupabaseServerClient } from '../_lib/supabaseServer.js';
+import { normalizePhoneNumber } from '../../src/lib/phoneNormalization.js';
+import { normalizeEmail } from '../../src/lib/emailNormalization.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {

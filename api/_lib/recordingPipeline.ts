@@ -1,5 +1,5 @@
-import { getSupabaseServerClient, isRealSupabaseServerConfigured } from './supabaseServer';
-import { getTwilioServerConfig } from './twilioServer';
+import { getSupabaseServerClient, isRealSupabaseServerConfigured } from './supabaseServer.js';
+import { getTwilioServerConfig } from './twilioServer.js';
 
 // Maximum supported recording size: 50 MB
 export const MAX_RECORDING_SIZE_BYTES = 52_428_800;

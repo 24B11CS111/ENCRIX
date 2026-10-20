@@ -2,9 +2,9 @@ import {
   authenticateServerRequest,
   getSupabaseServerClient,
   isRealSupabaseServerConfigured,
-} from '../_lib/supabaseServer';
-import { db } from '../../src/services/supabase/db';
-import { DistributionMode } from '../../src/types';
+} from '../_lib/supabaseServer.js';
+import { db } from '../../src/services/supabase/db.js';
+import type { DistributionMode } from '../../src/types/index.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET' && req.method !== 'POST' && req.method !== 'PUT') {

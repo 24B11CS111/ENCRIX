@@ -2,9 +2,9 @@ import {
   authenticateServerRequest,
   getSupabaseServerClient,
   isRealSupabaseServerConfigured,
-} from '../_lib/supabaseServer';
-import { getTwilioServerConfig, maskPhoneNumber } from '../_lib/twilioServer';
-import { db } from '../../src/services/supabase/db';
+} from '../_lib/supabaseServer.js';
+import { getTwilioServerConfig, maskPhoneNumber } from '../_lib/twilioServer.js';
+import { db } from '../../src/services/supabase/db.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {

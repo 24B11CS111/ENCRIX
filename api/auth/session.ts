@@ -2,8 +2,8 @@ import {
   authenticateServerRequest,
   getSupabaseServerClient,
   isRealSupabaseServerConfigured,
-} from '../_lib/supabaseServer';
-import { revokeSession } from '../_lib/sessionServer';
+} from '../_lib/supabaseServer.js';
+import { revokeSession } from '../_lib/sessionServer.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method === 'GET') {

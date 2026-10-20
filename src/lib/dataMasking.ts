@@ -1,4 +1,4 @@
-import { Lead, UserRole } from '@/types';
+import type { Lead, UserRole } from '../types/index.js';
 
 /**
  * Mask customer phone number according to enterprise security specs:

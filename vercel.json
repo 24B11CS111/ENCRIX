@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/api/followups/reminders",
+      "destination": "/api/cron/follow-up-reminders"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/$1"
     },
