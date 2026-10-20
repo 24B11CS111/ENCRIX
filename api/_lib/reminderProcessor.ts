@@ -119,27 +119,29 @@ export async function processFollowUpReminders(
   }
 
   // 3. Attempt Atomic Stored Procedure Execution (Postgres FOR UPDATE SKIP LOCKED)
-  try {
-    const { data: rpcData, error: rpcError } = await client.rpc(
-      'process_follow_up_reminders_cron',
-      {
-        p_reference_time: referenceTime.toISOString(),
-        p_target_org_id: targetOrgId || null,
-      }
-    );
-
-    if (!rpcError && rpcData && rpcData.success) {
-      return {
-        success: true,
-        timestamp: referenceTime.toISOString(),
-        remindedCount: rpcData.reminded_count || 0,
-        overdueCount: rpcData.overdue_count || 0,
-        escalatedCount: rpcData.escalated_count || 0,
-        emailStatus: evaluateEmailReminderStatus(),
-      };
+  const { data: rpcData, error: rpcError } = await client.rpc(
+    'process_follow_up_reminders_cron',
+    {
+      p_reference_time: referenceTime.toISOString(),
+      p_target_org_id: targetOrgId || null,
     }
-  } catch {
-    // If stored procedure is not yet deployed, seamlessly fall through to client-side atomic pipeline
+  );
+
+  if (!rpcError && rpcData?.success) {
+    return {
+      success: true,
+      timestamp: referenceTime.toISOString(),
+      remindedCount: rpcData.reminded_count || 0,
+      overdueCount: rpcData.overdue_count || 0,
+      escalatedCount: rpcData.escalated_count || 0,
+      emailStatus: evaluateEmailReminderStatus(),
+    };
+  }
+  if (rpcError && !['42883', 'PGRST202'].includes(rpcError.code || '')) {
+    throw new Error(`Database error executing follow-up reminder procedure: ${rpcError.message}`);
+  }
+  if (!rpcError && !rpcData?.success) {
+    throw new Error('Follow-up reminder procedure returned an unsuccessful result.');
   }
 
   // 4. Client-Side Atomic Claim Pipeline (Database-backed row-level locking via conditional updates)
@@ -355,68 +357,13 @@ export async function processFollowUpReminders(
       }
 
       // 4e. Milestone 3: Owner Overdue Escalation (>= 30m overdue)
-      // Completely independent of telecaller overdue notification
+      // This fallback uses separate PostgREST transactions, so it cannot atomically
+      // record the notification and escalation timestamp. Defer until the SQL RPC
+      // is deployed rather than risk a permanently claimed or duplicate escalation.
       if (isEscalationDue) {
-        // Atomic database claim
-        const { data: claim, error: claimErr } = await client
-          .from('follow_ups')
-          .update({
-            owner_alerted_at: refIso,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', fup.id)
-          .is('owner_alerted_at', null)
-          .select('id');
-
-        if (!claimErr && claim && claim.length > 0) {
-          try {
-            // Resolve active owner(s) strictly within fup.organization_id
-            const { data: owners, error: ownerErr } = await client
-              .from('profiles')
-              .select('id, organization_id, full_name, role, status')
-              .eq('organization_id', fup.organization_id)
-              .eq('role', 'OWNER')
-              .eq('status', 'ACTIVE');
-
-            if (!ownerErr && owners && owners.length > 0) {
-              for (const owner of owners) {
-                if (owner.organization_id !== fup.organization_id) continue;
-
-                await client.from('notifications').insert({
-                  organization_id: fup.organization_id,
-                  user_id: owner.id,
-                  type: 'FOLLOW_UP_OVERDUE',
-                  title: 'Overdue Lead Callback',
-                  message: `Lead ${leadCodeStr} is overdue for follow-up (assigned to agent). Review for escalation.`,
-                  link: '/owner/follow-ups',
-                  read: false,
-                });
-              }
-            }
-
-            await client.from('activity_logs').insert({
-              organization_id: fup.organization_id,
-              user_id: fup.assigned_to,
-              action: 'FOLLOWUP_REMINDER_SENT',
-              entity_type: 'follow_up',
-              entity_id: fup.id,
-              metadata: {
-                leadCode: lead.lead_code,
-                scheduledAt: fup.scheduled_at,
-                type: 'OWNER_ESCALATION',
-              },
-            });
-
-            escalatedCount++;
-          } catch (insertErr: any) {
-            await client
-              .from('follow_ups')
-              .update({ owner_alerted_at: null })
-              .eq('id', fup.id)
-              .eq('owner_alerted_at', refIso);
-            processingErrors.push(`Failed to dispatch owner escalation for follow-up ${fup.id}: ${insertErr.message}`);
-          }
-        }
+        processingErrors.push(
+            `Owner escalation for follow-up ${fup.id} was deferred because the atomic database procedure is unavailable.`
+        );
       }
     } catch (recordErr: any) {
       // Individual record failure must never abort processing for other tenant organizations
@@ -425,7 +372,7 @@ export async function processFollowUpReminders(
   }
 
   return {
-    success: true,
+    success: processingErrors.length === 0,
     timestamp: refIso,
     remindedCount,
     overdueCount,

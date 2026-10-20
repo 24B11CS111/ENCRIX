@@ -24,12 +24,13 @@ SELECT
     l.id,
     l.organization_id,
     l.lead_code,
-    -- Student Name Protection: Strip all digits and telephone delimiters; format First L. or fallback to 'Student'
-    CASE 
-        WHEN POSITION(' ' IN TRIM(REGEXP_REPLACE(l.name, '[0-9\-_./,()+]', '', 'g'))) > 0
-        THEN SUBSTRING(TRIM(REGEXP_REPLACE(l.name, '[0-9\-_./,()+]', '', 'g')) FROM 1 FOR POSITION(' ' IN TRIM(REGEXP_REPLACE(l.name, '[0-9\-_./,()+]', '', 'g')))) || 
-             SUBSTRING(SUBSTRING(TRIM(REGEXP_REPLACE(l.name, '[0-9\-_./,()+]', '', 'g')) FROM POSITION(' ' IN TRIM(REGEXP_REPLACE(l.name, '[0-9\-_./,()+]', '', 'g')) + 1) FROM 1 FOR 1) || '.'
-        ELSE COALESCE(NULLIF(TRIM(REGEXP_REPLACE(l.name, '[0-9\-_./,()+]', '', 'g')), ''), 'Student')
+    -- Remove phone digits and delimiters before exposing a first name and initial.
+    CASE
+        WHEN sanitized_name.clean_name = '' THEN 'Student'
+        WHEN POSITION(' ' IN sanitized_name.clean_name) = 0
+            THEN sanitized_name.clean_name
+        ELSE SPLIT_PART(sanitized_name.clean_name, ' ', 1) || ' ' ||
+             LEFT(SPLIT_PART(sanitized_name.clean_name, ' ', 2), 1) || '.'
     END AS name,
     '***@***.***' AS email,
     l.source,
@@ -69,6 +70,21 @@ SELECT
     l.created_at,
     l.updated_at
 FROM public.leads l
+CROSS JOIN LATERAL (
+    SELECT BTRIM(
+        REGEXP_REPLACE(
+            REGEXP_REPLACE(
+                REGEXP_REPLACE(COALESCE(l.name, ''), '[0-9]', '', 'g'),
+                '[-_./,()+]+',
+                ' ',
+                'g'
+            ),
+            '[[:space:]]+',
+            ' ',
+            'g'
+        )
+    ) AS clean_name
+) sanitized_name
 WHERE l.assigned_to = (SELECT id FROM public.profiles WHERE user_id = auth.uid());
 
 REVOKE ALL ON public.telecaller_leads_view FROM anon, PUBLIC;

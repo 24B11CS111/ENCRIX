@@ -27,7 +27,14 @@ import {
   CallOutcomeType,
   LeadPriority,
 } from '@/types';
-import { sanitizeLeadForRole, sanitizeLeadsForRole, maskPhoneNumber, maskName, scrubPhoneFromText } from '@/lib/dataMasking';
+import {
+  sanitizeLeadForRole,
+  sanitizeLeadsForRole,
+  maskPhoneNumber,
+  maskName,
+  scrubPhoneFromText,
+  redactLongDigitsFromText,
+} from '@/lib/dataMasking';
 import { sanitizeFormulaInjection, sanitizeText } from '@/lib/validation';
 import { normalizePhoneNumber, formatMaskedPhone } from '@/lib/phoneNormalization';
 import { normalizeEmailAddress } from '@/lib/emailNormalization';
@@ -169,14 +176,10 @@ class LeadVaultDatabase {
    * Session validation guard: Ensures caller account is not disabled/suspended
    */
   private ensureActive(profile: Profile): void {
-    if (profile.status === 'DISABLED') {
-      throw new Error('Forbidden: Account has been suspended. All access revoked.');
-    }
-    if (profile.status === 'SUSPENDED') {
-      throw new Error('Forbidden: Account is suspended. Application access denied.');
-    }
-    if (profile.status === 'PENDING_VERIFICATION') {
-      throw new Error('Forbidden: Account is pending phone verification.');
+    const isSandboxAdmin =
+      profile.role === 'ADMIN' && profile.organization_id === '' && !profile.user_id;
+    if (profile.status !== 'ACTIVE' && !isSandboxAdmin) {
+      throw new Error('Forbidden: Account has been suspended, disabled, or is inactive. Application access denied.');
     }
   }
 
@@ -195,72 +198,73 @@ class LeadVaultDatabase {
     this.notifyListeners(event);
     if (this.broadcastChannel) {
       try {
-        this.broadcastChannel.postMessage(event);
+        this.broadcastChannel.postMessage({
+          ...event,
+          payload: this.sanitizeRealtimeValueForTelecaller(event.payload),
+        });
       } catch {
         // Fallback
       }
     }
   }
 
+  private sanitizeRealtimeValueForTelecaller(value: unknown, key?: string): unknown {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.sanitizeRealtimeValueForTelecaller(item));
+    }
+    if (!value || typeof value !== 'object') {
+      if (typeof value === 'number') return Math.abs(value) >= 1_000_000 ? null : value;
+      if (typeof value !== 'string') return value;
+      if (key === 'name' || key === 'lead_name') return maskName(value);
+      if (key === 'email') return '***@***.***';
+      if (
+        key === 'lead_code' ||
+        key === 'id' ||
+        key === 'assigned_to' ||
+        key?.endsWith('_id') ||
+        key?.endsWith('_at')
+      ) {
+        return value;
+      }
+      return redactLongDigitsFromText(scrubPhoneFromText(value));
+    }
+
+    const sanitized: Record<string, unknown> = {};
+    const leadLike = 'phone' in value || 'assigned_to' in value || 'lead_code' in value;
+    for (const [childKey, childValue] of Object.entries(value)) {
+      if (/phone|mobile|contact|whatsapp|telephone/i.test(childKey)) continue;
+      if (leadLike && childKey === 'email') {
+        sanitized[childKey] = '***@***.***';
+        continue;
+      }
+      if (leadLike && ['father_name', 'mother_name', 'city', 'state'].includes(childKey)) {
+        sanitized[childKey] =
+          typeof childValue === 'string' ? childValue.replace(/\d/g, '') : childValue;
+        continue;
+      }
+      sanitized[childKey] = this.sanitizeRealtimeValueForTelecaller(childValue, childKey);
+    }
+    return sanitized;
+  }
+
   private sanitizeRealtimePayloadForTelecaller(event: RealtimeEvent): RealtimeEvent {
-    if (!event.payload || typeof event.payload !== 'object') {
-      return event;
+    const payload = this.sanitizeRealtimeValueForTelecaller(event.payload);
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      const lead = payload as Partial<Lead> & { lead?: Partial<Lead> };
+      if (lead.name && (lead.status || lead.lead_code)) {
+        return { ...event, payload: sanitizeLeadForRole(lead as Lead, 'TELECALLER') };
+      }
+      if (lead.lead && typeof lead.lead === 'object') {
+        return {
+          ...event,
+          payload: {
+            ...payload,
+            lead: sanitizeLeadForRole(lead.lead as Lead, 'TELECALLER'),
+          },
+        };
+      }
     }
-
-    try {
-      const clonedPayload = JSON.parse(JSON.stringify(event.payload));
-
-      // 1. Unconditionally strip all direct phone properties from telecaller realtime payloads
-      delete clonedPayload.phone;
-      delete clonedPayload.lead_phone;
-      delete clonedPayload.phone_number;
-      delete clonedPayload.raw_phone;
-      delete clonedPayload.customer_phone;
-      delete clonedPayload.masked_phone;
-      delete clonedPayload.maskedPhoneNumber;
-
-      // 2. Scrub any phone numbers from metadata
-      if (clonedPayload.metadata && typeof clonedPayload.metadata === 'object') {
-        delete clonedPayload.metadata.phone;
-        delete clonedPayload.metadata.phone_number;
-        delete clonedPayload.metadata.raw_phone;
-        delete clonedPayload.metadata.mobile;
-        delete clonedPayload.metadata.contact_phone;
-      }
-
-      // 3. Scrub any free-text phone references from notes
-      if (typeof clonedPayload.notes === 'string') {
-        clonedPayload.notes = scrubPhoneFromText(clonedPayload.notes);
-      }
-
-      // 4. If payload is a FollowUp object, mask lead name
-      if (clonedPayload.scheduled_at || clonedPayload.lead_id) {
-        if (clonedPayload.lead_name) {
-          clonedPayload.lead_name = maskName(clonedPayload.lead_name);
-        }
-      }
-
-      // 5. If payload is a Call object, mask lead name
-      if (clonedPayload.duration_seconds !== undefined || clonedPayload.telecaller_id) {
-        if (clonedPayload.lead_name) {
-          clonedPayload.lead_name = maskName(clonedPayload.lead_name);
-        }
-      }
-
-      // 6. If payload is a Lead object, run through strict role sanitizer
-      if (clonedPayload.name && (clonedPayload.status || clonedPayload.lead_code)) {
-        return { ...event, payload: sanitizeLeadForRole(clonedPayload, 'TELECALLER') };
-      }
-
-      // 7. If payload has a nested lead
-      if (clonedPayload.lead && typeof clonedPayload.lead === 'object') {
-        clonedPayload.lead = sanitizeLeadForRole(clonedPayload.lead, 'TELECALLER');
-      }
-
-      return { ...event, payload: clonedPayload };
-    } catch {
-      return event;
-    }
+    return { ...event, payload };
   }
 
   private notifyListeners(event: RealtimeEvent) {
@@ -268,6 +272,8 @@ class LeadVaultDatabase {
       try {
         // Tenant & User Isolation for Realtime Events (Section 11)
         if (sub.profile) {
+          if (sub.profile.status !== 'ACTIVE') return;
+
           // If event has organization_id, ensure listener is in same org or is ADMIN
           if (
             event.organization_id &&
@@ -288,7 +294,28 @@ class LeadVaultDatabase {
 
           // Strict Telecaller Assignment & Lead Isolation:
           if (sub.profile.role === 'TELECALLER') {
-            if (event.type === 'LEAD_CREATED' || event.type === 'LEAD_UPDATED') {
+            if (event.type.startsWith('RECORD_')) {
+              const change = event.payload as {
+                table?: string;
+                eventType?: string;
+                new?: Record<string, unknown>;
+                old?: Record<string, unknown>;
+              };
+              const row = change?.eventType === 'DELETE' || !change?.new || Object.keys(change.new).length === 0
+                ? change?.old
+                : change.new;
+              if (!row || row.organization_id !== sub.profile.organization_id) return;
+
+              if (
+                (change.table === 'leads' && row.assigned_to !== sub.profile.id) ||
+                (change.table === 'calls' && row.telecaller_id !== sub.profile.id) ||
+                (change.table === 'follow_ups' && row.assigned_to !== sub.profile.id) ||
+                (change.table === 'notifications' && row.user_id !== sub.profile.id) ||
+                !['leads', 'calls', 'follow_ups', 'notifications'].includes(change.table || '')
+              ) {
+                return;
+              }
+            } else if (event.type === 'LEAD_CREATED' || event.type === 'LEAD_UPDATED') {
               const lead = event.payload as Partial<Lead>;
               if (!lead || lead.assigned_to !== sub.profile.id) {
                 return;
@@ -548,6 +575,9 @@ class LeadVaultDatabase {
     profileData: Partial<Profile> & { full_name: string; role: UserRole; organization_id: string },
     currentProfile?: Profile
   ): Profile {
+    if (profileData.role === 'ADMIN') {
+      throw new Error('Privilege Violation: Global administrator access requires the platform administration flow.');
+    }
     if (currentProfile) {
       this.ensureActive(currentProfile);
       if (currentProfile.role !== 'OWNER' && currentProfile.role !== 'ADMIN') {
@@ -620,16 +650,14 @@ class LeadVaultDatabase {
     currentProfile: Profile
   ): Profile {
     this.ensureActive(currentProfile);
+    if (newRole === 'ADMIN') {
+      throw new Error('Forbidden: Global administrator access requires the platform administration flow.');
+    }
 
     // Strict Role Escalation Prevention:
     // Telecallers cannot change roles or self-promote
     if (currentProfile.role === 'TELECALLER') {
       throw new Error('Unauthorized: Telecallers cannot change user roles or self-promote.');
-    }
-
-    // Platform ADMIN role can only be assigned by existing ADMINs
-    if (newRole === 'ADMIN' && currentProfile.role !== 'ADMIN') {
-      throw new Error('Unauthorized: Platform ADMIN role can only be assigned by administrators.');
     }
 
     const index = this.profiles.findIndex((p) => p.id === profileId);
@@ -643,11 +671,6 @@ class LeadVaultDatabase {
     // Telecaller cannot become Owner (Section 23, test 18)
     if (target.role === 'TELECALLER' && newRole === 'OWNER' && currentProfile.role !== 'ADMIN') {
       throw new Error('Forbidden: Telecaller cannot be promoted to Owner.');
-    }
-
-    // Telecaller cannot become Admin (Section 23, test 19)
-    if (target.role === 'TELECALLER' && newRole === 'ADMIN' && currentProfile.role !== 'ADMIN') {
-      throw new Error('Forbidden: Telecaller cannot become Admin.');
     }
 
     this.profiles[index] = { ...target, role: newRole, updated_at: new Date().toISOString() };
@@ -712,11 +735,20 @@ class LeadVaultDatabase {
         );
         throw new Error('Privilege Violation: Self-elevation of user role is strictly prohibited.');
       }
+      if (updates.role === 'ADMIN') {
+        this.recordSecurityEvent(
+          {
+            event_type: 'ROLE_ESCALATION_ATTEMPT',
+            severity: 'CRITICAL',
+            description: `User ${currentProfile.full_name} attempted to grant global administrator access.`,
+            metadata: { targetProfileId: profileId },
+          },
+          currentProfile
+        );
+        throw new Error('Forbidden: Only the platform administration flow can grant global administrator access.');
+      }
       if (currentProfile.role !== 'ADMIN' && currentProfile.role !== 'OWNER') {
         throw new Error('Privilege Violation: Only Owners and Admins can modify user roles.');
-      }
-      if (target.role === 'TELECALLER' && (updates.role === 'OWNER' || updates.role === 'ADMIN') && currentProfile.role !== 'ADMIN') {
-        throw new Error('Privilege Violation: Telecaller role cannot be promoted to Owner or Admin.');
       }
     }
 

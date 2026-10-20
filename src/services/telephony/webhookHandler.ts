@@ -124,7 +124,11 @@ export class TelephonyWebhookHandler {
     }
 
     // 6. Update call record in database if present
-    const existingCalls = db.getCalls({ role: 'ADMIN', organization_id: '' } as Profile);
+    const existingCalls = db.getCalls({
+      role: 'ADMIN',
+      organization_id: '',
+      status: 'ACTIVE',
+    } as Profile);
     const targetCall = existingCalls.find(
       (c) => c.id === callSid || c.provider_call_id === callSid || (params.leadId && c.lead_id === params.leadId)
     );
@@ -152,7 +156,7 @@ export class TelephonyWebhookHandler {
           recording_url: canonicalRecordingPath,
           ended_at: mappedStatus === 'COMPLETED' ? new Date().toISOString() : undefined,
         },
-        { role: 'ADMIN', organization_id: targetCall.organization_id } as Profile
+        { role: 'ADMIN', organization_id: targetCall.organization_id, status: 'ACTIVE' } as Profile
       );
     }
 

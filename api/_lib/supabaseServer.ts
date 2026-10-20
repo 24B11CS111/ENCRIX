@@ -68,6 +68,13 @@ export async function authenticateServerRequest(req: any): Promise<AuthContext> 
   const sessionPayload = verifySignedSessionToken(token);
   if (sessionPayload) {
     if (!isRealSupabaseServerConfigured()) {
+      if (process.env.NODE_ENV === 'production') {
+        return {
+          user: null,
+          profile: null,
+          error: 'Server authentication is unavailable',
+        };
+      }
       return {
         user: { id: sessionPayload.userId, email: sessionPayload.email },
         profile: {
@@ -92,39 +99,32 @@ export async function authenticateServerRequest(req: any): Promise<AuthContext> 
         .eq('id', sessionPayload.profileId)
         .single();
 
-      if (!profError && dbProfile) {
-        if (dbProfile.status !== 'ACTIVE') {
-          return {
-            user: { id: dbProfile.user_id, email: dbProfile.email || sessionPayload.email },
-            profile: dbProfile,
-            error: 'User account is inactive or suspended',
-          };
-        }
+      if (profError || !dbProfile || dbProfile.user_id !== sessionPayload.userId) {
+        return {
+          user: null,
+          profile: null,
+          error: 'Unable to verify the current account status',
+        };
+      }
+      if (dbProfile.status !== 'ACTIVE') {
         return {
           user: { id: dbProfile.user_id, email: dbProfile.email || sessionPayload.email },
           profile: dbProfile,
-          error: null,
+          error: 'User account is inactive or suspended',
         };
       }
+      return {
+        user: { id: dbProfile.user_id, email: dbProfile.email || sessionPayload.email },
+        profile: dbProfile,
+        error: null,
+      };
     } catch {
-      // Supabase connection fallback for local isolated execution
+      return {
+        user: { id: sessionPayload.userId, email: sessionPayload.email },
+        profile: null,
+        error: 'Unable to verify the current account status',
+      };
     }
-
-    // Isolated fallback: Trusted cryptographic session token payload
-    return {
-      user: { id: sessionPayload.userId, email: sessionPayload.email },
-      profile: {
-        id: sessionPayload.profileId,
-        user_id: sessionPayload.userId,
-        organization_id: sessionPayload.organizationId,
-        full_name: sessionPayload.fullName,
-        role: sessionPayload.role,
-        status: 'ACTIVE',
-        phone_verified: true,
-        email: sessionPayload.email,
-      },
-      error: null,
-    };
   }
 
   if (!isRealSupabaseServerConfigured()) {
@@ -152,6 +152,9 @@ export async function authenticateServerRequest(req: any): Promise<AuthContext> 
     return { user, profile: null, error: 'Profile not found' };
   }
 
+  if (profile.status !== 'ACTIVE') {
+    return { user, profile, error: 'User account is inactive or suspended' };
+  }
+
   return { user, profile, error: null };
 }
-

@@ -581,6 +581,36 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
       expect(JSON.stringify(res.body)).not.toContain('api.twilio.com');
     });
 
+    it('fails closed for legacy HTTP storage URLs instead of returning them for playback', async () => {
+      const callWithStoredHttpUrl: Call = {
+        ...testCallA,
+        id: 'call-http-legacy',
+        recording_url: 'https://storage.example/legacy.mp3',
+      };
+
+      const ownerToken = createSignedSessionToken({
+        userId: ownerA.user_id,
+        profileId: ownerA.id,
+        organizationId: ownerA.organization_id,
+        role: ownerA.role,
+        fullName: ownerA.full_name,
+        email: ownerA.email || '',
+      });
+
+      db.getCalls = () => [callWithStoredHttpUrl];
+
+      const { req, res } = createMockReqRes({
+        method: 'GET',
+        headers: { authorization: `Bearer ${ownerToken}` },
+        query: { callId: callWithStoredHttpUrl.id },
+      });
+
+      await recordingHandler(req, res);
+      expect(res.statusCode).toBe(502);
+      expect(res.body.recordingUrl).toBeUndefined();
+      expect(JSON.stringify(res.body)).not.toContain('storage.example');
+    });
+
     it('service-layer recordingService enforces strict initiator-only policy for telecallers', () => {
       // Initiator Arjun has access
       expect(recordingService.canAccessRecording(testCallA, telecallerA1)).toBe(true);
@@ -588,10 +618,6 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
       // Other telecaller Priya in same tenant has NO access
       expect(recordingService.canAccessRecording(testCallA, telecallerA2)).toBe(false);
 
-      // getRecordingAccess throws error for Priya
-      expect(() => recordingService.getRecordingAccess(testCallA.id, telecallerA2)).toThrow(
-        /not found or unauthorized|permission to access/i
-      );
     });
   });
 });

@@ -48,25 +48,11 @@ export const TelecallerCallsPage: React.FC = () => {
       setLoadingAudioId(call.id);
       setPlaybackError(null);
 
-      let url = call.recording_url;
-      try {
-        const signed = await recordingService.fetchRecordingSignedUrl(call.id);
-        if (signed?.recordingUrl) {
-          url = signed.recordingUrl;
-        }
-      } catch {
-        // Fallback to call.recording_url
-      }
-
-      if (!url) {
-        throw new Error('Recording audio URL unavailable');
-      }
-
       if (audioRef.current) {
         audioRef.current.pause();
       }
 
-      const audio = new Audio(url);
+      const audio = await recordingService.createAuthorizedAudio(call.id);
       audioRef.current = audio;
       audio.onended = () => setPlayingId(null);
       audio.onerror = () => {
@@ -74,7 +60,7 @@ export const TelecallerCallsPage: React.FC = () => {
         setPlaybackError('Unable to stream recording audio.');
       };
 
-      await audio.play().catch(() => {});
+      await audio.play();
       setPlayingId(call.id);
     } catch (err: any) {
       setPlaybackError(err.message || 'Error accessing recording');
@@ -93,6 +79,12 @@ export const TelecallerCallsPage: React.FC = () => {
           Review your logged calls, durations, recorded interaction sessions and outcomes.
         </p>
       </div>
+
+      {playbackError && (
+        <p role="alert" className="text-sm text-rose-600">
+          {playbackError}
+        </p>
+      )}
 
       {/* CALLS LIST */}
       <div className="rounded-[12px] border border-[#DCE4EE] bg-white overflow-hidden shadow-sm">

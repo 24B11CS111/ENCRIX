@@ -83,10 +83,16 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // 5. Generate Signed URL from private storage bucket with short expiration (60 seconds)
-    // Canonical path: {organization_id}/{call_id}.mp3
+    // Only sign the canonical private-storage object; never follow legacy stored URLs.
     const filePath = `${call.organization_id}/${call.id}.mp3`;
+    if (!call.recording_url) {
+      return res.status(404).json({ error: 'Call recording file not found in storage' });
+    }
+    if (call.recording_url !== filePath) {
+      return res.status(502).json({ error: 'Recording must be synced to private storage before access' });
+    }
 
+    // Generate a short-lived signed URL only after the authorization checks above.
     let signedUrl: string | null = null;
     if (isRealSupabaseServerConfigured()) {
       const { data: signedData, error: signError } = await supabase.storage
@@ -98,14 +104,7 @@ export default async function handler(req: any, res: any) {
       }
       signedUrl = signedData.signedUrl;
     } else {
-      // In offline / test sandbox environment, verify recording exists
-      if (!call.recording_url) {
-        return res.status(404).json({ error: 'Call recording file not found in storage' });
-      }
-      // Fail closed: NEVER return a raw Twilio provider URL
-      if (call.recording_url.includes('api.twilio.com') || call.recording_url.includes('twilio.com')) {
-        return res.status(502).json({ error: 'Recording must be synced to private storage before access' });
-      }
+      // Offline / test sandbox emits a mock signed URL for canonical paths only.
       signedUrl = `https://storage.encrix.internal/recordings/${filePath}?token=signed_mock_${Date.now()}`;
     }
 

@@ -29,6 +29,7 @@ export const OwnerCallsPage: React.FC = () => {
   const [outcomeFilter, setOutcomeFilter] = useState('ALL');
   const [playingCallId, setPlayingCallId] = useState<string | null>(null);
   const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -68,31 +69,24 @@ export const OwnerCallsPage: React.FC = () => {
 
     try {
       setLoadingAudioId(call.id);
-      let url = call.recording_url;
-      try {
-        const signed = await recordingService.fetchRecordingSignedUrl(call.id);
-        if (signed?.recordingUrl) {
-          url = signed.recordingUrl;
-        }
-      } catch {
-        // Fallback
-      }
-
-      if (!url) return;
+      setPlaybackError(null);
 
       if (audioRef.current) {
         audioRef.current.pause();
       }
 
-      const audio = new Audio(url);
+      const audio = await recordingService.createAuthorizedAudio(call.id);
       audioRef.current = audio;
       audio.onended = () => setPlayingCallId(null);
-      audio.onerror = () => setPlayingCallId(null);
+      audio.onerror = () => {
+        setPlayingCallId(null);
+        setPlaybackError('Unable to stream recording audio.');
+      };
 
-      await audio.play().catch(() => {});
+      await audio.play();
       setPlayingCallId(call.id);
-    } catch {
-      // Audio error handled
+    } catch (err: unknown) {
+      setPlaybackError(err instanceof Error ? err.message : 'Error accessing recording');
     } finally {
       setLoadingAudioId(null);
     }
@@ -128,6 +122,12 @@ export const OwnerCallsPage: React.FC = () => {
           </p>
         </div>
       </div>
+
+      {playbackError && (
+        <p role="alert" className="text-sm text-rose-600">
+          {playbackError}
+        </p>
+      )}
 
       {/* FILTERS */}
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-white p-3 rounded-[12px] border border-[#DCE4EE] shadow-sm">

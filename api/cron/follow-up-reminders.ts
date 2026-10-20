@@ -110,15 +110,18 @@ export default async function handler(req: any, res: any) {
 
     const executionMs = Date.now() - startTime;
 
-    return res.status(200).json({
-      success: true,
-      message: 'Follow-up reminders and overdue escalations processed successfully.',
+    return res.status(result.success ? 200 : 500).json({
+      success: result.success,
+      message: result.success
+        ? 'Follow-up reminders and overdue escalations processed successfully.'
+        : 'Follow-up reminder processing completed with errors.',
       timestamp: result.timestamp,
       executionMs,
       remindedCount: result.remindedCount,
       overdueCount: result.overdueCount,
       escalatedCount: result.escalatedCount,
       emailStatus: result.emailStatus,
+      errors: result.errors,
     });
   } catch (error: any) {
     // Sanitize error logging: never log authorization tokens or customer contact information

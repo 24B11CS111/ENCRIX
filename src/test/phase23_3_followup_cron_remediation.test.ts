@@ -358,6 +358,45 @@ describe('ENCRIX Phase 23.3: Production-Safe Follow-Up Cron Remediation', () => 
       expect(res.statusCode).toBe(403);
       expect(res.body.error).toMatch(/Cannot process follow-up reminders for another organization/i);
     });
+
+    it('reports deferred owner escalation when only the non-atomic fallback is available', async () => {
+      const refTime = new Date('2026-10-19T10:00:00.000Z');
+      const state: MockDatabaseState = {
+        followUps: [{
+          id: 'fup-atomic-required',
+          organization_id: 'org-test',
+          lead_id: 'lead-1',
+          assigned_to: 'tc-1',
+          scheduled_at: '2026-10-19T09:00:00.000Z',
+          status: 'OVERDUE',
+          reminded_at: null,
+          overdue_notified_at: refTime.toISOString(),
+          owner_alerted_at: null,
+        }],
+        leads: [{ id: 'lead-1', organization_id: 'org-test', lead_code: 'LV-ATOMIC-01', status: 'NEW' }],
+        profiles: [
+          { id: 'tc-1', organization_id: 'org-test', role: 'TELECALLER', status: 'ACTIVE' },
+          { id: 'owner-1', organization_id: 'org-test', role: 'OWNER', status: 'ACTIVE' },
+        ],
+        notifications: [],
+        activityLogs: [],
+        securityEvents: [],
+      };
+      const { req, res } = createMockReqRes({
+        method: 'POST',
+        headers: { authorization: `Bearer ${validCronSecret}` },
+        body: { referenceTime: refTime.toISOString() },
+        supabaseClient: createMockSupabaseClient(state),
+      });
+
+      await cronHandler(req, res);
+
+      expect(res.statusCode).toBe(500);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors.join(' ')).toMatch(/atomic database procedure is unavailable/i);
+      expect(state.followUps[0].owner_alerted_at).toBeNull();
+      expect(state.notifications).toHaveLength(0);
+    });
   });
 
   // ==========================================================================
@@ -588,7 +627,7 @@ describe('ENCRIX Phase 23.3: Production-Safe Follow-Up Cron Remediation', () => 
       expect(state.notifications[0].title).toBe('Follow-Up Overdue');
     });
 
-    it('escalates to active Owner when follow-up is >= 30 minutes overdue without suppressing telecaller alert', async () => {
+    it('sends the telecaller alert but defers owner escalation without the atomic procedure', async () => {
       const refTime = new Date('2026-10-19T10:45:00.000Z');
       const state: MockDatabaseState = {
         followUps: [
@@ -617,16 +656,17 @@ describe('ENCRIX Phase 23.3: Production-Safe Follow-Up Cron Remediation', () => 
       const mockSupabase = createMockSupabaseClient(state);
       const result = await processFollowUpReminders({ referenceTime: refTime, supabaseClient: mockSupabase });
 
-      // Both telecaller overdue AND owner escalation are delivered!
+      // The fallback can deliver the telecaller alert, but must not claim an owner escalation.
       expect(result.overdueCount).toBe(1);
-      expect(result.escalatedCount).toBe(1);
+      expect(result.escalatedCount).toBe(0);
+      expect(result.success).toBe(false);
+      expect(state.followUps[0].owner_alerted_at).toBeNull();
 
       const tcNotif = state.notifications.find((n) => n.user_id === 'tc-1');
       const ownerNotif = state.notifications.find((n) => n.user_id === 'owner-1');
       expect(tcNotif).toBeDefined();
       expect(tcNotif.title).toBe('Follow-Up Overdue');
-      expect(ownerNotif).toBeDefined();
-      expect(ownerNotif.title).toBe('Overdue Lead Callback');
+      expect(ownerNotif).toBeUndefined();
     });
 
     it('never triggers reminders for COMPLETED or CANCELLED follow-ups', async () => {
@@ -757,6 +797,123 @@ describe('ENCRIX Phase 23.3: Production-Safe Follow-Up Cron Remediation', () => 
       expect(state.notifications).toHaveLength(1);
       expect(fup.reminded_at).toBe('2026-10-19T10:00:00.000Z');
     });
+
+    it('defers escalation without claiming it when the atomic procedure is unavailable', async () => {
+      const refTime = new Date('2026-10-19T10:00:00.000Z');
+      const state: MockDatabaseState = {
+        followUps: [{
+          id: 'fup-owner-later',
+          organization_id: 'org-test',
+          lead_id: 'lead-1',
+          assigned_to: 'tc-1',
+          scheduled_at: '2026-10-19T09:00:00.000Z',
+          status: 'OVERDUE',
+          reminded_at: null,
+          overdue_notified_at: refTime.toISOString(),
+          owner_alerted_at: null,
+        }],
+        leads: [{ id: 'lead-1', organization_id: 'org-test', lead_code: 'LV-OWNER-LATER', status: 'NEW' }],
+        profiles: [{ id: 'tc-1', organization_id: 'org-test', role: 'TELECALLER', status: 'ACTIVE' }],
+        notifications: [],
+        activityLogs: [],
+        securityEvents: [],
+      };
+
+      const noOwnerResult = await processFollowUpReminders({
+        referenceTime: refTime,
+        supabaseClient: createMockSupabaseClient(state),
+      });
+      expect(noOwnerResult.success).toBe(false);
+      expect(noOwnerResult.escalatedCount).toBe(0);
+      expect(noOwnerResult.errors?.join(' ')).toMatch(/atomic database procedure is unavailable/i);
+      expect(state.followUps[0].owner_alerted_at).toBeNull();
+
+      state.profiles.push({
+        id: 'owner-1',
+        organization_id: 'org-test',
+        role: 'OWNER',
+        status: 'ACTIVE',
+      });
+      const activeOwnerResult = await processFollowUpReminders({
+        referenceTime: refTime,
+        supabaseClient: createMockSupabaseClient(state),
+      });
+      expect(activeOwnerResult.success).toBe(false);
+      expect(activeOwnerResult.escalatedCount).toBe(0);
+      expect(state.followUps[0].owner_alerted_at).toBeNull();
+      expect(state.notifications).toHaveLength(0);
+    });
+
+    it('does not claim or attempt owner notifications outside the atomic procedure', async () => {
+      const refTime = new Date('2026-10-19T10:00:00.000Z');
+      const state: MockDatabaseState = {
+        followUps: [{
+          id: 'fup-owner-failure',
+          organization_id: 'org-test',
+          lead_id: 'lead-1',
+          assigned_to: 'tc-1',
+          scheduled_at: '2026-10-19T09:00:00.000Z',
+          status: 'OVERDUE',
+          reminded_at: null,
+          overdue_notified_at: refTime.toISOString(),
+          owner_alerted_at: null,
+        }],
+        leads: [{ id: 'lead-1', organization_id: 'org-test', lead_code: 'LV-OWNER-FAIL', status: 'NEW' }],
+        profiles: [
+          { id: 'tc-1', organization_id: 'org-test', role: 'TELECALLER', status: 'ACTIVE' },
+          { id: 'owner-1', organization_id: 'org-test', role: 'OWNER', status: 'ACTIVE' },
+        ],
+        notifications: [],
+        activityLogs: [],
+        securityEvents: [],
+      };
+
+      const result = await processFollowUpReminders({
+        referenceTime: refTime,
+        supabaseClient: createMockSupabaseClient(state, { failNotificationInsert: true }),
+      });
+      expect(result.escalatedCount).toBe(0);
+      expect(result.success).toBe(false);
+      expect(result.errors?.join(' ')).toMatch(/atomic database procedure is unavailable/i);
+      expect(state.followUps[0].owner_alerted_at).toBeNull();
+      expect(state.notifications).toHaveLength(0);
+    });
+
+    it('does not race concurrent workers when the atomic database procedure is unavailable', async () => {
+      const refTime = new Date('2026-10-19T10:00:00.000Z');
+      const state: MockDatabaseState = {
+        followUps: [{
+          id: 'fup-owner-concurrent',
+          organization_id: 'org-test',
+          lead_id: 'lead-1',
+          assigned_to: 'tc-1',
+          scheduled_at: '2026-10-19T09:00:00.000Z',
+          status: 'OVERDUE',
+          reminded_at: null,
+          overdue_notified_at: refTime.toISOString(),
+          owner_alerted_at: null,
+        }],
+        leads: [{ id: 'lead-1', organization_id: 'org-test', lead_code: 'LV-OWNER-CONCURRENT', status: 'NEW' }],
+        profiles: [
+          { id: 'tc-1', organization_id: 'org-test', role: 'TELECALLER', status: 'ACTIVE' },
+          { id: 'owner-1', organization_id: 'org-test', role: 'OWNER', status: 'ACTIVE' },
+        ],
+        notifications: [],
+        activityLogs: [],
+        securityEvents: [],
+      };
+      const mockClient = createMockSupabaseClient(state);
+      const [first, second] = await Promise.all([
+        processFollowUpReminders({ referenceTime: refTime, supabaseClient: mockClient }),
+        processFollowUpReminders({ referenceTime: refTime, supabaseClient: mockClient }),
+      ]);
+
+      expect(first.escalatedCount + second.escalatedCount).toBe(0);
+      expect(first.success).toBe(false);
+      expect(second.success).toBe(false);
+      expect(state.notifications).toHaveLength(0);
+      expect(state.followUps[0].owner_alerted_at).toBeNull();
+    });
   });
 
   // ==========================================================================
@@ -853,6 +1010,27 @@ describe('ENCRIX Phase 23.3: Production-Safe Follow-Up Cron Remediation', () => 
       expect(sql).toMatch(/SECURITY DEFINER[\s\S]*?SET search_path = public, pg_temp/i);
       expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.process_follow_up_reminders_cron[\s\S]*?FROM PUBLIC, anon, authenticated/i);
       expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.process_follow_up_reminders_cron[\s\S]*?TO service_role/i);
+    });
+
+    it('Phase 23.7 migration records owner escalation only after inserting notifications', () => {
+      const sql = fs.readFileSync(
+        path.resolve(
+          process.cwd(),
+          'supabase',
+          'migrations',
+          '20261021000000_phase23_7_production_blocker_remediation.sql'
+        ),
+        'utf-8'
+      );
+      const ownerEscalation = sql.slice(sql.indexOf('IF v_fup.owner_alerted_at IS NULL'));
+      const activeOwnerLookup = ownerEscalation.indexOf("AND status = 'ACTIVE'");
+      const notificationInsert = ownerEscalation.indexOf('INSERT INTO public.notifications');
+      const claimTimestamp = ownerEscalation.indexOf('SET owner_alerted_at = p_reference_time');
+
+      expect(sql).toMatch(/FOR UPDATE OF f SKIP LOCKED/i);
+      expect(activeOwnerLookup).toBeGreaterThanOrEqual(0);
+      expect(notificationInsert).toBeGreaterThan(activeOwnerLookup);
+      expect(claimTimestamp).toBeGreaterThan(notificationInsert);
     });
 
     it('migration includes explicit rollback instructions in comments', () => {

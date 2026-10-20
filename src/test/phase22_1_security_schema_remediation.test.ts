@@ -387,23 +387,29 @@ describe('Phase 22.1: Security-Critical Schema Remediation & Zero Phone Hardenin
       (db as any).emit(
         'RECORD_INSERTED',
         {
-          id: 'lead-rt-test',
-          organization_id: orgA,
-          name: 'Priya Sharma',
-          phone: '+91 9998887776',
-          lead_phone: '+91 9998887776',
-          notes: 'Direct phone: 9998887776',
-          metadata: { phone: '+91 9998887776' },
+          table: 'leads',
+          eventType: 'INSERT',
+          new: {
+            id: 'lead-rt-test',
+            organization_id: orgA,
+            assigned_to: telecallerA.id,
+            name: 'Priya Sharma',
+            phone: '+91 9998887776',
+            lead_phone: '+91 9998887776',
+            notes: 'Direct phone: 9998887776',
+            metadata: { phone: '+91 9998887776' },
+          },
+          old: {},
         },
         { organization_id: orgA, target_user_id: telecallerA.id }
       );
 
       expect(receivedPayload).not.toBeNull();
-      expect(receivedPayload.phone).toBeUndefined();
-      expect(receivedPayload.lead_phone).toBeUndefined();
-      expect('phone' in receivedPayload).toBe(false);
-      expect(receivedPayload.notes).toContain('[PHONE PROTECTED]');
-      expect(receivedPayload.metadata?.phone).toBeUndefined();
+      expect(receivedPayload.new.phone).toBeUndefined();
+      expect(receivedPayload.new.lead_phone).toBeUndefined();
+      expect('phone' in receivedPayload.new).toBe(false);
+      expect(receivedPayload.new.notes).toContain('[PHONE PROTECTED]');
+      expect(receivedPayload.new.metadata?.phone).toBeUndefined();
 
       unsub();
     });
@@ -413,6 +419,46 @@ describe('Phase 22.1: Security-Critical Schema Remediation & Zero Phone Hardenin
   // SUITE 3: TENANT ISOLATION & PRIVILEGE PROTECTION
   // ==========================================================================
   describe('3. Tenant Isolation and Privilege Protection', () => {
+    it('prevents an Owner from granting global ADMIN, including to another Owner', () => {
+      const otherOwner = db.createProfile({
+        id: 'usr-owner-b',
+        user_id: 'auth-owner-b',
+        organization_id: orgA,
+        full_name: 'Second Owner',
+        role: 'OWNER',
+      });
+
+      expect(() => {
+        db.updateProfile(otherOwner.id, { role: 'ADMIN' }, ownerA);
+      }).toThrow(/platform administration flow/i);
+      expect((db as any).profiles.find((profile: Profile) => profile.id === otherOwner.id).role).toBe('OWNER');
+    });
+
+    it('prevents an Owner from promoting a Telecaller to global ADMIN', () => {
+      expect(() => {
+        db.updateProfile(telecallerA.id, { role: 'ADMIN' }, ownerA);
+      }).toThrow(/platform administration flow/i);
+    });
+
+    it('prevents creating or assigning global ADMIN outside the platform flow', () => {
+      expect(() =>
+        db.createProfile({
+          id: 'usr-illegal-admin',
+          organization_id: orgA,
+          full_name: 'Illegal Admin',
+          role: 'ADMIN',
+        }, ownerA)
+      ).toThrow(/platform administration flow/i);
+
+      expect(() => db.updateProfileRole(ownerA.id, 'ADMIN', ownerA)).toThrow(/platform administration flow/i);
+    });
+
+    it('preserves permitted Owner-to-Telecaller role changes within the organization', () => {
+      const updated = db.updateProfile(telecallerA.id, { role: 'OWNER' }, ownerA);
+      expect(updated.role).toBe('OWNER');
+      expect(updated.organization_id).toBe(orgA);
+    });
+
     it('prevents self-elevation of user role (Telecaller cannot elevate to OWNER or ADMIN)', () => {
       expect(() => {
         db.updateProfile(telecallerA.id, { role: 'OWNER' }, telecallerA);

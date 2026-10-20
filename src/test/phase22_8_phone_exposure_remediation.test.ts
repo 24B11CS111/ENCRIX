@@ -365,12 +365,21 @@ describe('ENCRIX Phase 22.8: Final Phone-Exposure Remediation', () => {
 
     it('forward migration hardens telecaller_leads_view for student name and chunked academic phone numbers', () => {
       const sql = fs.readFileSync(migrationPath, 'utf-8');
+      const viewSql = sql.slice(
+        sql.indexOf('CREATE OR REPLACE VIEW public.telecaller_leads_view'),
+        sql.indexOf('GRANT SELECT ON public.telecaller_leads_view')
+      );
 
-      // 1. Name digit scrubbing
-      expect(sql).toContain("REGEXP_REPLACE(l.name, '[0-9\\-_./,()+]', '', 'g')");
-      expect(sql).toMatch(/'Student'/i);
+      expect(viewSql).toContain("COALESCE(l.name, '')");
+      expect(viewSql).toContain("REGEXP_REPLACE(COALESCE(l.name, ''), '[0-9]', '', 'g')");
+      expect(viewSql).toContain("'[-_./,()+]+'");
+      expect(viewSql).toContain("'[[:space:]]+'");
+      expect(viewSql).toMatch(/WHEN sanitized_name\.clean_name = '' THEN 'Student'/i);
+      expect(viewSql).toMatch(/SPLIT_PART\(sanitized_name\.clean_name, ' ', 1\)/i);
+      expect(viewSql).not.toMatch(/SUBSTRING\(.*FROM POSITION\(/is);
+      expect(viewSql).not.toMatch(/^\s*l\.phone\b/im);
 
-      // 2. Academic chunked phone number redaction
+      // Academic chunked phone number redaction
       expect(sql).toContain("REGEXP_REPLACE(l.school_or_college, '((?:\\+?\\(?|[0-9])[\\d\\s\\-_./,()]{4,}[0-9])', '[REDACTED]', 'g')");
       expect(sql).toContain("REGEXP_REPLACE(l.course_interest, '((?:\\+?\\(?|[0-9])[\\d\\s\\-_./,()]{4,}[0-9])', '[REDACTED]', 'g')");
     });

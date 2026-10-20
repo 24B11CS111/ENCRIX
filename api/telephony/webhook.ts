@@ -217,7 +217,7 @@ export default async function handler(req: any, res: any) {
       db.updateCall(
         existingCall.id,
         updatePayload,
-        { role: 'ADMIN', organization_id: existingCall.organization_id } as Profile
+        { role: 'ADMIN', organization_id: existingCall.organization_id, status: 'ACTIVE' } as Profile
       );
       updatedCall = { ...existingCall, ...updatePayload };
     }

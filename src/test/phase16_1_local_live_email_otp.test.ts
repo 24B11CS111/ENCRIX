@@ -241,7 +241,11 @@ describe('ENCRIX Phase 16.1: Local Live Email OTP Verification Suite', () => {
   describe('5. Telephony Isolation Preservation', () => {
     it('preserves Twilio telephony calling structures without breaking email authentication', () => {
       expect(process.env.TELEPHONY_PROVIDER || 'mock').toBeDefined();
-      const calls = db.getCalls({ role: 'ADMIN', organization_id: 'org-vertex-001' } as Profile);
+      const calls = db.getCalls({
+        role: 'ADMIN',
+        organization_id: 'org-vertex-001',
+        status: 'ACTIVE',
+      } as Profile);
       expect(Array.isArray(calls)).toBe(true);
     });
   });

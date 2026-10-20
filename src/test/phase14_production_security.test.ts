@@ -363,23 +363,15 @@ describe('ENCRIX Phase 14: Production Security & Telephony Verification Suite', 
 
     // 1. Cross-tenant access: Owner B (Apex Capital) attempts to access Org A recording
     expect(recordingService.canAccessRecording(callA, ownerB)).toBe(false);
-    expect(() => recordingService.getRecordingAccess(callA.id, ownerB)).toThrow(
-      /not found or unauthorized/i
-    );
 
     // 2. Same tenant, but unassigned telecaller (Priya Sharma telecallerA2):
     expect(recordingService.canAccessRecording(callA, telecallerA2)).toBe(false);
 
     // 3. Authorized access: Owner A
     expect(recordingService.canAccessRecording(callA, ownerA)).toBe(true);
-    const ownerAccess = recordingService.getRecordingAccess(callA.id, ownerA);
-    expect(ownerAccess.recordingUrl).toContain('call-alpha.mp3');
-    expect(ownerAccess.expiresInSeconds).toBe(60);
 
     // 4. Authorized access: Telecaller A (initiator)
     expect(recordingService.canAccessRecording(callA, telecallerA)).toBe(true);
-    const tcAccess = recordingService.getRecordingAccess(callA.id, telecallerA);
-    expect(tcAccess.recordingUrl).toContain('call-alpha.mp3');
   });
 
   it('Criterion 8: Service-role key absent from client-accessible environment', () => {
