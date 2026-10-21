@@ -3,6 +3,11 @@ import { verifyOtpHash, OTP_CONFIG, serverOtpStore } from '../_lib/otpServer.js'
 import { createSignedSessionToken } from '../_lib/sessionServer.js';
 import { normalizeEmail } from '../../src/lib/emailNormalization.js';
 
+function safeDatabaseErrorCode(error: any): string {
+  return typeof error?.code === 'string' && /^[A-Z0-9_]+$/i.test(error.code)
+    ? error.code
+    : 'unknown';
+}
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -37,6 +42,7 @@ export default async function handler(req: any, res: any) {
     // 1. Fetch active OTP record
     let otpRecord: any = null;
     let pendingReg: any = null;
+    let registrationLookupStatus: 'not_found' | 'query_error' | 'row_found' = 'not_found';
 
     if (purpose === 'REGISTER') {
       try {
@@ -46,12 +52,23 @@ export default async function handler(req: any, res: any) {
           .eq('email', normalizedEmail)
           .maybeSingle();
 
-        if (!regErr && reg) {
+        if (regErr) {
+          registrationLookupStatus = 'query_error';
+          console.error('[verify-otp] Pending registration lookup failed', {
+            stage: 'pending_registrations.select',
+            code: safeDatabaseErrorCode(regErr),
+          });
+        } else if (reg) {
+          registrationLookupStatus = 'row_found';
           pendingReg = reg;
           otpRecord = reg;
         }
-      } catch {
-        // Query error handled by fallback check
+      } catch (lookupError: any) {
+        registrationLookupStatus = 'query_error';
+        console.error('[verify-otp] Pending registration lookup failed', {
+          stage: 'pending_registrations.select',
+          code: safeDatabaseErrorCode(lookupError),
+        });
       }
 
       if (!otpRecord) {
@@ -74,6 +91,10 @@ export default async function handler(req: any, res: any) {
       }
 
       if (!otpRecord) {
+        console.warn('[verify-otp] Registration verification state unavailable', {
+          databaseLookup: registrationLookupStatus,
+          memoryFallback: 'miss',
+        });
         return res.status(400).json({ error: 'No pending registration found for this email address.' });
       }
     } else {

@@ -9,6 +9,14 @@ import {
 import { normalizeEmail } from '../../src/lib/emailNormalization.js';
 import { normalizePhoneNumber } from '../../src/lib/phoneNormalization.js';
 
+function logSafeFailure(stage: string, error: any) {
+  const code = typeof error?.code === 'string' && /^[A-Z0-9_]+$/i.test(error.code)
+    ? error.code
+    : 'unknown';
+  const status = Number.isInteger(error?.status) ? error.status : undefined;
+  console.error('[send-otp] Registration persistence failed', { stage, code, status });
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed. Use POST.' });
@@ -73,7 +81,7 @@ export default async function handler(req: any, res: any) {
 
         invitationRecord = inv;
       } catch (invLookupErr: any) {
-        console.error('[send-otp] Invitation lookup error:', invLookupErr?.message || invLookupErr);
+        logSafeFailure('organization_invitations.select', invLookupErr);
       }
     }
 
@@ -151,7 +159,7 @@ export default async function handler(req: any, res: any) {
       }
 
       try {
-        await supabase.from('pending_registrations').upsert(
+        const { error: registrationError } = await supabase.from('pending_registrations').upsert(
           {
             email: normalizedEmail,
             phone_number: optionalPhone,
@@ -165,8 +173,21 @@ export default async function handler(req: any, res: any) {
           },
           { onConflict: 'email' }
         );
-      } catch {
-        // Supabase offline/mock fallback
+        if (registrationError) {
+          logSafeFailure('pending_registrations.upsert', registrationError);
+          if (process.env.NODE_ENV === 'production') {
+            return res.status(503).json({
+              error: 'Registration verification could not be prepared. Please try again shortly.',
+            });
+          }
+        }
+      } catch (registrationError: any) {
+        logSafeFailure('pending_registrations.upsert', registrationError);
+        if (process.env.NODE_ENV === 'production') {
+          return res.status(503).json({
+            error: 'Registration verification could not be prepared. Please try again shortly.',
+          });
+        }
       }
     }
 
@@ -208,7 +229,7 @@ export default async function handler(req: any, res: any) {
     try {
       await sendVerificationEmail(normalizedEmail, rawOtp);
     } catch (emailErr: any) {
-      console.error('[send-otp] Email dispatch failed for', normEmail.masked, ':', emailErr?.message || emailErr);
+      logSafeFailure('email.dispatch', emailErr);
 
       // Invalidate the un-sent OTP from memory and database immediately
       serverOtpStore.delete(`${normalizedEmail}:${purpose}`);
@@ -260,7 +281,7 @@ export default async function handler(req: any, res: any) {
       expiresInSeconds: OTP_CONFIG.EXPIRY_MS / 1000,
     });
   } catch (err: any) {
-    console.error('[send-otp] Unexpected handler exception:', err?.message || err);
+    logSafeFailure('handler', err);
     const safeMessage = err?.message || 'Unable to send verification code. Please try again.';
     const statusCode = safeMessage.startsWith('BLOCKED') ? 503 : 500;
     return res.status(statusCode).json({
