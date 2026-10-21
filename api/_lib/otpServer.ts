@@ -244,7 +244,7 @@ export async function sendVerificationEmail(
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          from: process.env.RESEND_FROM_EMAIL || 'ENCRIX Security <auth@encrix.io>',
+          from: process.env.RESEND_FROM_EMAIL || 'ENCRIX <auth@hrixofficial.in>',
           to: [normalized],
           subject,
           text,

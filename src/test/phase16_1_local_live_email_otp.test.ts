@@ -78,7 +78,7 @@ describe('ENCRIX Phase 16.1: Local Live Email OTP Verification Suite', () => {
   describe('2. Real Email Provider Dispatch & Error Propagation', () => {
     it('dispatches to Resend API endpoint with correct authorization and payload when configured', async () => {
       process.env.RESEND_API_KEY = 'synthetic-resend-api-key-not-a-credential';
-      process.env.RESEND_FROM_EMAIL = 'ENCRIX Security <auth@encrix.io>';
+      process.env.RESEND_FROM_EMAIL = 'ENCRIX <auth@hrixofficial.in>';
 
       let capturedUrl = '';
       let capturedHeaders: Record<string, string> = {};
@@ -102,9 +102,35 @@ describe('ENCRIX Phase 16.1: Local Live Email OTP Verification Suite', () => {
       expect(capturedUrl).toBe('https://api.resend.com/emails');
       expect(capturedHeaders['Authorization']).toBe(`Bearer ${process.env.RESEND_API_KEY}`);
       expect(capturedBody.to).toEqual(['ceo@enterprise.com']);
-      expect(capturedBody.from).toBe('ENCRIX Security <auth@encrix.io>');
+      expect(capturedBody.from).toBe('ENCRIX <auth@hrixofficial.in>');
       expect(capturedBody.subject).toBe('Your ENCRIX verification code');
       expect(capturedBody.html).toContain('654321');
+    });
+
+    it('uses the verified-domain default sender when RESEND_FROM_EMAIL is unset and keeps OTP email delivery intact', async () => {
+      process.env.RESEND_API_KEY = 'synthetic-resend-api-key-not-a-credential';
+      delete process.env.RESEND_FROM_EMAIL;
+      const otp = generateSecureOtp();
+
+      let capturedBody: any = null;
+      global.fetch = vi.fn().mockImplementation(async (_url, init) => {
+        capturedBody = JSON.parse(init?.body as string);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'resend_email_id_default_sender' }),
+        };
+      });
+
+      const result = await sendVerificationEmail('ceo@enterprise.com', otp);
+
+      expect(result).toEqual({ success: true, provider: 'RESEND' });
+      expect(capturedBody.from).toBe('ENCRIX <auth@hrixofficial.in>');
+      expect(capturedBody.to).toEqual(['ceo@enterprise.com']);
+      expect(capturedBody.subject).toBe('Your ENCRIX verification code');
+      expect(capturedBody.html).toContain(otp);
+      expect(JSON.stringify(result)).not.toContain(otp);
+      expect(JSON.stringify(result)).not.toContain('synthetic-resend-api-key-not-a-credential');
     });
 
     it('propagates Resend API delivery error messages transparently without leaking secrets', async () => {

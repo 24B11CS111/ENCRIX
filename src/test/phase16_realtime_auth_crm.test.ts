@@ -32,7 +32,7 @@ describe('ENCRIX Phase 16: Real-Time Production Authentication & Live CRM Test S
     const originalFrom = process.env.RESEND_FROM_EMAIL;
 
     process.env.RESEND_API_KEY = 'synthetic-resend-api-key-not-a-credential';
-    process.env.RESEND_FROM_EMAIL = 'ENCRIX Security <auth@encrix.io>';
+    process.env.RESEND_FROM_EMAIL = 'ENCRIX <auth@hrixofficial.in>';
 
     let capturedUrl = '';
     let capturedHeaders: Record<string, string> = {};
@@ -56,7 +56,7 @@ describe('ENCRIX Phase 16: Real-Time Production Authentication & Live CRM Test S
     expect(capturedUrl).toBe('https://api.resend.com/emails');
     expect(capturedHeaders['Authorization']).toBe(`Bearer ${process.env.RESEND_API_KEY}`);
     expect(capturedBody.to).toEqual(['vikram@vertex.com']);
-    expect(capturedBody.from).toBe('ENCRIX Security <auth@encrix.io>');
+    expect(capturedBody.from).toBe('ENCRIX <auth@hrixofficial.in>');
     expect(capturedBody.subject).toBe('Your ENCRIX verification code');
 
     // Key isolation check: Secret API key must never be leaked in output
