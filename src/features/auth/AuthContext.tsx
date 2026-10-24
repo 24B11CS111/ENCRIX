@@ -85,42 +85,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Initialize from Supabase Auth session or saved session
+  // Initialize from Custom OTP session or Supabase Auth session
   useEffect(() => {
+    let authSubscription: { unsubscribe: () => void } | null = null;
+
     if (isRealSupabaseConfigured()) {
-      supabase.auth.getSession().then(async ({ data: { session } }) => {
-        if (session?.user) {
-          await loadSupabaseProfile(session.user.id);
-        } else {
-          setIsLoading(false);
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+        // Only handle Supabase GoTrue Auth events if no custom OTP session is active
+        if (!authService.getSessionToken()) {
+          if (session?.user) {
+            await loadSupabaseProfile(session.user.id);
+          } else {
+            setProfile(null);
+            setOrganization(null);
+            setIsLoading(false);
+          }
         }
       });
-
-      const {
-        data: { subscription },
-      } = supabase.auth.onAuthStateChange(async (_event, session) => {
-        if (session?.user) {
-          await loadSupabaseProfile(session.user.id);
-        } else {
-          setProfile(null);
-          setOrganization(null);
-          setIsLoading(false);
-        }
-      });
-
-      return () => subscription.unsubscribe();
+      authSubscription = subscription;
     }
 
     const initAuth = async () => {
-      if (isRealSupabaseConfigured()) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          await loadSupabaseProfile(session.user.id);
-          return;
-        }
-      }
-
-      // Live API / Production: Cryptographic server-side session restoration
+      // 1. Check custom OTP session token first (the primary ENCRIX auth mechanism)
       const token = authService.getSessionToken();
       if (token) {
         try {
@@ -147,6 +133,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setIsLoading(false);
             return;
           }
+        }
+      }
+
+      // 2. Fallback to Supabase Auth session if configured and no custom session
+      if (isRealSupabaseConfigured()) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.user) {
+            await loadSupabaseProfile(session.user.id);
+            return;
+          }
+        } catch {
+          // Fallback
         }
       }
 
@@ -193,6 +192,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     initAuth();
+
+    return () => {
+      authSubscription?.unsubscribe();
+    };
   }, []);
 
   const login = async (email: string, password?: string) => {
@@ -423,6 +426,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
+    await authService.logout();
     if (isRealSupabaseConfigured()) {
       try {
         await supabase.auth.signOut();
@@ -442,6 +446,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     db.unsubscribeAll();
     localStorage.removeItem('leadvault_session');
+    localStorage.removeItem('leadvault_session_token');
     setProfile(null);
     setOrganization(null);
   };

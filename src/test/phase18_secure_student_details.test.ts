@@ -3,7 +3,7 @@ import {
   createSignedSessionToken,
   revokeSession,
 } from '../../api/_lib/sessionServer';
-import leadDetailHandler from '../../api/leads/detail';
+import leadDetailHandler from '../../api/_lib/leads/detail';
 import callHandler from '../../api/telephony/call';
 import { db } from '@/services/supabase/db';
 import { leadService } from '@/services/leads/leadService';
@@ -297,7 +297,8 @@ describe('ENCRIX Phase 18: Secure Student Details & Zero Phone Exposure', () => 
   // 4. CALLING WORKFLOW WITHOUT PHONE EXPOSURE
   // --------------------------------------------------------------------------
   describe('4. Calling Without Phone Exposure', () => {
-    it('dispatches outbound call via { leadId } without returning phone to telecaller', async () => {
+    it('keeps live call start fail-closed until secure bridge prerequisites are deployed', async () => {
+      const callsBefore = db.getCalls(telecallerA1).length;
       const { req, res } = createMockReqRes({
         method: 'POST',
         headers: { authorization: `Bearer ${tokenTelecallerA1}` },
@@ -306,16 +307,12 @@ describe('ENCRIX Phase 18: Secure Student Details & Zero Phone Exposure', () => 
 
       await callHandler(req, res);
 
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(503);
       const data = res.body;
 
-      // Returns session identifier and status
-      expect(data.callId).toBeDefined();
-      expect(data.status).toBe('INITIATED');
-      expect(data.leadId).toBe('lead-lv-10294');
-      expect(data.leadCode).toBe('LV-10294');
-
-      // CRITICAL: telecaller response must NOT include phone or maskedPhone
+      expect(data.callId).toBeUndefined();
+      expect(data.error).toMatch(/secure call bridge/i);
+      expect(db.getCalls(telecallerA1)).toHaveLength(callsBefore);
       expect('phone' in data).toBe(false);
       expect('rawPhoneNumber' in data).toBe(false);
       expect('maskedPhone' in data).toBe(false);

@@ -45,7 +45,7 @@ describe('production registration pending-state persistence', () => {
     vi.restoreAllMocks();
   });
 
-  it('does not send a registration OTP or report success when pending registration persistence fails', async () => {
+  it('fails closed with 503 in production when pending registration persistence fails or is unmigrated', async () => {
     process.env.NODE_ENV = 'production';
     const email = 'owner@example.test';
     const privateErrorText = `${email} private provider detail`;

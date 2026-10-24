@@ -92,6 +92,18 @@ describe('LEADVAULT Phase 11: Adversarial Security & Penetration Validation', ()
       }).toThrow(/Forbidden/i);
     });
 
+    it('Telecaller can edit only status and notes on an assigned lead', () => {
+      const assignedLead = db.getLeads(telecallerArjun)[0];
+      const updated = db.updateLead(
+        assignedLead.id,
+        { status: 'CONTACTED', notes: 'Requested a follow-up.' },
+        telecallerArjun
+      );
+      expect(updated.status).toBe('CONTACTED');
+      expect(updated.notes).toContain('Requested a follow-up.');
+      expect(updated.phone).toBeUndefined();
+    });
+
     it('Telecaller cannot tamper with sensitive lead fields (phone, email, assigned_to, org_id)', () => {
       const assignedLead = db.getLeads(telecallerArjun)[0];
 

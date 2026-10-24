@@ -28,9 +28,21 @@ function localApiServerPlugin(): Plugin {
         try {
           const urlPath = req.url.split('?')[0];
           const requestedPath = urlPath.replace(/^\/api\//, '');
-          const relativePath = requestedPath === 'followups/reminders'
-            ? 'cron/follow-up-reminders'
-            : requestedPath;
+          const routeAliases: Record<string, { entrypoint: string; route: string }> = {
+            'followups/reminders': { entrypoint: 'cron/follow-up-reminders', route: '' },
+            'leads/detail': { entrypoint: 'leads', route: 'detail' },
+            'leads/distribute': { entrypoint: 'leads', route: 'distribute' },
+            'leads/distribution-config': { entrypoint: 'leads', route: 'distribution-config' },
+            'leads/telecaller': { entrypoint: 'leads', route: 'telecaller-list' },
+            'leads/telecaller/update': { entrypoint: 'leads', route: 'telecaller-update' },
+            'billing/plans': { entrypoint: 'billing', route: 'plans' },
+            'billing/checkout': { entrypoint: 'billing', route: 'checkout' },
+            'billing/verify': { entrypoint: 'billing', route: 'verify' },
+            'billing/webhook': { entrypoint: 'billing', route: 'webhook' },
+            'billing/subscription': { entrypoint: 'billing', route: 'subscription' },
+          };
+          const alias = routeAliases[requestedPath];
+          const relativePath = alias?.entrypoint || requestedPath;
           const tsFilePath = path.resolve(__dirname, 'api', `${relativePath}.ts`);
 
           if (!fs.existsSync(tsFilePath)) {
@@ -43,6 +55,7 @@ function localApiServerPlugin(): Plugin {
           parsedUrl.searchParams.forEach((value, key) => {
             queryParams[key] = value;
           });
+          if (alias?.route) queryParams._route = alias.route;
           (req as any).query = queryParams;
 
           // Parse JSON or url-encoded request body
@@ -51,7 +64,9 @@ function localApiServerPlugin(): Plugin {
             for await (const chunk of req) {
               chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer));
             }
-            const rawBody = Buffer.concat(chunks).toString('utf-8');
+            const rawBodyBuffer = Buffer.concat(chunks);
+            const rawBody = rawBodyBuffer.toString('utf-8');
+            (req as any).rawBody = rawBodyBuffer;
             try {
               if (rawBody.trim().startsWith('{') || rawBody.trim().startsWith('[')) {
                 (req as any).body = JSON.parse(rawBody);

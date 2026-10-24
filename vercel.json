@@ -4,6 +4,16 @@
       "source": "/api/followups/reminders",
       "destination": "/api/cron/follow-up-reminders"
     },
+    { "source": "/api/leads/detail", "destination": "/api/leads?_route=detail" },
+    { "source": "/api/leads/distribute", "destination": "/api/leads?_route=distribute" },
+    { "source": "/api/leads/distribution-config", "destination": "/api/leads?_route=distribution-config" },
+    { "source": "/api/leads/telecaller", "destination": "/api/leads?_route=telecaller-list" },
+    { "source": "/api/leads/telecaller/update", "destination": "/api/leads?_route=telecaller-update" },
+    { "source": "/api/billing/plans", "destination": "/api/billing?_route=plans" },
+    { "source": "/api/billing/checkout", "destination": "/api/billing?_route=checkout" },
+    { "source": "/api/billing/verify", "destination": "/api/billing?_route=verify" },
+    { "source": "/api/billing/webhook", "destination": "/api/billing?_route=webhook" },
+    { "source": "/api/billing/subscription", "destination": "/api/billing?_route=subscription" },
     {
       "source": "/api/(.*)",
       "destination": "/api/$1"

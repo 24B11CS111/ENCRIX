@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Lead } from '@/types';
-import { callService, telephonyService } from '@/services/telephony';
+import type { CallStatus, Lead } from '@/types';
+import { callService } from '@/services/telephony';
 import { db } from '@/services/supabase/db';
 import { useAuth } from '@/features/auth/AuthContext';
 import { formatDuration } from '@/lib/utils';
@@ -28,10 +28,12 @@ export const CallModal: React.FC<CallModalProps> = ({
   onCallCompleted,
 }) => {
   const { profile } = useAuth();
-  const [callStatus, setCallStatus] = useState<'INITIATING' | 'RINGING' | 'CONNECTED' | 'ENDING'>('INITIATING');
+  const [callStatus, setCallStatus] = useState<CallStatus | 'INITIATING' | 'ENDING'>('INITIATING');
   const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [callId, setCallId] = useState<string>('');
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -42,6 +44,8 @@ export const CallModal: React.FC<CallModalProps> = ({
         setCallStatus('INITIATING');
         setDuration(0);
         setIsMuted(false);
+        setActionError(null);
+        setStatusMessage(null);
 
         // Secure call placement: caller client only provides leadId and caller profile.
         // Raw customer phone is never retrieved into client component memory.
@@ -51,6 +55,38 @@ export const CallModal: React.FC<CallModalProps> = ({
         });
 
         setCallId(dispatchResult.session.callId);
+
+        if (callService.isLiveMode()) {
+          const modalStatus = dispatchResult.session.status === 'IN_PROGRESS'
+            ? 'CONNECTED'
+            : dispatchResult.session.status;
+          setCallStatus(modalStatus);
+
+          let polling = false;
+          const pollStatus = async () => {
+            if (polling) return;
+            polling = true;
+            try {
+              const snapshot = await callService.getCallStatus(dispatchResult.session.callId);
+              setActionError(null);
+              const status = snapshot.status === 'IN_PROGRESS' ? 'CONNECTED' : snapshot.status;
+              setCallStatus(status);
+              if (['COMPLETED', 'MISSED', 'NO_ANSWER', 'BUSY', 'CANCELED', 'FAILED'].includes(status)) {
+                if (timerRef.current) window.clearInterval(timerRef.current);
+                timerRef.current = null;
+                onCallCompleted(dispatchResult.session.callId, snapshot.durationSeconds, '');
+              }
+            } catch {
+              setActionError('Call status is temporarily unavailable.');
+            } finally {
+              polling = false;
+            }
+          };
+
+          void pollStatus();
+          timerRef.current = window.setInterval(() => void pollStatus(), 2500);
+          return;
+        }
 
         // Progress ringing -> connected
         setTimeout(() => {
@@ -63,8 +99,8 @@ export const CallModal: React.FC<CallModalProps> = ({
             setDuration((prev) => prev + 1);
           }, 1000);
         }, 2800);
-      } catch (err) {
-        console.error('Telephony error:', err);
+      } catch {
+        setActionError('Call could not be started. Please try again or contact support.');
       }
     };
 
@@ -80,18 +116,46 @@ export const CallModal: React.FC<CallModalProps> = ({
   const handleToggleMute = async () => {
     if (!callId) return;
     const next = !isMuted;
-    await telephonyService.toggleMute(callId, next);
-    setIsMuted(next);
+    setActionError(null);
+    setStatusMessage(null);
+    try {
+      await callService.toggleMute(callId, next);
+      setIsMuted(next);
+    } catch {
+      setActionError('Live call mute control is unavailable in this deployment.');
+    }
   };
 
   const handleEndCall = async () => {
-    setCallStatus('ENDING');
-    if (timerRef.current) clearInterval(timerRef.current);
-
     if (!profile) return;
 
-    const result = await callService.endCall(callId, profile);
-    const finalDuration = Math.max(duration, 3);
+    const statusBeforeEnd = callStatus;
+    setActionError(null);
+    setStatusMessage(null);
+    setCallStatus('ENDING');
+    if (timerRef.current && !callService.isLiveMode()) clearInterval(timerRef.current);
+
+    let result: Awaited<ReturnType<typeof callService.endCall>>;
+    try {
+      result = await callService.endCall(callId, profile);
+    } catch {
+      if (callService.isLiveMode()) {
+        setCallStatus(statusBeforeEnd === 'ENDING' ? 'INITIATING' : statusBeforeEnd);
+      } else {
+        setCallStatus('CONNECTED');
+      }
+      setActionError('Could not confirm the end-call request. Call status remains authoritative.');
+      return;
+    }
+
+    if (result.mode === 'live') {
+      setCallStatus(result.status === 'IN_PROGRESS' ? 'CONNECTED' : result.status);
+      setStatusMessage(result.accepted
+        ? 'End request accepted. Waiting for provider status confirmation.'
+        : 'The provider has already ended this call; waiting for persisted status.');
+      return;
+    }
+    const finalDuration = Math.max(duration, result.durationSeconds, 1);
 
     // Persist completed call state to ENCRIX Database
     const existingCalls = db.getCalls(profile);
@@ -171,11 +235,13 @@ export const CallModal: React.FC<CallModalProps> = ({
             {callStatus === 'INITIATING' && (
               <div className="space-y-1">
                 <span className="text-xs font-bold uppercase tracking-wider text-[#0B1F3A]">
-                  CALL INITIATED
+                  {callService.isLiveMode() ? 'CALL REQUEST ACCEPTED' : 'CALL INITIATED'}
                 </span>
                 <p className="text-xs text-[#64748B] flex items-center justify-center gap-1.5">
-                  <Radio className="w-3.5 h-3.5 text-[#1E4D8F] animate-spin" />
-                  Connecting securely...
+                  {!callService.isLiveMode() && <Radio className="w-3.5 h-3.5 text-[#1E4D8F] animate-spin" />}
+                  {callService.isLiveMode()
+                    ? 'Waiting for server call status. Live controls are not available.'
+                    : 'Connecting securely...'}
                 </p>
               </div>
             )}
@@ -191,12 +257,23 @@ export const CallModal: React.FC<CallModalProps> = ({
                   Connected
                 </span>
                 <div className="text-3xl font-mono font-bold text-[#0B1F3A] tracking-wider">
-                  {formatDuration(duration)}
+                  {callService.isLiveMode() ? 'In progress' : formatDuration(duration)}
                 </div>
               </div>
             )}
+            {['COMPLETED', 'MISSED', 'NO_ANSWER', 'BUSY', 'CANCELED', 'FAILED'].includes(callStatus) && (
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#64748B]">
+                Call {callStatus.replaceAll('_', ' ').toLowerCase()}
+              </span>
+            )}
             {callStatus === 'ENDING' && (
               <span className="text-xs text-[#64748B]">Wrapping call session...</span>
+            )}
+            {actionError && (
+              <p role="alert" className="mt-3 text-xs text-[#C53030]">{actionError}</p>
+            )}
+            {statusMessage && (
+              <p role="status" className="mt-3 text-xs text-[#64748B]">{statusMessage}</p>
             )}
           </div>
         </div>
@@ -205,19 +282,22 @@ export const CallModal: React.FC<CallModalProps> = ({
         <div className="flex items-center justify-center gap-4 mt-4 pt-4 border-t border-[#DCE4EE]">
           <button
             onClick={handleToggleMute}
-            disabled={callStatus !== 'CONNECTED'}
+            disabled={callStatus !== 'CONNECTED' || callService.isLiveMode()}
             className={`p-3.5 rounded-full border transition-all ${
               isMuted
                 ? 'bg-[#FEF6E7] border-[#FBDFA8] text-[#B7791F]'
                 : 'bg-white border-[#DCE4EE] text-[#64748B] hover:text-[#0B1F3A] hover:bg-[#F6F8FB]'
             } disabled:opacity-30 disabled:cursor-not-allowed`}
-            title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+            title={callService.isLiveMode()
+              ? 'Mute is unsupported for the current direct-dial call architecture'
+              : isMuted ? 'Unmute microphone' : 'Mute microphone'}
           >
             {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
 
           <button
             onClick={handleEndCall}
+            disabled={!callId || callStatus === 'ENDING'}
             className="flex items-center gap-2 px-6 py-3.5 bg-[#C53030] hover:bg-[#A82828] text-white font-semibold rounded-full shadow-subtle transition-all"
             title="End Call"
           >
@@ -225,6 +305,11 @@ export const CallModal: React.FC<CallModalProps> = ({
             <span className="text-sm">End Call</span>
           </button>
         </div>
+        {callService.isLiveMode() && (
+          <p className="mt-3 text-[11px] text-[#64748B]">
+            Mute is unavailable for direct-dial calls. Status and end requests are confirmed by the server.
+          </p>
+        )}
 
         {/* Legal Consent Notice */}
         <p className="mt-6 text-[11px] text-[#64748B] flex items-center justify-center gap-1 font-medium">

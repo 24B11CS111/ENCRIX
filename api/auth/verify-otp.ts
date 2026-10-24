@@ -1,6 +1,8 @@
+import crypto from 'crypto';
 import { getSupabaseServerClient } from '../_lib/supabaseServer.js';
-import { verifyOtpHash, OTP_CONFIG, serverOtpStore } from '../_lib/otpServer.js';
+import { verifyOtpHash, OTP_CONFIG, serverOtpStore, verifyVerificationTicket, markTicketConsumed } from '../_lib/otpServer.js';
 import { createSignedSessionToken } from '../_lib/sessionServer.js';
+import { getRequiredServerSecret } from '../_lib/serverSecret.js';
 import { normalizeEmail } from '../../src/lib/emailNormalization.js';
 
 function safeDatabaseErrorCode(error: any): string {
@@ -15,7 +17,8 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const { email, otp, purpose, inviteToken } = req.body || {};
+    const { email, otp, purpose, inviteToken, verificationTicket, registrationTicket } = req.body || {};
+    const effectiveTicket = verificationTicket || registrationTicket;
 
     if (!purpose || !['LOGIN', 'REGISTER', 'INVITATION'].includes(purpose)) {
       return res.status(400).json({ error: 'Valid purpose (LOGIN, REGISTER, INVITATION) is required' });
@@ -35,6 +38,13 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: 'Enter the 6-digit verification code.' });
     }
     const cleanOtp = otp.trim();
+
+    // 0. Pre-flight session signing secret before burning OTP or modifying DB state
+    try {
+      getRequiredServerSecret('SESSION_SERVER_SECRET');
+    } catch (secretErr: any) {
+      return res.status(500).json({ error: secretErr.message || 'SESSION_SERVER_SECRET is missing or invalid' });
+    }
 
     const supabase = getSupabaseServerClient();
     const now = new Date();
@@ -58,10 +68,13 @@ export default async function handler(req: any, res: any) {
             stage: 'pending_registrations.select',
             code: safeDatabaseErrorCode(regErr),
           });
-        } else if (reg) {
-          registrationLookupStatus = 'row_found';
-          pendingReg = reg;
-          otpRecord = reg;
+        } else {
+          const regRow = Array.isArray(reg) ? (reg.length > 0 ? reg[0] : null) : reg;
+          if (regRow && regRow.otp_hash) {
+            registrationLookupStatus = 'row_found';
+            pendingReg = regRow;
+            otpRecord = regRow;
+          }
         }
       } catch (lookupError: any) {
         registrationLookupStatus = 'query_error';
@@ -69,6 +82,27 @@ export default async function handler(req: any, res: any) {
           stage: 'pending_registrations.select',
           code: safeDatabaseErrorCode(lookupError),
         });
+      }
+
+      // Check signed stateless verification ticket
+      if (!otpRecord && effectiveTicket) {
+        const ticketData = verifyVerificationTicket(effectiveTicket);
+        if (ticketData && ticketData.email === normalizedEmail && ticketData.purpose === 'REGISTER') {
+          pendingReg = {
+            id: 'ticket-reg',
+            ticketId: ticketData.ticketId,
+            email: ticketData.email,
+            company_name: ticketData.companyName || 'Organization',
+            owner_name: ticketData.ownerName || 'Owner',
+            phone_number: ticketData.phone || null,
+            industry: ticketData.industry || 'General',
+            company_size: ticketData.companySize || '1-10',
+            otp_hash: ticketData.otpHash,
+            attempts: 0,
+            expires_at: ticketData.expiresAt,
+          };
+          otpRecord = pendingReg;
+        }
       }
 
       if (!otpRecord) {
@@ -113,6 +147,21 @@ export default async function handler(req: any, res: any) {
         }
       } catch {
         // Query error handled by fallback check
+      }
+
+      // Check signed stateless verification ticket
+      if (!otpRecord && effectiveTicket) {
+        const ticketData = verifyVerificationTicket(effectiveTicket);
+        if (ticketData && ticketData.email === normalizedEmail && ticketData.purpose === purpose) {
+          otpRecord = {
+            id: 'ticket-otp',
+            email: ticketData.email,
+            purpose: ticketData.purpose,
+            otp_hash: ticketData.otpHash,
+            attempts: 0,
+            expires_at: ticketData.expiresAt,
+          };
+        }
       }
 
       if (!otpRecord) {
@@ -190,6 +239,9 @@ export default async function handler(req: any, res: any) {
 
     // 5. Invalidate OTP Immediately upon Successful Verification
     serverOtpStore.delete(`${normalizedEmail}:${purpose}`);
+    if (otpRecord.ticketId) {
+      markTicketConsumed(otpRecord.ticketId, otpRecord.expires_at);
+    }
     try {
       if (purpose === 'REGISTER') {
         await supabase
@@ -211,6 +263,35 @@ export default async function handler(req: any, res: any) {
     let resultOrg: any = null;
 
     if (purpose === 'REGISTER') {
+      // Check for existing account before creating duplicates
+      try {
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('id, email, organization_id, role, full_name, user_id, status')
+          .eq('email', normalizedEmail)
+          .maybeSingle();
+
+        const profileRow = Array.isArray(existingProfile)
+          ? (existingProfile.length > 0 ? existingProfile[0] : null)
+          : existingProfile;
+
+        if (profileRow && profileRow.id && (profileRow.email ? profileRow.email.toLowerCase() === normalizedEmail : true)) {
+          return res.status(409).json({
+            error: 'An account with this email address already exists. Please log in.',
+          });
+        }
+      } catch {
+        // Query error handled
+      }
+
+      // Generate standard RFC 4122 UUID for owner and unique slug
+      const ownerUserId = crypto.randomUUID();
+      const baseSlug = (pendingReg.company_name || 'org')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'org';
+      const uniqueSlug = `${baseSlug}-${crypto.randomBytes(3).toString('hex')}`;
+
       // Create Organization
       let resolvedOrg: any = null;
       try {
@@ -218,30 +299,48 @@ export default async function handler(req: any, res: any) {
           .from('organizations')
           .insert({
             name: pendingReg.company_name,
-            slug: pendingReg.company_name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+            slug: uniqueSlug,
             industry: pendingReg.industry || 'General',
             company_size: pendingReg.company_size || '1-10',
-            owner_id: `user-${Date.now().toString(36)}`,
+            owner_id: ownerUserId,
             status: 'ACTIVE',
           })
           .select('*')
           .single();
 
-        if (!orgErr && newOrg) {
+        if (orgErr) {
+          console.error('[verify-otp] Organization creation failed', {
+            stage: 'organizations.insert',
+            code: safeDatabaseErrorCode(orgErr),
+          });
+          if (process.env.NODE_ENV === 'production') {
+            return res.status(500).json({
+              error: 'Failed to create organization account. Please try again shortly.',
+            });
+          }
+        } else if (newOrg) {
           resolvedOrg = newOrg;
         }
-      } catch {
-        // Insert error handled by fallback
+      } catch (orgErr: any) {
+        console.error('[verify-otp] Organization creation failed', {
+          stage: 'organizations.insert',
+          code: safeDatabaseErrorCode(orgErr),
+        });
+        if (process.env.NODE_ENV === 'production') {
+          return res.status(500).json({
+            error: 'Failed to create organization account. Please try again shortly.',
+          });
+        }
       }
 
       if (!resolvedOrg) {
         resolvedOrg = {
-          id: `org-${Date.now().toString(36)}`,
+          id: `org-${crypto.randomUUID()}`,
           name: pendingReg.company_name,
-          slug: pendingReg.company_name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+          slug: uniqueSlug,
           industry: pendingReg.industry || 'General',
           company_size: pendingReg.company_size || '1-10',
-          owner_id: `user-${Date.now().toString(36)}`,
+          owner_id: ownerUserId,
           status: 'ACTIVE',
         };
       }
@@ -265,16 +364,49 @@ export default async function handler(req: any, res: any) {
           .select('*')
           .single();
 
-        if (!profErr && newProfile) {
+        if (profErr) {
+          console.error('[verify-otp] Owner profile creation failed', {
+            stage: 'profiles.insert',
+            code: safeDatabaseErrorCode(profErr),
+          });
+          // Rollback newly created organization if profile insert fails
+          if (resolvedOrg?.id && !resolvedOrg.id.startsWith('org-')) {
+            try {
+              await supabase.from('organizations').delete().eq('id', resolvedOrg.id);
+            } catch {
+              // Rollback error handled
+            }
+          }
+          if (process.env.NODE_ENV === 'production') {
+            return res.status(500).json({
+              error: 'Failed to create owner profile. Please try again shortly.',
+            });
+          }
+        } else if (newProfile) {
           resolvedProfile = newProfile;
         }
-      } catch {
-        // Insert error handled by fallback
+      } catch (profErr: any) {
+        console.error('[verify-otp] Owner profile creation failed', {
+          stage: 'profiles.insert',
+          code: safeDatabaseErrorCode(profErr),
+        });
+        if (resolvedOrg?.id && !resolvedOrg.id.startsWith('org-')) {
+          try {
+            await supabase.from('organizations').delete().eq('id', resolvedOrg.id);
+          } catch {
+            // Rollback error handled
+          }
+        }
+        if (process.env.NODE_ENV === 'production') {
+          return res.status(500).json({
+            error: 'Failed to create owner profile. Please try again shortly.',
+          });
+        }
       }
 
       if (!resolvedProfile) {
         resolvedProfile = {
-          id: `prof-${Date.now().toString(36)}`,
+          id: `prof-${crypto.randomUUID()}`,
           user_id: resolvedOrg.owner_id,
           organization_id: resolvedOrg.id,
           full_name: pendingReg.owner_name,
@@ -471,7 +603,7 @@ export default async function handler(req: any, res: any) {
         const { data: tcData, error: tcErr } = await supabase
           .from('profiles')
           .insert({
-            user_id: `user-${Date.now().toString(36)}`,
+            user_id: crypto.randomUUID(),
             organization_id: org.id,
             full_name: inv.full_name,
             email: normalizedEmail,
@@ -492,9 +624,12 @@ export default async function handler(req: any, res: any) {
       }
 
       if (!newTc) {
+        if (process.env.NODE_ENV === 'production') {
+          return res.status(500).json({ error: 'Failed to activate telecaller account. Please try again shortly.' });
+        }
         newTc = {
           id: `tc-${Date.now().toString(36)}`,
-          user_id: `user-${Date.now().toString(36)}`,
+          user_id: crypto.randomUUID(),
           organization_id: org.id,
           full_name: inv.full_name,
           email: normalizedEmail,

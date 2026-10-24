@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '@/services/supabase/db';
 import { Profile, Lead, DistributionMode } from '@/types';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
-import distributionConfigHandler from '../../api/leads/distribution-config';
-import distributeHandler from '../../api/leads/distribute';
+import distributionConfigHandler from '../../api/_lib/leads/distribution-config';
+import distributeHandler from '../../api/_lib/leads/distribute';
 
 // Mock HTTP Request/Response helper for API endpoint tests
 function createMockReqRes(options: {

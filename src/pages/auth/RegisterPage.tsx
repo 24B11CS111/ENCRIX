@@ -27,6 +27,7 @@ export const RegisterPage: React.FC = () => {
   const [cooldown, setCooldown] = useState(60);
   const [expiresAt, setExpiresAt] = useState<string | undefined>(undefined);
   const [resendAvailableAt, setResendAvailableAt] = useState<string | undefined>(undefined);
+  const [registrationTicket, setRegistrationTicket] = useState<string | undefined>(undefined);
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +75,7 @@ export const RegisterPage: React.FC = () => {
     setIsLoading(false);
 
     if (result.success) {
+      setRegistrationTicket(result.registrationTicket || result.verificationTicket);
       setMaskedEmail(result.maskedEmail || normEmail.masked);
       setCooldown(result.cooldownSeconds || 60);
       setExpiresAt(result.expiresAt);
@@ -104,6 +106,8 @@ export const RegisterPage: React.FC = () => {
       phone: normPhone?.normalized,
       otp: code,
       purpose: 'REGISTER',
+      registrationTicket,
+      verificationTicket: registrationTicket,
       registrationData: {
         companyName: companyName.trim(),
         ownerName: ownerName.trim(),
@@ -139,6 +143,7 @@ export const RegisterPage: React.FC = () => {
     setIsLoading(false);
 
     if (result.success) {
+      setRegistrationTicket(result.registrationTicket || result.verificationTicket);
       setCooldown(result.cooldownSeconds || 60);
       setExpiresAt(result.expiresAt);
       setResendAvailableAt(result.resendAvailableAt);

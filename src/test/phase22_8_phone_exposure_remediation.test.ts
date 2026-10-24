@@ -23,7 +23,7 @@ import {
   sanitizeLeadForRole,
 } from '@/lib/dataMasking';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
-import detailHandler from '../../api/leads/detail';
+import detailHandler from '../../api/_lib/leads/detail';
 import { Profile, Lead } from '@/types';
 import fs from 'fs';
 import path from 'path';
@@ -167,6 +167,12 @@ describe('ENCRIX Phase 22.8: Final Phone-Exposure Remediation', () => {
         },
         ownerProfile
       );
+    // Simulate imported free-text values that attempt to smuggle a phone into
+    // fields returned by the server-side detail endpoint.
+    const storedLead = (db as any).leads.find((lead: Lead) => lead.id === dirtyLead.id);
+    storedLead.source = 'Website 9876543210';
+    storedLead.category = 'Category 9876543210';
+    storedLead.gender = 'Gender 9876543210';
 
       // Telecaller request
       const { req: tcReq, res: tcRes } = createMockReqRes({
@@ -180,6 +186,9 @@ describe('ENCRIX Phase 22.8: Final Phone-Exposure Remediation', () => {
       expect(tcRes.body.name).toBe('Arjun Das');
       expect(tcRes.body.name).not.toMatch(/\d/);
       expect(tcRes.body.name).not.toContain('98111');
+      expect(tcRes.body.source).toBe('Website');
+      expect(tcRes.body.category).toBe('Category');
+      expect(tcRes.body.gender).toBe('Gender');
 
       // Owner request
       const { req: ownerReq, res: ownerRes } = createMockReqRes({
@@ -191,6 +200,9 @@ describe('ENCRIX Phase 22.8: Final Phone-Exposure Remediation', () => {
       await detailHandler(ownerReq, ownerRes);
       expect(ownerRes.statusCode).toBe(200);
       expect(ownerRes.body.name).toBe('Arjun Das +91 98111 22233');
+      expect(ownerRes.body.source).toBe('Website 9876543210');
+      expect(ownerRes.body.category).toBe('Category 9876543210');
+      expect(ownerRes.body.gender).toBe('Gender 9876543210');
     });
   });
 

@@ -68,6 +68,17 @@ export const Navbar: React.FC = () => {
   useEffect(() => {
     if (!profile) return;
 
+    // Telecallers are intentionally denied access to security-event records by the
+    // data adapter. Keep the shared navbar renderable without probing that data.
+    if (profile.role === 'TELECALLER') {
+      setSecurityStatus({
+        label: 'Role Protected',
+        color: 'neutral',
+        title: 'Security event details are restricted for telecaller accounts.',
+      });
+      return;
+    }
+
     if (typeof window !== 'undefined' && !navigator.onLine) {
       setSecurityStatus({
         label: 'Offline Guard',

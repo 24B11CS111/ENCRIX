@@ -2,6 +2,7 @@ import { getSupabaseServerClient } from '../_lib/supabaseServer.js';
 import {
   generateSecureOtp,
   hashOtp,
+  createVerificationTicket,
   sendVerificationEmail,
   OTP_CONFIG,
   serverOtpStore,
@@ -14,7 +15,7 @@ function logSafeFailure(stage: string, error: any) {
     ? error.code
     : 'unknown';
   const status = Number.isInteger(error?.status) ? error.status : undefined;
-  console.error('[send-otp] Registration persistence failed', { stage, code, status });
+  console.error('[send-otp] Operation failed', { stage, code, status });
 }
 
 export default async function handler(req: any, res: any) {
@@ -152,6 +153,20 @@ export default async function handler(req: any, res: any) {
     const expiresAt = new Date(now.getTime() + OTP_CONFIG.EXPIRY_MS).toISOString();
     const resendAfter = new Date(now.getTime() + OTP_CONFIG.RESEND_COOLDOWN_MS).toISOString();
 
+    // Generate signed stateless verification ticket for multi-instance serverless resilience
+    const verificationTicket = createVerificationTicket({
+      email: normalizedEmail,
+      purpose,
+      otpHash,
+      expiresAt,
+      companyName,
+      ownerName: fullName,
+      phone: optionalPhone,
+      industry: req.body?.industry,
+      companySize: req.body?.companySize,
+      inviteToken,
+    });
+
     // 4. Store OTP record in database & memory store
     if (purpose === 'REGISTER') {
       if (!companyName || !fullName) {
@@ -192,7 +207,7 @@ export default async function handler(req: any, res: any) {
     }
 
     try {
-      await supabase.from('email_otps').insert({
+      const { error: otpInsertErr } = await supabase.from('email_otps').insert({
         email: normalizedEmail,
         purpose,
         otp_hash: otpHash,
@@ -201,8 +216,21 @@ export default async function handler(req: any, res: any) {
         expires_at: expiresAt,
         used: false,
       });
-    } catch {
-      // Supabase offline/mock fallback
+      if (otpInsertErr) {
+        logSafeFailure('email_otps.insert', otpInsertErr);
+        if (process.env.NODE_ENV === 'production' && purpose === 'LOGIN') {
+          return res.status(503).json({
+            error: 'Authentication verification could not be prepared. Please try again shortly.',
+          });
+        }
+      }
+    } catch (otpErr: any) {
+      logSafeFailure('email_otps.insert', otpErr);
+      if (process.env.NODE_ENV === 'production' && purpose === 'LOGIN') {
+        return res.status(503).json({
+          error: 'Authentication verification could not be prepared. Please try again shortly.',
+        });
+      }
     }
 
     // Record in server fallback memory store
@@ -246,16 +274,16 @@ export default async function handler(req: any, res: any) {
           metadata: {
             emailMasked: normEmail.masked,
             purpose,
-            errorSummary: emailErr?.message || 'Provider delivery error',
+            errorCode: typeof emailErr?.code === 'string' && /^[A-Z0-9_]+$/i.test(emailErr.code)
+              ? emailErr.code
+              : 'delivery_failed',
           },
         });
       } catch {
         // Cleanup error handled
       }
 
-      const safeError = emailErr?.message || 'Unable to send verification code. Please try again.';
-      const statusCode = safeError.startsWith('BLOCKED') ? 503 : 500;
-      return res.status(statusCode).json({ error: safeError });
+      return res.status(503).json({ error: 'Unable to send verification code. Please try again shortly.' });
     }
 
     // 6. Audit Logging on Successful Dispatch
@@ -279,13 +307,13 @@ export default async function handler(req: any, res: any) {
       resendAvailableAt: resendAfter,
       cooldownSeconds: OTP_CONFIG.RESEND_COOLDOWN_MS / 1000,
       expiresInSeconds: OTP_CONFIG.EXPIRY_MS / 1000,
+      verificationTicket,
+      registrationTicket: verificationTicket,
     });
   } catch (err: any) {
     logSafeFailure('handler', err);
-    const safeMessage = err?.message || 'Unable to send verification code. Please try again.';
-    const statusCode = safeMessage.startsWith('BLOCKED') ? 503 : 500;
-    return res.status(statusCode).json({
-      error: safeMessage,
+    return res.status(503).json({
+      error: 'Unable to send verification code. Please try again shortly.',
     });
   }
 }

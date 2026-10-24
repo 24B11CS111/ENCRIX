@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
 import crypto from 'crypto';
 import {
   validateTwilioRecordingUrl,
@@ -13,6 +13,36 @@ import { db } from '@/services/supabase/db';
 import { Call, Profile } from '@/types';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
 import { getTwilioServerConfig } from '../../api/_lib/twilioServer';
+
+vi.mock('../../api/_lib/supabaseServer.js', async () => {
+  const { verifySignedSessionToken } = await vi.importActual<typeof import('../../api/_lib/sessionServer')>(
+    '../../api/_lib/sessionServer',
+  );
+  return {
+    authenticateServerRequest: vi.fn(async (req: any) => {
+      const header = req.headers?.authorization || '';
+      const payload = verifySignedSessionToken(header.replace(/^Bearer\s+/i, ''));
+      if (!payload) return { user: null, profile: null, error: 'Unauthorized' };
+      return {
+        user: { id: payload.userId, email: payload.email },
+        profile: {
+          id: payload.profileId,
+          user_id: payload.userId,
+          organization_id: payload.organizationId,
+          full_name: payload.fullName,
+          role: payload.role,
+          status: payload.status || 'ACTIVE',
+          email: payload.email,
+        },
+        error: null,
+      };
+    }),
+    isRealSupabaseServerConfigured: () => false,
+    getSupabaseServerClient: () => ({
+      from: () => ({ insert: async () => ({ error: null }) }),
+    }),
+  };
+});
 
 // Helper to create mock Request and Response for serverless API handlers
 function createMockReqRes(options: {
@@ -53,7 +83,6 @@ function createMockReqRes(options: {
 describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
   const orgAId = 'org-titan-001';
   const orgBId = 'org-apex-002';
-  const authToken = getTwilioServerConfig().authToken;
 
   const ownerA: Profile = {
     id: 'prof-owner-001',
@@ -143,7 +172,11 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
     created_at: new Date().toISOString(),
   };
 
-  function createValidSignature(url: string, params: Record<string, string>, secret = authToken): string {
+  function createValidSignature(
+    url: string,
+    params: Record<string, string>,
+    secret = getTwilioServerConfig().authToken,
+  ): string {
     const sortedKeys = Object.keys(params).sort();
     let data = url;
     for (const key of sortedKeys) {
@@ -155,7 +188,26 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
   beforeEach(() => {
     db.resetSandbox();
     (db as any).calls = [testCallA];
+    vi.stubEnv('TWILIO_ACCOUNT_SID', `AC${'d'.repeat(32)}`);
+    vi.stubEnv('TWILIO_AUTH_TOKEN', 'synthetic-auth-credential-abcdef');
+    vi.stubEnv('TWILIO_STATUS_CALLBACK_URL', 'https://app.leadvault.io/api/telephony/webhook');
   });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  function addWebhookCall(providerCallId: string) {
+    (db as any).calls.push({
+      ...testCallA,
+      id: `call-${providerCallId.slice(-6)}`,
+      provider_call_id: providerCallId,
+      status: 'IN_PROGRESS',
+      ended_at: null,
+      recording_url: null,
+    });
+  }
 
   // --------------------------------------------------------------------------
   // SECTION 1: SSRF PROTECTION & TRUSTED HOST VALIDATION
@@ -324,11 +376,12 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
 
     it('rejects webhook with untrusted recording URL and logs security event', async () => {
       const body = {
-        CallSid: 'CA_ssrf_probe',
+        CallSid: `CA${'c'.repeat(32)}`,
         CallStatus: 'completed',
         RecordingUrl: 'https://attacker.evil.com/exploit.mp3',
         SequenceNumber: '1',
       };
+      addWebhookCall(body.CallSid);
 
       const signature = createValidSignature(webhookUrl, body);
 
@@ -351,12 +404,13 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
 
     it('webhook response NEVER leaks the provider recording URL', async () => {
       const body = {
-        CallSid: 'CA_clean_webhook_1',
+        CallSid: `CA${'a'.repeat(32)}`,
         CallStatus: 'completed',
         CallDuration: '60',
         RecordingUrl: 'https://api.twilio.com/2010-04-01/Accounts/AC123/Recordings/RE_clean.mp3',
         SequenceNumber: '1',
       };
+      addWebhookCall(body.CallSid);
 
       const signature = createValidSignature(webhookUrl, body);
 
@@ -381,12 +435,13 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
 
     it('duplicate webhook callbacks are processed idempotently without repeating storage upload', async () => {
       const body = {
-        CallSid: 'CA_idempotent_test_01',
+        CallSid: `CA${'b'.repeat(32)}`,
         CallStatus: 'completed',
         CallDuration: '45',
         RecordingUrl: 'https://api.twilio.com/2010-04-01/Accounts/AC123/Recordings/RE_idem.mp3',
         SequenceNumber: '1',
       };
+      addWebhookCall(body.CallSid);
 
       const signature = createValidSignature(webhookUrl, body);
 
@@ -417,6 +472,41 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
       await webhookHandler(req2, res2);
       expect(res2.statusCode).toBe(200);
       expect(res2.body.duplicate).toBe(true);
+    });
+
+    it('keeps terminal call state when an older non-terminal webhook arrives later', async () => {
+      const sid = `CA${'e'.repeat(32)}`;
+      addWebhookCall(sid);
+      const completed = {
+        CallSid: sid,
+        CallStatus: 'completed',
+        CallDuration: '45',
+        SequenceNumber: '2',
+      };
+      const completedSignature = createValidSignature(webhookUrl, completed);
+      const completedReqRes = createMockReqRes({
+        method: 'POST',
+        headers: { 'x-twilio-signature': completedSignature },
+        body: completed,
+        url: '/api/telephony/webhook',
+      });
+      await webhookHandler(completedReqRes.req, completedReqRes.res);
+      expect(completedReqRes.res.statusCode).toBe(200);
+      expect(completedReqRes.res.body.status).toBe('COMPLETED');
+
+      const delayed = { CallSid: sid, CallStatus: 'ringing', SequenceNumber: '1' };
+      const delayedSignature = createValidSignature(webhookUrl, delayed);
+      const delayedReqRes = createMockReqRes({
+        method: 'POST',
+        headers: { 'x-twilio-signature': delayedSignature },
+        body: delayed,
+        url: '/api/telephony/webhook',
+      });
+      await webhookHandler(delayedReqRes.req, delayedReqRes.res);
+
+      expect(delayedReqRes.res.statusCode).toBe(200);
+      expect(delayedReqRes.res.body.status).toBe('COMPLETED');
+      expect((db as any).calls.find((call: Call) => call.provider_call_id === sid).status).toBe('COMPLETED');
     });
   });
 

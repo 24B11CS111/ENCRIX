@@ -23,6 +23,24 @@ export function getTwilioServerConfig(): TwilioServerConfig {
 }
 
 /**
+ * Builds the callback URL used in Twilio's signature from the server-configured
+ * public origin and callback path. Proxy Host headers are never trusted for
+ * HMAC verification. Request query parameters are retained because Twilio signs
+ * the externally visible URL, including its query string.
+ */
+export function getTwilioWebhookSignatureUrl(configuredUrl: string, requestUrl: string): string | null {
+  try {
+    const configured = new URL(configuredUrl);
+    if (configured.protocol !== 'https:' || configured.username || configured.password) return null;
+    const requested = new URL(requestUrl, configured.origin);
+    if (requested.pathname !== configured.pathname) return null;
+    return `${configured.origin}${requested.pathname}${requested.search}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Cryptographically verifies the Twilio X-Twilio-Signature HMAC-SHA1 header.
  * Rejects forged or tampered webhook callbacks.
  */

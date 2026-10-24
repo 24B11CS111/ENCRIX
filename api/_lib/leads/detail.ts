@@ -2,15 +2,15 @@ import {
   authenticateServerRequest,
   getSupabaseServerClient,
   isRealSupabaseServerConfigured,
-} from '../_lib/supabaseServer.js';
-import { db } from '../../src/services/supabase/db.js';
+} from '../supabaseServer.js';
+import { db } from '../../../src/services/supabase/db.js';
 import {
   scrubPhoneFromText,
   maskName,
   stripDigitsFromText,
   redactLongDigitsFromText,
   sanitizeStudentName,
-} from '../../src/lib/dataMasking.js';
+} from '../../../src/lib/dataMasking.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET' && req.method !== 'POST') {
@@ -198,7 +198,7 @@ export default async function handler(req: any, res: any) {
       lead_code: lead.lead_code,
       name: isTelecaller ? sanitizeStudentName(lead.name) : lead.name,
       email: isTelecaller ? undefined : lead.email,
-      source: lead.source,
+      source: isTelecaller ? stripDigitsFromText(lead.source) : lead.source,
       status: lead.status,
       priority: lead.priority,
       assigned_to: lead.assigned_to,
@@ -229,8 +229,12 @@ export default async function handler(req: any, res: any) {
       ipe_attempts: lead.ipe_attempts ?? (lead.metadata?.ipe_attempts as number | null) ?? null,
 
       // Approved student profile fields
-      category: lead.category ?? (lead.metadata?.category as string | null) ?? null,
-      gender: lead.gender ?? (lead.metadata?.gender as string | null) ?? null,
+      category: isTelecaller
+        ? stripDigitsFromText(lead.category ?? (lead.metadata?.category as string | null)) ?? null
+        : lead.category ?? (lead.metadata?.category as string | null) ?? null,
+      gender: isTelecaller
+        ? stripDigitsFromText(lead.gender ?? (lead.metadata?.gender as string | null)) ?? null
+        : lead.gender ?? (lead.metadata?.gender as string | null) ?? null,
       city: isTelecaller ? (stripDigitsFromText(rawCity) ?? null) : (rawCity ?? null),
       state: isTelecaller ? (stripDigitsFromText(rawState) ?? null) : (rawState ?? null),
       school_or_college: isTelecaller ? (redactLongDigitsFromText(rawSchool) ?? null) : (rawSchool ?? null),

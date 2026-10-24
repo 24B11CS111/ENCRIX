@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '@/services/supabase/db';
 import { sanitizeLeadForRole, scrubPhoneFromText } from '@/lib/dataMasking';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
-import detailHandler from '../../api/leads/detail';
+import detailHandler from '../../api/_lib/leads/detail';
 import callHandler from '../../api/telephony/call';
 import { Profile, Lead } from '@/types';
 import fs from 'fs';
@@ -352,7 +352,7 @@ describe('Phase 22.1: Security-Critical Schema Remediation & Zero Phone Hardenin
       expect(payloadStr).not.toContain('9123456789');
     });
 
-    it('/api/telephony/call: telecaller response includes only call session info, never phone', async () => {
+    it('/api/telephony/call: authorized request remains fail-closed without a call session or phone data', async () => {
       const { req, res } = createMockReqRes({
         method: 'POST',
         headers: { authorization: `Bearer ${tokenTelecallerA}` },
@@ -361,19 +361,19 @@ describe('Phase 22.1: Security-Critical Schema Remediation & Zero Phone Hardenin
 
       await callHandler(req, res);
 
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(503);
       const data = res.body;
 
-      expect(data.callId).toBeDefined();
-      expect(data.status).toBe('INITIATED');
-      expect(data.leadId).toBe(leadAAssigned.id);
-      expect(data.leadCode).toBe(leadAAssigned.lead_code);
+      expect(data.error).toMatch(/Secure call bridge is not configured/i);
+      expect(data.callId).toBeUndefined();
+      expect(data.status).toBeUndefined();
 
-      // ZERO phone exposure
+      // ZERO phone exposure, including on a fail-closed response.
       expect(data.phone).toBeUndefined();
       expect(data.maskedPhone).toBeUndefined();
       expect('phone' in data).toBe(false);
       expect('maskedPhone' in data).toBe(false);
+      expect(JSON.stringify(data)).not.toContain('9876543210');
     });
 
     it('Realtime payload sanitizer: strips all phone fields and scrubs notes/metadata for telecallers', () => {

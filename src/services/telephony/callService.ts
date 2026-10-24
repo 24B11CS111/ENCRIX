@@ -1,10 +1,31 @@
-import { Profile, TelephonySession } from '@/types';
+import type { Profile, TelephonySession, CallStatus } from '@/types';
 import { db } from '@/services/supabase/db';
-import { ITelephonyProvider } from './provider';
+import type { ITelephonyProvider } from './provider';
 import { MockTelephonyProvider } from './mockProvider';
-import { TwilioTelephonyProvider } from './twilioProvider';
-import { TELEPHONY_PROVIDER } from '@/lib/config';
 import { isLiveApiMode, authService } from '@/services/auth/authService';
+
+export interface CallStatusSnapshot {
+  status: CallStatus;
+  durationSeconds: number;
+  startedAt?: string | null;
+  endedAt?: string | null;
+}
+
+export type EndCallResult =
+  | { mode: 'live'; accepted: boolean; status: CallStatus }
+  | { mode: 'demo'; durationSeconds: number; recordingUrl: string };
+
+const CALL_STATUSES = new Set<CallStatus>([
+  'INITIATED', 'RINGING', 'CONNECTED', 'IN_PROGRESS', 'COMPLETED',
+  'MISSED', 'NO_ANSWER', 'BUSY', 'CANCELED', 'FAILED',
+]);
+
+function requireCallStatus(value: unknown): CallStatus {
+  if (typeof value !== 'string' || !CALL_STATUSES.has(value as CallStatus)) {
+    throw new Error('Call status response was invalid');
+  }
+  return value as CallStatus;
+}
 
 export class CallService {
   private provider: ITelephonyProvider;
@@ -12,11 +33,13 @@ export class CallService {
   constructor(providerOverride?: ITelephonyProvider) {
     if (providerOverride) {
       this.provider = providerOverride;
-    } else if (TELEPHONY_PROVIDER === 'twilio') {
-      this.provider = new TwilioTelephonyProvider();
     } else {
       this.provider = new MockTelephonyProvider();
     }
+  }
+
+  public isLiveMode(): boolean {
+    return isLiveApiMode();
   }
 
   public getProvider(): ITelephonyProvider {
@@ -40,8 +63,14 @@ export class CallService {
     }
 
     // 2. In live API mode, dispatch call through secure serverless endpoint
-    if (isLiveApiMode() && typeof window !== 'undefined') {
+    if (isLiveApiMode()) {
+      if (typeof window === 'undefined') {
+        throw new Error('Live telephony requires an authenticated browser session');
+      }
       const token = authService.getSessionToken();
+      if (!token) {
+        throw new Error('Authentication is required to place a call');
+      }
       const res = await fetch('/api/telephony/call', {
         method: 'POST',
         headers: {
@@ -51,9 +80,12 @@ export class CallService {
         body: JSON.stringify({ leadId }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to dispatch outbound call');
+        throw new Error('Call dispatch failed. Please try again or contact support.');
+      }
+      if (typeof data?.callId !== 'string') {
+        throw new Error('Call dispatch response was invalid');
       }
 
       const session: TelephonySession = {
@@ -61,7 +93,7 @@ export class CallService {
         leadId,
         telecallerId: callerProfile.id,
         maskedPhoneNumber: callerProfile.role === 'TELECALLER' ? undefined : data.maskedPhone,
-        status: data.status || 'INITIATED',
+        status: requireCallStatus(data.status || 'INITIATED'),
         startedAt: new Date(),
         durationSeconds: 0,
         isMuted: false,
@@ -159,7 +191,27 @@ export class CallService {
   public async endCall(
     callId: string,
     callerProfile: Profile
-  ): Promise<{ durationSeconds: number; recordingUrl: string }> {
+  ): Promise<EndCallResult> {
+    if (isLiveApiMode()) {
+      const token = authService.getSessionToken();
+      if (!token) throw new Error('Authentication is required to end a call');
+      const res = await fetch('/api/telephony/call', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action: 'end', callId }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error('Call termination request failed');
+      return {
+        mode: 'live',
+        accepted: data?.accepted === true,
+        status: requireCallStatus(data?.status),
+      };
+    }
+
     const result = await this.provider.endCall(callId);
 
     // Log call completion
@@ -177,7 +229,33 @@ export class CallService {
       },
     });
 
-    return result;
+    return { mode: 'demo', ...result };
+  }
+
+  public async toggleMute(callId: string, isMuted: boolean): Promise<boolean> {
+    if (isLiveApiMode()) {
+      throw new Error('Live call mute control is not available in this deployment');
+    }
+    return this.provider.toggleMute(callId, isMuted);
+  }
+
+  public async getCallStatus(callId: string): Promise<CallStatusSnapshot> {
+    if (isLiveApiMode()) {
+      const token = authService.getSessionToken();
+      if (!token) throw new Error('Authentication is required to read call status');
+      const res = await fetch(`/api/telephony/call?callId=${encodeURIComponent(callId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error('Call status is unavailable');
+      return {
+        status: requireCallStatus(data?.status),
+        durationSeconds: Number.isFinite(data?.durationSeconds) ? data.durationSeconds : 0,
+        startedAt: typeof data?.startedAt === 'string' ? data.startedAt : null,
+        endedAt: typeof data?.endedAt === 'string' ? data.endedAt : null,
+      };
+    }
+    return { status: await this.provider.getCallStatus(callId), durationSeconds: 0 };
   }
 }
 

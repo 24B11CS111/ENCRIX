@@ -34,6 +34,8 @@ export interface SendOtpResult {
   resendAvailableAt?: string;
   cooldownSeconds?: number;
   expiresInSeconds?: number;
+  verificationTicket?: string;
+  registrationTicket?: string;
   error?: string;
 }
 
@@ -42,6 +44,8 @@ export interface VerifyOtpParams {
   email?: string;
   otp: string;
   purpose: OtpPurpose;
+  verificationTicket?: string;
+  registrationTicket?: string;
   registrationData?: {
     companyName: string;
     ownerName: string;
@@ -69,6 +73,8 @@ export interface InviteTelecallerParams {
 }
 
 export class AuthService {
+  private tickets: Map<string, string> = new Map();
+
   /**
    * Request OTP verification code for login, registration, or invitation.
    * OTP is delivered via SMS and NEVER returned to the client browser.
@@ -99,6 +105,8 @@ export class AuthService {
             purpose: params.purpose,
             fullName: params.fullName,
             companyName: params.companyName,
+            industry: params.industry,
+            companySize: params.companySize,
             email: emailResult?.normalized,
             inviteToken: params.inviteToken,
           }),
@@ -108,6 +116,13 @@ export class AuthService {
         if (!response.ok) {
           return { success: false, error: data.error || 'Failed to send verification code.' };
         }
+
+        const effectiveTicket = data.verificationTicket || data.registrationTicket;
+        if (effectiveTicket && (emailResult?.normalized || params.email)) {
+          const key = `${emailResult?.normalized || params.email}:${params.purpose}`;
+          this.tickets.set(key, effectiveTicket);
+        }
+
         return {
           success: true,
           maskedPhone: data.maskedPhone,
@@ -116,6 +131,8 @@ export class AuthService {
           resendAvailableAt: data.resendAvailableAt,
           cooldownSeconds: data.cooldownSeconds,
           expiresInSeconds: data.expiresInSeconds,
+          verificationTicket: effectiveTicket,
+          registrationTicket: effectiveTicket,
         };
       } catch (err: any) {
         return { success: false, error: err.message || 'Network error while requesting verification code.' };
@@ -176,6 +193,9 @@ export class AuthService {
 
     if (isLiveApiMode()) {
       try {
+        const ticketKey = `${emailResult?.normalized || params.email}:${params.purpose}`;
+        const effectiveTicket = params.verificationTicket || params.registrationTicket || this.tickets.get(ticketKey);
+
         const response = await fetch('/api/auth/verify-otp', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -186,6 +206,8 @@ export class AuthService {
             purpose: params.purpose,
             inviteToken: params.inviteToken,
             registrationData: params.registrationData,
+            verificationTicket: effectiveTicket,
+            registrationTicket: effectiveTicket,
           }),
         });
 
@@ -319,8 +341,25 @@ export class AuthService {
   }
 
   /**
-   * Sends an invitation to a telecaller to join the organization.
+   * Revokes the active server session and clears local session tokens.
    */
+  public async logout(): Promise<void> {
+    const token = this.getSessionToken();
+    if (token) {
+      try {
+        await fetch('/api/auth/session', {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        // Network error handled
+      }
+    }
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('leadvault_session_token');
+      localStorage.removeItem('leadvault_session');
+    }
+  }
   public async inviteTelecaller(params: InviteTelecallerParams): Promise<{
     success: boolean;
     invitation?: OrganizationInvitation;

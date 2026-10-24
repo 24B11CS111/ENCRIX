@@ -1,14 +1,9 @@
-import { TelephonyProvider } from '@/types';
-import { MockTelephonyProvider } from './mockProvider';
-import { TwilioTelephonyProvider } from './twilioProvider';
+import type { TelephonyProvider } from '@/types';
 import { callService, CallService } from './callService';
-import { webhookHandler, TelephonyWebhookHandler } from './webhookHandler';
 
 export * from './provider';
 export { MockTelephonyProvider } from './mockProvider';
-export { TwilioTelephonyProvider } from './twilioProvider';
 export { callService, CallService } from './callService';
-export { webhookHandler, TelephonyWebhookHandler } from './webhookHandler';
 export { recordingService, RecordingService } from './recordingService';
 
 // Export default singleton telephonyService maintaining backwards-compatibility

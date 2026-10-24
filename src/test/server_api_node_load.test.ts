@@ -10,13 +10,13 @@ describe('server API module loading in native Node.js', () => {
   it('loads API modules that depend on db without Vite import.meta.env or browser Supabase initialization', () => {
     const routes = [
       './api/auth/invite.ts',
+      './api/auth/phone-enrollment.ts',
       './api/auth/send-otp.ts',
       './api/auth/session.ts',
       './api/auth/verify-otp.ts',
       './api/cron/follow-up-reminders.ts',
-      './api/leads/detail.ts',
-      './api/leads/distribute.ts',
-      './api/leads/distribution-config.ts',
+      './api/leads.ts',
+      './api/billing.ts',
       './api/telephony/call.ts',
       './api/telephony/recording.ts',
       './api/telephony/voice.ts',

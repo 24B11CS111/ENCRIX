@@ -270,6 +270,63 @@ describe('ENCRIX Phase 19: Premium Startup Animation & Demo UI Removal', () => {
       expect(indicator).toBeInTheDocument();
       expect(indicator).toHaveTextContent(/System Secure/i);
     });
+
+    it('does not query restricted security-event records for a telecaller', async () => {
+      const telecaller = DEMO_PROFILES.find((p) => p.role === 'TELECALLER' && p.status === 'ACTIVE')!;
+      vi.spyOn(authService, 'getSessionToken').mockReturnValue('mock-telecaller-token');
+      vi.spyOn(authService, 'restoreServerSession').mockResolvedValue({
+        authenticated: true,
+        profile: telecaller,
+        organization: DEMO_ORGS.find((org) => org.id === telecaller.organization_id),
+        role: 'TELECALLER',
+      });
+      const securityEvents = vi.spyOn(db, 'getSecurityEvents');
+
+      render(
+        <MemoryRouter>
+          <AuthProvider>
+            <Navbar />
+          </AuthProvider>
+        </MemoryRouter>
+      );
+
+      await act(async () => {
+        vi.runAllTimers();
+      });
+
+      expect(screen.getByTestId('navbar-security-indicator')).toHaveTextContent(/Role Protected/i);
+      expect(securityEvents).not.toHaveBeenCalled();
+    });
+
+    it('removes the server-signed token on sign-out', async () => {
+      const telecaller = DEMO_PROFILES.find((p) => p.role === 'TELECALLER' && p.status === 'ACTIVE')!;
+      localStorage.setItem('leadvault_session_token', 'synthetic-session-token');
+      vi.spyOn(authService, 'getSessionToken').mockReturnValue('synthetic-session-token');
+      vi.spyOn(authService, 'restoreServerSession').mockResolvedValue({
+        authenticated: true,
+        profile: telecaller,
+        organization: DEMO_ORGS.find((org) => org.id === telecaller.organization_id),
+        role: 'TELECALLER',
+      });
+
+      render(
+        <MemoryRouter>
+          <AuthProvider>
+            <Navbar />
+          </AuthProvider>
+        </MemoryRouter>
+      );
+
+      await act(async () => {
+        vi.runAllTimers();
+      });
+      await act(async () => {
+        screen.getByTitle('Log Out').click();
+      });
+
+      expect(localStorage.getItem('leadvault_session')).toBeNull();
+      expect(localStorage.getItem('leadvault_session_token')).toBeNull();
+    });
   });
 
   // 5. Route Protection & Dashboard Access Guarantees

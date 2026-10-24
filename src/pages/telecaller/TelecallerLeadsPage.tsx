@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
+import { Lead, LeadStatus } from '@/types';
+import { leadService } from '@/services/leads/leadService';
 import { db } from '@/services/supabase/db';
-import { Lead } from '@/types';
+import { isRealSupabaseConfigured } from '@/services/supabase/client';
+import { IS_DEMO_MODE } from '@/lib/config';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
 import { SearchBar } from '@/components/common/SearchBar';
@@ -17,11 +20,15 @@ import {
   ShieldAlert,
   ShieldCheck,
   Users,
+  Pencil,
+  Loader2,
 } from 'lucide-react';
 import { EmptyState } from '@/components/common/EmptyState';
 
 export const TelecallerLeadsPage: React.FC = () => {
   const { profile } = useAuth();
+  const sessionIdentityRef = useRef(profile?.user_id || null);
+  sessionIdentityRef.current = profile?.user_id || null;
   const [leads, setLeads] = useState<Lead[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -36,28 +43,109 @@ export const TelecallerLeadsPage: React.FC = () => {
   const [completedCallId, setCompletedCallId] = useState<string | null>(null);
   const [isOutcomeOpen, setIsOutcomeOpen] = useState(false);
   const [exportBlockedAlert, setExportBlockedAlert] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [editingLead, setEditingLead] = useState<Lead | null>(null);
+  const [editStatus, setEditStatus] = useState<LeadStatus>('ASSIGNED');
+  const [editNotes, setEditNotes] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  const loadData = () => {
-    if (!profile) return;
-    setLeads(db.getLeads(profile));
-  };
+  const loadData = useCallback(async () => {
+    if (!profile || profile.role !== 'TELECALLER' || profile.status !== 'ACTIVE') {
+      setLeads([]);
+      setLoadError(profile ? 'An active telecaller profile is required.' : null);
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      setLeads(await leadService.getAssignedTelecallerLeads(profile));
+    } catch {
+      setLeads([]);
+      setLoadError('Assigned leads could not be loaded. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [profile]);
 
   useEffect(() => {
-    loadData();
+    let current = true;
+    setLeads([]);
+    setSelectedLeadId(null);
+    setCallingLead(null);
+    setEditingLead(null);
+    setIsDetailOpen(false);
+    setIsOutcomeOpen(false);
+    setCompletedCallId(null);
 
-    const unsubscribe = db.subscribe(({ type }) => {
+    const refresh = async () => {
+      if (!profile || profile.role !== 'TELECALLER' || profile.status !== 'ACTIVE') {
+        setLeads([]);
+        setLoadError(profile ? 'An active telecaller profile is required.' : null);
+        setIsLoading(false);
+        return;
+      }
+      setIsLoading(true);
+      setLoadError(null);
+      try {
+        const nextLeads = await leadService.getAssignedTelecallerLeads(profile);
+        if (current) setLeads(nextLeads);
+      } catch {
+        if (current) {
+          setLeads([]);
+          setLoadError('Assigned leads could not be loaded. Please try again.');
+        }
+      } finally {
+        if (current) setIsLoading(false);
+      }
+    };
+    void refresh();
+
+    const unsubscribe = (!isRealSupabaseConfigured() && IS_DEMO_MODE) ? db.subscribe(({ type }) => {
       if (
         type === 'LEADS_ASSIGNED' ||
         type === 'LEADS_ASSIGNED_ROUND_ROBIN' ||
         type === 'CALL_RECORDED' ||
         type === 'CALL_OUTCOME_SAVED'
       ) {
-        loadData();
+        void loadData();
       }
-    }, profile);
+    }, profile) : undefined;
 
-    return () => unsubscribe();
-  }, [profile]);
+    return () => {
+      current = false;
+      unsubscribe?.();
+    };
+  }, [profile, loadData]);
+
+  const openEdit = (lead: Lead) => {
+    setEditingLead(lead);
+    setEditStatus(lead.status);
+    setEditNotes(lead.notes || '');
+    setSaveError(null);
+  };
+
+  const saveLead = async () => {
+    if (!editingLead || !profile || isSaving) return;
+    const submittingIdentity = profile.user_id;
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      const updated = await leadService.updateAssignedTelecallerLead(
+        editingLead.id, editStatus, editNotes, profile
+      );
+      if (sessionIdentityRef.current !== submittingIdentity) return;
+      setLeads((current) => current.map((lead) => lead.id === updated.id ? updated : lead));
+      setEditingLead(null);
+    } catch {
+      if (sessionIdentityRef.current !== submittingIdentity) return;
+      setSaveError('The lead could not be updated. Check your assignment and try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const filteredLeads = leads.filter((l) => {
     // Zero phone exposure: Telecallers search exclusively by code, name, and source
@@ -194,7 +282,11 @@ export const TelecallerLeadsPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#DCE4EE]">
-              {paginatedLeads.length === 0 ? (
+              {isLoading ? (
+                <tr><td colSpan={6} className="py-12 text-center text-sm text-[#64748B]">Loading assigned leads…</td></tr>
+              ) : loadError ? (
+                <tr><td colSpan={6} className="py-12 text-center"><div role="alert" className="text-sm text-[#C53030]">{loadError}</div><button onClick={() => void loadData()} className="mt-3 rounded border border-[#DCE4EE] px-3 py-1.5 text-xs">Retry</button></td></tr>
+              ) : paginatedLeads.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-12 text-center">
                     <EmptyState
@@ -237,6 +329,14 @@ export const TelecallerLeadsPage: React.FC = () => {
 
                     <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => openEdit(lead)}
+                          className="p-1.5 rounded-[8px] bg-white border border-[#DCE4EE] text-[#64748B] hover:text-[#0B1F3A] hover:bg-[#F6F8FB] transition-colors shadow-subtle"
+                          title="Update lead status and notes"
+                          aria-label={`Edit ${lead.lead_code}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           onClick={() => {
                             setSelectedLeadId(lead.id);
@@ -287,6 +387,26 @@ export const TelecallerLeadsPage: React.FC = () => {
           }
         }}
       />
+
+      {editingLead && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="presentation">
+          <section role="dialog" aria-modal="true" aria-labelledby="telecaller-edit-title" className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl">
+            <h2 id="telecaller-edit-title" className="text-lg font-semibold text-[#0B1F3A]">Update lead</h2>
+            <p className="mt-1 text-xs text-[#64748B]">{editingLead.lead_code} · {editingLead.name}</p>
+            <label className="mt-4 block text-xs font-medium text-[#172B4D]" htmlFor="telecaller-lead-status">Status</label>
+            <select id="telecaller-lead-status" value={editStatus} disabled={isSaving} onChange={(event) => setEditStatus(event.target.value as LeadStatus)} className="mt-1 w-full rounded border border-[#DCE4EE] p-2 text-sm">
+              {(['ASSIGNED', 'CONTACTED', 'INTERESTED', 'FOLLOW_UP', 'CONVERTED', 'NOT_INTERESTED', 'INVALID', 'DO_NOT_CONTACT'] as LeadStatus[]).map((status) => <option key={status} value={status}>{status.replaceAll('_', ' ')}</option>)}
+            </select>
+            <label className="mt-4 block text-xs font-medium text-[#172B4D]" htmlFor="telecaller-lead-notes">Notes</label>
+            <textarea id="telecaller-lead-notes" value={editNotes} disabled={isSaving} onChange={(event) => setEditNotes(event.target.value)} rows={4} maxLength={4000} className="mt-1 w-full rounded border border-[#DCE4EE] p-2 text-sm" />
+            {saveError && <p role="alert" className="mt-3 text-sm text-[#C53030]">{saveError}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button disabled={isSaving} onClick={() => setEditingLead(null)} className="rounded border border-[#DCE4EE] px-3 py-2 text-xs">Cancel</button>
+              <button disabled={isSaving} onClick={() => void saveLead()} className="inline-flex items-center gap-2 rounded bg-[#0B1F3A] px-3 py-2 text-xs font-semibold text-white disabled:opacity-60">{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}Save</button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* ACTIVE CALL MODAL */}
       {callingLead && (

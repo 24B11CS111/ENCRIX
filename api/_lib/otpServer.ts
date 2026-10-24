@@ -43,6 +43,129 @@ export function verifyOtpHash(identifier: string, candidateOtp: string, expected
   return crypto.timingSafeEqual(Buffer.from(candidateHash), Buffer.from(expectedHash));
 }
 
+export interface VerificationTicketPayload {
+  ticketId: string;
+  email: string;
+  purpose: 'LOGIN' | 'REGISTER' | 'INVITATION';
+  otpHash: string;
+  expiresAt: string;
+  companyName?: string;
+  ownerName?: string;
+  phone?: string | null;
+  industry?: string;
+  companySize?: string;
+  inviteToken?: string;
+  issuedAt: number;
+}
+
+// In-memory replay tracking for consumed verification tickets
+export const consumedTickets = new Map<string, number>();
+
+export function markTicketConsumed(ticketId: string, expiresAt: string): void {
+  if (!ticketId) return;
+  const exp = new Date(expiresAt).getTime();
+  consumedTickets.set(ticketId, exp);
+
+  // Prune expired tickets if cache exceeds 500 entries
+  if (consumedTickets.size > 500) {
+    const now = Date.now();
+    for (const [id, expiry] of consumedTickets.entries()) {
+      if (expiry <= now) {
+        consumedTickets.delete(id);
+      }
+    }
+  }
+}
+
+export function isTicketConsumed(ticketId: string): boolean {
+  if (!ticketId) return false;
+  const expiry = consumedTickets.get(ticketId);
+  if (!expiry) return false;
+  if (expiry <= Date.now()) {
+    consumedTickets.delete(ticketId);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Creates an HMAC-SHA256 signed stateless ticket containing the OTP hash and registration data.
+ * Used to ensure resilient verification across multi-instance serverless Lambdas and during
+ * transitions before database pending tables are migrated.
+ */
+export function createVerificationTicket(payload: Omit<VerificationTicketPayload, 'issuedAt' | 'ticketId'> & { ticketId?: string }): string {
+  const secret = getRequiredServerSecret('OTP_SERVER_SECRET');
+  const fullPayload: VerificationTicketPayload = {
+    ...payload,
+    ticketId: payload.ticketId || crypto.randomUUID(),
+    issuedAt: Date.now(),
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(fullPayload), 'utf-8').toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', secret)
+    .update(encodedPayload)
+    .digest('base64url');
+  return `${encodedPayload}.${signature}`;
+}
+
+/**
+ * Timing-safe cryptographic verification of an OTP ticket.
+ * Returns decoded payload if valid, unexpired, and not previously consumed; returns null otherwise.
+ */
+export function verifyVerificationTicket(ticket: string): VerificationTicketPayload | null {
+  if (!ticket || typeof ticket !== 'string' || !ticket.includes('.')) {
+    return null;
+  }
+  const parts = ticket.split('.');
+  if (parts.length !== 2) {
+    return null;
+  }
+  const [encodedPayload, signature] = parts;
+  try {
+    const secret = getRequiredServerSecret('OTP_SERVER_SECRET');
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(encodedPayload)
+      .digest('base64url');
+
+    if (signature.length !== expectedSignature.length) {
+      return null;
+    }
+    const match = crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature)
+    );
+    if (!match) {
+      return null;
+    }
+
+    const payloadJson = Buffer.from(encodedPayload, 'base64url').toString('utf-8');
+    const payload: VerificationTicketPayload = JSON.parse(payloadJson);
+
+    if (!payload.email || !payload.purpose || !payload.otpHash || !payload.expiresAt) {
+      return null;
+    }
+
+    // Check expiration
+    if (new Date(payload.expiresAt).getTime() <= Date.now()) {
+      return null;
+    }
+
+    // Check replay consumption
+    if (payload.ticketId && isTicketConsumed(payload.ticketId)) {
+      return null;
+    }
+
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+export const createRegistrationTicket = createVerificationTicket;
+export const verifyRegistrationTicket = verifyVerificationTicket;
+
+
 /**
  * Checks if a live email provider is configured.
  */
@@ -60,6 +183,10 @@ export function isLiveEmailConfigured(): boolean {
     !process.env.SENDGRID_API_KEY.includes('test')
   );
   return hasResend || hasSendGrid;
+}
+
+function isSafeLocalDevelopmentRuntime(): boolean {
+  return process.env.NODE_ENV === 'development' && !process.env.VERCEL && !process.env.VERCEL_ENV;
 }
 
 /**
@@ -227,6 +354,33 @@ export async function sendVerificationEmail(
   }
 
   const { subject, text, html } = getEncrixEmailContent(otp);
+
+  // Explicit, opt-in local-only delivery. Never fall through to an external provider
+  // when local Mailpit mode was requested but the runtime is not the local Vite server.
+  if (process.env.ENCRIX_LOCAL_OTP_TRANSPORT) {
+    if (process.env.ENCRIX_LOCAL_OTP_TRANSPORT !== 'mailpit' || !isSafeLocalDevelopmentRuntime()) {
+      throw new Error('BLOCKED — LOCAL MAILPIT TRANSPORT IS AVAILABLE ONLY IN LOCAL DEVELOPMENT');
+    }
+
+    let response: Response;
+    try {
+      response = await fetch('http://127.0.0.1:54324/api/v1/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          From: { Name: 'ENCRIX Local', Email: 'auth@local.encrix.test' },
+          To: [{ Email: normalized }],
+          Subject: subject,
+          Text: text,
+          HTML: html,
+        }),
+      });
+    } catch {
+      throw new Error('BLOCKED — LOCAL MAILPIT DELIVERY FAILED');
+    }
+    if (!response.ok) throw new Error('BLOCKED — LOCAL MAILPIT DELIVERY FAILED');
+    return { success: true, provider: 'MAILPIT_LOCAL' };
+  }
 
   // Provider 1: Resend
   if (
