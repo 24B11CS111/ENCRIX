@@ -240,26 +240,28 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: 'Invalid verification code.' });
     }
 
-    // 5. Invalidate OTP Immediately upon Successful Verification
-    serverOtpStore.delete(`${normalizedEmail}:${purpose}`);
-    if (otpRecord.ticketId) {
-      markTicketConsumed(otpRecord.ticketId, otpRecord.expires_at);
-    }
-    if (otpRecord.id && !otpRecord.id.startsWith('ticket-')) {
-      try {
-        if (purpose === 'REGISTER') {
-          await supabase
-            .from('pending_registrations')
-            .delete()
-            .eq('id', otpRecord.id);
-        } else {
-          await supabase
-            .from('email_otps')
-            .update({ used: true })
-            .eq('id', otpRecord.id);
+    // 5. Consume LOGIN/INVITATION OTPs now. For REGISTER, retain the pending
+    // registration until both the organization and owner profile are persisted.
+    if (purpose !== 'REGISTER') {
+      serverOtpStore.delete(`${normalizedEmail}:${purpose}`);
+      if (otpRecord.ticketId) {
+        markTicketConsumed(otpRecord.ticketId, otpRecord.expires_at);
+      }
+      if (otpRecord.id && !String(otpRecord.id).startsWith('ticket-') &&
+          !['otp-local', 'preg-local'].includes(String(otpRecord.id))) {
+        const { error: invalidateError } = await supabase
+          .from('email_otps')
+          .update({ used: true })
+          .eq('id', otpRecord.id);
+        if (invalidateError) {
+          console.error('[verify-otp] OTP invalidation failed', {
+            stage: 'email_otps.update',
+            code: safeDatabaseErrorCode(invalidateError),
+          });
+          return res.status(500).json({
+            error: 'Could not complete verification. Please request a new code.',
+          });
         }
-      } catch {
-        // Invalidation error handled
       }
     }
 
@@ -339,15 +341,13 @@ export default async function handler(req: any, res: any) {
       }
 
       if (!resolvedOrg) {
-        resolvedOrg = {
-          id: `org-${crypto.randomUUID()}`,
-          name: pendingReg.company_name,
-          slug: uniqueSlug,
-          industry: pendingReg.industry || 'General',
-          company_size: pendingReg.company_size || '1-10',
-          owner_id: ownerUserId,
-          status: 'ACTIVE',
-        };
+        console.error('[verify-otp] Organization insert returned no row', {
+          stage: 'organizations.insert',
+          code: 'empty_result',
+        });
+        return res.status(500).json({
+          error: 'The organization could not be saved. Please try again.',
+        });
       }
 
       // Create Owner Profile (Server-Side Only!)
@@ -410,18 +410,50 @@ export default async function handler(req: any, res: any) {
       }
 
       if (!resolvedProfile) {
-        resolvedProfile = {
-          id: `prof-${crypto.randomUUID()}`,
-          user_id: resolvedOrg.owner_id,
-          organization_id: resolvedOrg.id,
-          full_name: pendingReg.owner_name,
-          email: normalizedEmail,
-          phone: pendingReg.phone_number || null,
-          email_verified: true,
-          phone_verified: false,
-          role: 'OWNER',
-          status: 'ACTIVE',
-        };
+        console.error('[verify-otp] Owner profile insert returned no row', {
+          stage: 'profiles.insert',
+          code: 'empty_result',
+        });
+        // Best-effort rollback: never leave an orphaned organization.
+        try {
+          await supabase.from('organizations').delete().eq('id', resolvedOrg.id);
+        } catch {
+          // Preserve the primary failure.
+        }
+        return res.status(500).json({
+          error: 'The owner profile could not be saved. Please try again.',
+        });
+      }
+
+      // Account creation is now persisted. Consume registration state only now.
+      serverOtpStore.delete(`${normalizedEmail}:REGISTER`);
+      if (otpRecord.ticketId) {
+        markTicketConsumed(otpRecord.ticketId, otpRecord.expires_at);
+      }
+      const { error: pendingCleanupError } = await supabase
+        .from('pending_registrations')
+        .delete()
+        .eq('email', normalizedEmail);
+      if (pendingCleanupError) {
+        console.error('[verify-otp] Pending registration cleanup failed', {
+          stage: 'pending_registrations.delete',
+          code: safeDatabaseErrorCode(pendingCleanupError),
+        });
+      }
+      if (otpRecord.id && !String(otpRecord.id).startsWith('ticket-') &&
+          !['preg-local', 'otp-local'].includes(String(otpRecord.id))) {
+        const { error: otpCleanupError } = await supabase
+          .from('email_otps')
+          .update({ used: true })
+          .eq('email', normalizedEmail)
+          .eq('purpose', 'REGISTER')
+          .eq('used', false);
+        if (otpCleanupError) {
+          console.error('[verify-otp] Registration OTP cleanup failed', {
+            stage: 'email_otps.update',
+            code: safeDatabaseErrorCode(otpCleanupError),
+          });
+        }
       }
 
       resultProfile = resolvedProfile;
