@@ -155,6 +155,7 @@ export default async function handler(req: any, res: any) {
         if (ticketData && ticketData.email === normalizedEmail && ticketData.purpose === purpose) {
           otpRecord = {
             id: 'ticket-otp',
+            ticketId: ticketData.ticketId,
             email: ticketData.email,
             purpose: ticketData.purpose,
             otp_hash: ticketData.otpHash,
@@ -203,20 +204,22 @@ export default async function handler(req: any, res: any) {
         mem.attempts = updatedAttempts;
       }
 
-      try {
-        if (purpose === 'REGISTER') {
-          await supabase
-            .from('pending_registrations')
-            .update({ attempts: updatedAttempts })
-            .eq('id', otpRecord.id);
-        } else {
-          await supabase
-            .from('email_otps')
-            .update({ attempts: updatedAttempts })
-            .eq('id', otpRecord.id);
+      if (otpRecord.id && !otpRecord.id.startsWith('ticket-')) {
+        try {
+          if (purpose === 'REGISTER') {
+            await supabase
+              .from('pending_registrations')
+              .update({ attempts: updatedAttempts })
+              .eq('id', otpRecord.id);
+          } else {
+            await supabase
+              .from('email_otps')
+              .update({ attempts: updatedAttempts })
+              .eq('id', otpRecord.id);
+          }
+        } catch {
+          // Update error handled
         }
-      } catch {
-        // Update error handled
       }
 
       try {
@@ -242,20 +245,22 @@ export default async function handler(req: any, res: any) {
     if (otpRecord.ticketId) {
       markTicketConsumed(otpRecord.ticketId, otpRecord.expires_at);
     }
-    try {
-      if (purpose === 'REGISTER') {
-        await supabase
-          .from('pending_registrations')
-          .delete()
-          .eq('id', otpRecord.id);
-      } else {
-        await supabase
-          .from('email_otps')
-          .update({ used: true })
-          .eq('id', otpRecord.id);
+    if (otpRecord.id && !otpRecord.id.startsWith('ticket-')) {
+      try {
+        if (purpose === 'REGISTER') {
+          await supabase
+            .from('pending_registrations')
+            .delete()
+            .eq('id', otpRecord.id);
+        } else {
+          await supabase
+            .from('email_otps')
+            .update({ used: true })
+            .eq('id', otpRecord.id);
+        }
+      } catch {
+        // Invalidation error handled
       }
-    } catch {
-      // Invalidation error handled
     }
 
     // 6. Fulfill Verification by Purpose

@@ -14,6 +14,7 @@ export const LoginPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
   const [maskedEmail, setMaskedEmail] = useState('');
+  const [verificationTicket, setVerificationTicket] = useState<string | undefined>(undefined);
   const [cooldown, setCooldown] = useState(60);
   const [expiresAt, setExpiresAt] = useState<string | undefined>(undefined);
   const [resendAvailableAt, setResendAvailableAt] = useState<string | undefined>(undefined);
@@ -40,6 +41,7 @@ export const LoginPage: React.FC = () => {
     setIsLoading(false);
 
     if (result.success) {
+      setVerificationTicket(result.verificationTicket);
       setMaskedEmail(result.maskedEmail || norm.masked);
       setCooldown(result.cooldownSeconds || 60);
       setExpiresAt(result.expiresAt);
@@ -67,6 +69,7 @@ export const LoginPage: React.FC = () => {
       email: norm.normalized,
       otp: code,
       purpose: 'LOGIN',
+      verificationTicket,
     });
     setIsLoading(false);
 
@@ -90,6 +93,7 @@ export const LoginPage: React.FC = () => {
     setIsLoading(false);
 
     if (result.success) {
+      setVerificationTicket(result.verificationTicket);
       setCooldown(result.cooldownSeconds || 60);
       setExpiresAt(result.expiresAt);
       setResendAvailableAt(result.resendAvailableAt);
@@ -192,6 +196,7 @@ export const LoginPage: React.FC = () => {
                   onClick={() => {
                     setStep(1);
                     setError(null);
+                    setVerificationTicket(undefined);
                   }}
                   disabled={isLoading}
                   className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold text-[#64748B] hover:text-[#0B1F3A] transition-colors"

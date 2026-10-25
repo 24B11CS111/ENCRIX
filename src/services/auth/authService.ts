@@ -75,6 +75,64 @@ export interface InviteTelecallerParams {
 export class AuthService {
   private tickets: Map<string, string> = new Map();
 
+  private getStorageKey(key: string): string {
+    return `encrix_ticket_${key}`;
+  }
+
+  public getStoredTicket(key: string): string | undefined {
+    try {
+      if (typeof window !== 'undefined' && 'sessionStorage' in window) {
+        const item = sessionStorage.getItem(this.getStorageKey(key));
+        if (item) return item;
+      }
+    } catch {
+      // Storage unavailable fallback
+    }
+    return this.tickets.get(key);
+  }
+
+  public setStoredTicket(key: string, ticket: string): void {
+    this.tickets.set(key, ticket);
+    try {
+      if (typeof window !== 'undefined' && 'sessionStorage' in window) {
+        sessionStorage.setItem(this.getStorageKey(key), ticket);
+      }
+    } catch {
+      // Storage unavailable fallback
+    }
+  }
+
+  public clearStoredTicket(key: string): void {
+    this.tickets.delete(key);
+    try {
+      if (typeof window !== 'undefined' && 'sessionStorage' in window) {
+        sessionStorage.removeItem(this.getStorageKey(key));
+      }
+    } catch {
+      // Storage unavailable fallback
+    }
+  }
+
+  public clearAllStoredTickets(): void {
+    this.tickets.clear();
+    try {
+      if (typeof window !== 'undefined' && 'sessionStorage' in window) {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const k = sessionStorage.key(i);
+          if (k && k.startsWith('encrix_ticket_')) {
+            keysToRemove.push(k);
+          }
+        }
+        for (const k of keysToRemove) {
+          sessionStorage.removeItem(k);
+        }
+      }
+    } catch {
+      // Storage unavailable fallback
+    }
+  }
+
   /**
    * Request OTP verification code for login, registration, or invitation.
    * OTP is delivered via SMS and NEVER returned to the client browser.
@@ -120,7 +178,7 @@ export class AuthService {
         const effectiveTicket = data.verificationTicket || data.registrationTicket;
         if (effectiveTicket && (emailResult?.normalized || params.email)) {
           const key = `${emailResult?.normalized || params.email}:${params.purpose}`;
-          this.tickets.set(key, effectiveTicket);
+          this.setStoredTicket(key, effectiveTicket);
         }
 
         return {
@@ -194,7 +252,7 @@ export class AuthService {
     if (isLiveApiMode()) {
       try {
         const ticketKey = `${emailResult?.normalized || params.email}:${params.purpose}`;
-        const effectiveTicket = params.verificationTicket || params.registrationTicket || this.tickets.get(ticketKey);
+        const effectiveTicket = params.verificationTicket || params.registrationTicket || this.getStoredTicket(ticketKey);
 
         const response = await fetch('/api/auth/verify-otp', {
           method: 'POST',
@@ -213,8 +271,18 @@ export class AuthService {
 
         const data = await response.json();
         if (!response.ok) {
+          if (data.error && (
+            data.error.includes('expired') ||
+            data.error.includes('Too many attempts') ||
+            data.error.includes('No active verification code')
+          )) {
+            this.clearStoredTicket(ticketKey);
+          }
           return { success: false, error: data.error || 'Verification failed.' };
         }
+
+        // Verification succeeded: clean up ticket
+        this.clearStoredTicket(ticketKey);
 
         if (data.success && data.profile) {
           if (typeof window !== 'undefined' && 'localStorage' in window) {
@@ -355,6 +423,7 @@ export class AuthService {
         // Network error handled
       }
     }
+    this.clearAllStoredTickets();
     if (typeof window !== 'undefined') {
       localStorage.removeItem('leadvault_session_token');
       localStorage.removeItem('leadvault_session');
