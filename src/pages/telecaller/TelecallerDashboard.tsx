@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
+import { metricsService, TelecallerDashboardMetrics } from '@/services/metrics/metricsService';
 import { Lead, Call, FollowUp } from '@/types';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
@@ -29,6 +30,7 @@ export const TelecallerDashboard: React.FC = () => {
   const [assignedLeads, setAssignedLeads] = useState<Lead[]>([]);
   const [calls, setCalls] = useState<Call[]>([]);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+  const [serverMetrics, setServerMetrics] = useState<TelecallerDashboardMetrics | null>(null);
 
   // Active calling modal states
   const [callingLead, setCallingLead] = useState<Lead | null>(null);
@@ -37,11 +39,20 @@ export const TelecallerDashboard: React.FC = () => {
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!profile) return;
     setAssignedLeads(db.getLeads(profile));
     setCalls(db.getCalls(profile));
     setFollowUps(db.getFollowUps(profile));
+
+    try {
+      const metrics = await metricsService.getDashboardMetrics<TelecallerDashboardMetrics>(profile);
+      if (metrics) {
+        setServerMetrics(metrics);
+      }
+    } catch {
+      // Keep db fallback values
+    }
   };
 
   useEffect(() => {
@@ -63,16 +74,16 @@ export const TelecallerDashboard: React.FC = () => {
   }, [profile]);
 
   // Telecaller metrics
-  const totalAssigned = assignedLeads.length;
+  const totalAssigned = serverMetrics ? serverMetrics.totalAssigned : assignedLeads.length;
 
   const oneDayAgo = new Date(Date.now() - 86400000);
-  const callsToday = calls.filter((c) => new Date(c.created_at) > oneDayAgo).length;
+  const callsToday = serverMetrics ? serverMetrics.callsToday : calls.filter((c) => new Date(c.created_at) > oneDayAgo).length;
 
-  const positiveLeads = assignedLeads.filter(
+  const positiveLeads = serverMetrics ? serverMetrics.positiveLeads : assignedLeads.filter(
     (l) => l.status === 'INTERESTED' || l.status === 'CONVERTED'
   ).length;
 
-  const myFollowUps = followUps.filter(
+  const myFollowUps = serverMetrics ? serverMetrics.myFollowUps : followUps.filter(
     (f) => f.status !== 'COMPLETED' && f.status !== 'CANCELLED' && f.status !== 'RESCHEDULED'
   ).length;
 

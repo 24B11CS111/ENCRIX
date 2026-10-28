@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
+import { metricsService, OwnerDashboardMetrics } from '@/services/metrics/metricsService';
 import { Lead, Call, FollowUp, Profile, SecurityEvent } from '@/types';
 import {
   Users,
@@ -37,14 +38,24 @@ export const OwnerDashboard: React.FC = () => {
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [telecallers, setTelecallers] = useState<Profile[]>([]);
   const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([]);
+  const [serverMetrics, setServerMetrics] = useState<OwnerDashboardMetrics | null>(null);
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!profile) return;
     setLeads(db.getLeads(profile));
     setCalls(db.getCalls(profile));
     setFollowUps(db.getFollowUps(profile));
     setTelecallers(db.getTelecallers(profile));
     setSecurityEvents(db.getSecurityEvents(profile));
+
+    try {
+      const metrics = await metricsService.getDashboardMetrics<OwnerDashboardMetrics>(profile);
+      if (metrics) {
+        setServerMetrics(metrics);
+      }
+    } catch {
+      // Keep db fallback values
+    }
   };
 
   useEffect(() => {
@@ -70,9 +81,9 @@ export const OwnerDashboard: React.FC = () => {
     return () => unsubscribe();
   }, [profile]);
 
-  const totalLeads = leads.length;
-  const assignedLeads = leads.filter((l) => l.assigned_to).length;
-  const unassignedLeads = totalLeads - assignedLeads;
+  const totalLeads = serverMetrics ? serverMetrics.totalLeads : leads.length;
+  const assignedLeads = serverMetrics ? serverMetrics.assignedLeads : leads.filter((l) => l.assigned_to).length;
+  const unassignedLeads = serverMetrics ? serverMetrics.unassignedLeads : (totalLeads - assignedLeads);
 
   // Real-time Live Calls in progress
   const liveActiveCalls = calls.filter(
@@ -81,54 +92,75 @@ export const OwnerDashboard: React.FC = () => {
 
   // Calls today (within last 24h)
   const oneDayAgo = new Date(Date.now() - 86400000);
-  const callsToday = calls.filter((c) => new Date(c.created_at) > oneDayAgo).length;
+  const callsToday = serverMetrics ? serverMetrics.callsToday : calls.filter((c) => new Date(c.created_at) > oneDayAgo).length;
 
   // Operational metrics
-  const totalCallsCount = calls.length;
-  const totalCallSeconds = calls.reduce((sum, c) => sum + (c.duration_seconds || 0), 0);
+  const totalCallsCount = serverMetrics ? serverMetrics.totalCallsCount : calls.length;
+  const totalCallSeconds = serverMetrics ? serverMetrics.totalCallSeconds : calls.reduce((sum, c) => sum + (c.duration_seconds || 0), 0);
   const totalCallMinutes = Math.round(totalCallSeconds / 60);
-  const answeredCallsCount = calls.filter(
+  const answeredCallsCount = serverMetrics ? serverMetrics.answeredCallsCount : calls.filter(
     (c) => (c.duration_seconds || 0) > 0 || c.status === 'COMPLETED'
   ).length;
-  const connectRate = totalCallsCount > 0 ? Math.round((answeredCallsCount / totalCallsCount) * 100) : 0;
+  const connectRate = serverMetrics ? serverMetrics.connectRate : (totalCallsCount > 0 ? Math.round((answeredCallsCount / totalCallsCount) * 100) : 0);
 
-  const conversions = leads.filter(
+  const conversions = serverMetrics ? serverMetrics.conversions : leads.filter(
     (l) => l.status === 'INTERESTED' || l.status === 'CONVERTED'
   ).length;
-  const activeFollowUps = followUps.filter(
+  const activeFollowUps = serverMetrics ? serverMetrics.activeFollowUps : followUps.filter(
     (f) => f.status !== 'COMPLETED' && f.status !== 'CANCELLED' && f.status !== 'RESCHEDULED'
   ).length;
-  const securityCount = securityEvents.length;
+  const securityCount = serverMetrics ? serverMetrics.securityCount : securityEvents.length;
 
   // Chart data: Outcome distribution
-  const outcomeStats = [
-    { name: 'Interested', value: leads.filter((l) => l.status === 'INTERESTED').length, color: '#1E4D8F' },
-    { name: 'Converted', value: leads.filter((l) => l.status === 'CONVERTED').length, color: '#16845B' },
-    { name: 'Follow-Up', value: leads.filter((l) => l.status === 'FOLLOW_UP').length, color: '#B7791F' },
-    { name: 'Contacted', value: leads.filter((l) => l.status === 'CONTACTED').length, color: '#0B1F3A' },
-    { name: 'Not Interested', value: leads.filter((l) => l.status === 'NOT_INTERESTED').length, color: '#64748B' },
-  ];
+  const outcomeStats = serverMetrics?.leadsByStatus
+    ? [
+        { name: 'Interested', value: serverMetrics.leadsByStatus.INTERESTED || 0, color: '#1E4D8F' },
+        { name: 'Converted', value: serverMetrics.leadsByStatus.CONVERTED || 0, color: '#16845B' },
+        { name: 'Follow-Up', value: serverMetrics.leadsByStatus.FOLLOW_UP || 0, color: '#B7791F' },
+        { name: 'Contacted', value: serverMetrics.leadsByStatus.CONTACTED || 0, color: '#0B1F3A' },
+        { name: 'Not Interested', value: serverMetrics.leadsByStatus.NOT_INTERESTED || 0, color: '#64748B' },
+      ]
+    : [
+        { name: 'Interested', value: leads.filter((l) => l.status === 'INTERESTED').length, color: '#1E4D8F' },
+        { name: 'Converted', value: leads.filter((l) => l.status === 'CONVERTED').length, color: '#16845B' },
+        { name: 'Follow-Up', value: leads.filter((l) => l.status === 'FOLLOW_UP').length, color: '#B7791F' },
+        { name: 'Contacted', value: leads.filter((l) => l.status === 'CONTACTED').length, color: '#0B1F3A' },
+        { name: 'Not Interested', value: leads.filter((l) => l.status === 'NOT_INTERESTED').length, color: '#64748B' },
+      ];
 
   // Chart data: Telecaller performance comparison & shift status
-  const telecallerData = telecallers.map((tc) => {
-    const callerLeads = leads.filter((l) => l.assigned_to === tc.id);
-    const callerCalls = calls.filter((c) => c.telecaller_id === tc.id);
-    const callerPositives = callerLeads.filter(
-      (l) => l.status === 'INTERESTED' || l.status === 'CONVERTED'
-    ).length;
+  const telecallerData = serverMetrics?.telecallerPerformance?.length
+    ? serverMetrics.telecallerPerformance.map((tc) => {
+        const isCalling = liveActiveCalls.some((c) => c.telecaller_id === tc.id);
+        const shiftStatus = tc.status === 'ACTIVE' ? (isCalling ? 'ON_CALL' : 'AVAILABLE') : 'OFFLINE';
+        return {
+          name: tc.fullName.split(' ')[0],
+          assigned: tc.leadsCount,
+          calls: tc.callsCount,
+          positive: tc.positiveCount,
+          shiftStatus,
+          status: tc.status,
+        };
+      })
+    : telecallers.map((tc) => {
+        const callerLeads = leads.filter((l) => l.assigned_to === tc.id);
+        const callerCalls = calls.filter((c) => c.telecaller_id === tc.id);
+        const callerPositives = callerLeads.filter(
+          (l) => l.status === 'INTERESTED' || l.status === 'CONVERTED'
+        ).length;
 
-    const isCalling = liveActiveCalls.some((c) => c.telecaller_id === tc.id);
-    const shiftStatus = tc.status === 'ACTIVE' ? (isCalling ? 'ON_CALL' : 'AVAILABLE') : 'OFFLINE';
+        const isCalling = liveActiveCalls.some((c) => c.telecaller_id === tc.id);
+        const shiftStatus = tc.status === 'ACTIVE' ? (isCalling ? 'ON_CALL' : 'AVAILABLE') : 'OFFLINE';
 
-    return {
-      name: tc.full_name.split(' ')[0],
-      assigned: callerLeads.length,
-      calls: callerCalls.length,
-      positive: callerPositives,
-      shiftStatus,
-      status: tc.status,
-    };
-  });
+        return {
+          name: tc.full_name.split(' ')[0],
+          assigned: callerLeads.length,
+          calls: callerCalls.length,
+          positive: callerPositives,
+          shiftStatus,
+          status: tc.status,
+        };
+      });
 
   const firstName = profile?.full_name?.split(' ')[0] || 'Leader';
 

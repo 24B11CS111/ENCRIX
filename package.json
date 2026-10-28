@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:staging": "vite --mode staging",
     "dev:vercel": "vercel dev --local --yes --listen 3000",
     "build": "tsc -b && tsc --noEmit -p tsconfig.api.json && vite build",
+    "build:staging": "tsc -b && tsc --noEmit -p tsconfig.api.json && vite build --mode staging",
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run"

@@ -613,7 +613,7 @@ describe('Phase 22.1: Security-Critical Schema Remediation & Zero Phone Hardenin
       expect(remediationSql).toMatch(/REVOKE CREATE ON SCHEMA public FROM PUBLIC/i);
       expect(remediationSql).toMatch(/REVOKE ALL ON SCHEMA public FROM anon/i);
 
-      // 7. telecaller_leads_view sanitization & digit stripping
+      // 7. from('telecaller_leads_view') sanitization & digit stripping
       expect(remediationSql).toMatch(/REGEXP_REPLACE\(l\.notes,.*?'\[PHONE PROTECTED\]'/i);
       expect(remediationSql).toMatch(/REGEXP_REPLACE\(l\.father_name, '\[0-9\]', '', 'g'\)/i);
       expect(remediationSql).toMatch(/REGEXP_REPLACE\(l\.city, '\[0-9\]', '', 'g'\)/i);

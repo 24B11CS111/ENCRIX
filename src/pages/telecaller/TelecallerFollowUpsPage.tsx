@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
+import { followUpService } from '@/services/followUps/followUpService';
 import { FollowUp, Lead, LeadPriority } from '@/types';
 import { formatDateTime, formatRelativeTime } from '@/lib/utils';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
@@ -65,9 +66,14 @@ export const TelecallerFollowUpsPage: React.FC = () => {
 
   const displayTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!profile) return;
-    setFollowUps(db.getFollowUps(profile));
+    try {
+      const serverFollowUps = await followUpService.getFollowUps(profile);
+      setFollowUps(serverFollowUps);
+    } catch {
+      setFollowUps(db.getFollowUps(profile));
+    }
     setLeads(db.getLeads(profile));
   };
 
@@ -198,7 +204,7 @@ export const TelecallerFollowUpsPage: React.FC = () => {
   };
 
   // Reschedule Handler
-  const handleRescheduleSubmit = (e: React.FormEvent) => {
+  const handleRescheduleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile || !reschedulingFup) return;
     setRescheduleError(null);
@@ -210,12 +216,21 @@ export const TelecallerFollowUpsPage: React.FC = () => {
 
     try {
       const newScheduledAt = `${rescheduleDate}T${rescheduleTime}:00Z`;
-      db.rescheduleFollowUp(
-        reschedulingFup.id,
-        newScheduledAt,
-        rescheduleReason,
-        profile
-      );
+      try {
+        await followUpService.rescheduleFollowUp(
+          reschedulingFup.id,
+          newScheduledAt,
+          rescheduleReason,
+          profile
+        );
+      } catch {
+        db.rescheduleFollowUp(
+          reschedulingFup.id,
+          newScheduledAt,
+          rescheduleReason,
+          profile
+        );
+      }
       setReschedulingFup(null);
       setRescheduleReason('');
       loadData();
@@ -225,17 +240,26 @@ export const TelecallerFollowUpsPage: React.FC = () => {
   };
 
   // Complete Handler
-  const handleCompleteSubmit = (e: React.FormEvent) => {
+  const handleCompleteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile || !completingFup) return;
 
     try {
-      db.completeFollowUp(
-        completingFup.id,
-        profile,
-        completionNotes,
-        completionOutcome
-      );
+      try {
+        await followUpService.completeFollowUp(
+          completingFup.id,
+          completionOutcome,
+          completionNotes,
+          profile
+        );
+      } catch {
+        db.completeFollowUp(
+          completingFup.id,
+          profile,
+          completionNotes,
+          completionOutcome
+        );
+      }
       setCompletingFup(null);
       setCompletionNotes('');
       loadData();
@@ -245,7 +269,7 @@ export const TelecallerFollowUpsPage: React.FC = () => {
   };
 
   // Cancel Handler
-  const handleCancelSubmit = (e: React.FormEvent) => {
+  const handleCancelSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile || !cancellingFup) return;
     setCancelError(null);
@@ -256,7 +280,11 @@ export const TelecallerFollowUpsPage: React.FC = () => {
     }
 
     try {
-      db.cancelFollowUp(cancellingFup.id, cancelReason, profile);
+      try {
+        await followUpService.cancelFollowUp(cancellingFup.id, cancelReason, profile);
+      } catch {
+        db.cancelFollowUp(cancellingFup.id, cancelReason, profile);
+      }
       setCancellingFup(null);
       setCancelReason('');
       loadData();

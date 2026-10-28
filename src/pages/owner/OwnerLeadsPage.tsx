@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
+import { leadService } from '@/services/leads/leadService';
+import { authService } from '@/services/auth/authService';
 import { Lead, Profile } from '@/types';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
@@ -51,30 +53,47 @@ export const OwnerLeadsPage: React.FC = () => {
   const [completedCallId, setCompletedCallId] = useState<string | null>(null);
   const [isOutcomeOpen, setIsOutcomeOpen] = useState(false);
 
-  const loadData = () => {
+  const loadData = useCallback(async () => {
     if (!profile) return;
-    setLeads(db.getLeads(profile));
-    setTelecallers(db.getTelecallers(profile));
-  };
+    try {
+      const fetchedLeads = await leadService.getOwnerLeads(profile);
+      setLeads(fetchedLeads);
+    } catch {
+      setLeads(db.getLeads(profile));
+    }
+
+    try {
+      const tcRes = await authService.getOrganizationTelecallers(profile);
+      if (tcRes.success && tcRes.telecallers) {
+        setTelecallers(tcRes.telecallers);
+      } else {
+        setTelecallers(db.getTelecallers(profile));
+      }
+    } catch {
+      setTelecallers(db.getTelecallers(profile));
+    }
+  }, [profile]);
 
   useEffect(() => {
-    loadData();
+    void loadData();
 
     const unsubscribe = db.subscribe(({ type }) => {
       if (
         type === 'LEAD_CREATED' ||
+        type === 'LEAD_UPDATED' ||
         type === 'LEADS_IMPORTED' ||
         type === 'LEADS_ASSIGNED' ||
         type === 'LEADS_ASSIGNED_ROUND_ROBIN' ||
         type === 'CALL_OUTCOME_SAVED' ||
-        type === 'CALL_RECORDED'
+        type === 'CALL_RECORDED' ||
+        type === 'TEAM_UPDATED'
       ) {
-        loadData();
+        void loadData();
       }
     }, profile);
 
     return () => unsubscribe();
-  }, [profile]);
+  }, [profile, loadData]);
 
   // Export Leads (Owner only, audit logged)
   const handleExport = () => {

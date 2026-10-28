@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { Lead, CallOutcomeType, NegativeReason, LeadPriority } from '@/types';
+import { Lead, CallOutcomeType, NegativeReason, LeadPriority, LeadStatus } from '@/types';
 import { db } from '@/services/supabase/db';
+import { leadService } from '@/services/leads/leadService';
+import { followUpService } from '@/services/followUps/followUpService';
 import { useAuth } from '@/features/auth/AuthContext';
 import {
   CheckCircle,
@@ -145,6 +147,47 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
           },
           profile
         );
+      }
+
+      // Persist lead status and notes authoritative update via API
+      let targetStatus: LeadStatus = lead.status;
+      if (selectedOutcome === 'POSITIVE') targetStatus = 'INTERESTED';
+      else if (selectedOutcome === 'NEGATIVE') targetStatus = 'NOT_INTERESTED';
+      else if (selectedOutcome === 'CONVERTED') targetStatus = 'CONVERTED';
+      else if (selectedOutcome === 'DO_NOT_CONTACT') targetStatus = 'DO_NOT_CONTACT';
+      else if (selectedOutcome === 'FOLLOW_UP') targetStatus = 'FOLLOW_UP';
+      else if (selectedOutcome === 'NO_ANSWER' || selectedOutcome === 'BUSY') targetStatus = 'CONTACTED';
+
+      const outcomeNotes = selectedOutcome === 'POSITIVE' || selectedOutcome === 'CONVERTED'
+        ? positiveNotes
+        : selectedOutcome === 'NEGATIVE'
+        ? negativeNotes
+        : generalNotes;
+
+      if (profile.role === 'TELECALLER') {
+        try {
+          await leadService.updateAssignedTelecallerLead(lead.id, targetStatus, outcomeNotes || '', profile);
+        } catch (err) {
+          console.warn('[OutcomeModal] Live lead update failed, relying on db fallback:', err);
+        }
+      }
+
+      // Persist follow-up if scheduled
+      if (shouldIncludeFollowUp && followUpDate) {
+        try {
+          await followUpService.createFollowUp(
+            {
+              leadId: lead.id,
+              scheduledAt: `${followUpDate}T${followUpTime || '11:00'}:00Z`,
+              priority: followUpPriority || (selectedOutcome === 'POSITIVE' ? 'HIGH' : 'MEDIUM'),
+              notes: followUpReason || outcomeNotes || `Follow-up for ${selectedOutcome}`,
+              assignedTo: profile.id,
+            },
+            profile
+          );
+        } catch (err) {
+          console.warn('[OutcomeModal] Live follow-up creation failed, relying on db fallback:', err);
+        }
       }
 
       onSaved();

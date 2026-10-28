@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { db } from '@/services/supabase/db';
+import { leadService } from '@/services/leads/leadService';
+import { authService } from '@/services/auth/authService';
 import { useAuth } from '@/features/auth/AuthContext';
 import { DistributionMode } from '@/types';
 import { UserCheck, Shuffle, Scale, AlertTriangle, Layers } from 'lucide-react';
@@ -48,15 +50,26 @@ export const LeadAssignModal: React.FC<LeadAssignModalProps> = ({
           setIsSubmitting(false);
           return;
         }
-        db.distributeLeads(
-          {
-            leadIds: selectedLeadIds,
-            mode: 'MANUAL',
-            targetTelecallerId,
-          },
-          profile
-        );
+        await leadService.assignLeads(selectedLeadIds, targetTelecallerId, profile);
       } else {
+        const token = authService.getSessionToken();
+        if (token) {
+          const res = await fetch('/api/leads/distribute', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              leadIds: selectedLeadIds,
+              mode: method,
+            }),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => null);
+            throw new Error(body?.error || 'Failed to distribute leads.');
+          }
+        }
         db.distributeLeads(
           {
             leadIds: selectedLeadIds,

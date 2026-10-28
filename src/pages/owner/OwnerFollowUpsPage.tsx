@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
+import { followUpService } from '@/services/followUps/followUpService';
 import { FollowUp, Profile, Lead } from '@/types';
 import { formatDateTime, formatRelativeTime } from '@/lib/utils';
 import {
@@ -52,9 +53,14 @@ export const OwnerFollowUpsPage: React.FC = () => {
 
   const displayTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!profile) return;
-    setFollowUps(db.getFollowUps(profile));
+    try {
+      const serverFollowUps = await followUpService.getFollowUps(profile);
+      setFollowUps(serverFollowUps);
+    } catch {
+      setFollowUps(db.getFollowUps(profile));
+    }
     setTelecallers(db.getEligibleTelecallers(profile));
     setLeadsWithoutAction(db.getLeadsWithoutNextAction(profile));
   };
@@ -161,9 +167,13 @@ export const OwnerFollowUpsPage: React.FC = () => {
   });
 
   // Handle Mark Complete
-  const handleMarkComplete = (id: string) => {
+  const handleMarkComplete = async (id: string) => {
     if (!profile) return;
-    db.completeFollowUp(id, profile, 'Marked complete by Owner in dashboard');
+    try {
+      await followUpService.completeFollowUp(id, 'Marked complete by Owner in dashboard', undefined, profile);
+    } catch {
+      db.completeFollowUp(id, profile, 'Marked complete by Owner in dashboard');
+    }
     loadData();
   };
 
@@ -203,20 +213,18 @@ export const OwnerFollowUpsPage: React.FC = () => {
   };
 
   // Handle Quick Schedule from Leads Without Next Action
-  const handleQuickScheduleSubmit = (e: React.FormEvent) => {
+  const handleQuickScheduleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile || !schedulingLead) return;
 
     try {
-      db.createFollowUp(
+      await followUpService.createFollowUp(
         {
-          lead_id: schedulingLead.id,
-          scheduled_at: `${quickScheduleDate}T${quickScheduleTime}:00Z`,
-          assigned_to: quickScheduleTelecaller || schedulingLead.assigned_to || undefined,
+          leadId: schedulingLead.id,
+          scheduledAt: `${quickScheduleDate}T${quickScheduleTime}:00Z`,
+          assignedTo: quickScheduleTelecaller || schedulingLead.assigned_to || undefined,
           priority: 'HIGH',
-          reason: quickScheduleReason || 'Follow-up created from Leads Without Action queue',
-          notes: quickScheduleReason,
-          timezone: displayTimezone,
+          notes: quickScheduleReason || 'Follow-up created from Leads Without Action queue',
         },
         profile
       );

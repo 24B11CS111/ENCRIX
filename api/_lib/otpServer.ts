@@ -386,10 +386,14 @@ export async function sendVerificationEmail(
   if (
     process.env.RESEND_API_KEY &&
     !process.env.RESEND_API_KEY.includes('placeholder') &&
-    !process.env.RESEND_API_KEY.includes('your-') &&
-    !process.env.RESEND_API_KEY.includes('test')
+    !process.env.RESEND_API_KEY.includes('your-')
   ) {
     let res: Response;
+    const rawFrom = process.env.RESEND_FROM_EMAIL || 'ENCRIX <auth@hrixofficial.in>';
+    const fromAddress = rawFrom.includes('<')
+      ? rawFrom
+      : `ENCRIX Security <${rawFrom}>`;
+
     try {
       res = await fetch('https://api.resend.com/emails', {
         method: 'POST',
@@ -398,7 +402,7 @@ export async function sendVerificationEmail(
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          from: process.env.RESEND_FROM_EMAIL || 'ENCRIX <auth@hrixofficial.in>',
+          from: fromAddress,
           to: [normalized],
           subject,
           text,
@@ -406,13 +410,19 @@ export async function sendVerificationEmail(
         }),
       });
     } catch (networkErr: any) {
-      throw new Error(`BLOCKED — EMAIL OTP PROVIDER ERROR: Network error connecting to Resend: ${networkErr?.message || 'fetch failed'}`);
+      const err = new Error(`BLOCKED — EMAIL OTP PROVIDER ERROR: Network error connecting to Resend: ${networkErr?.message || 'fetch failed'}`);
+      (err as any).status = 503;
+      (err as any).code = 'RESEND_NETWORK_ERROR';
+      throw err;
     }
 
     if (!res.ok) {
       const errJson = await res.json().catch(() => null);
       const errMsg = errJson?.message || (await res.text().catch(() => '')) || 'Resend dispatch failed.';
-      throw new Error(`BLOCKED — EMAIL OTP PROVIDER ERROR: ${errMsg}`);
+      const err = new Error(`BLOCKED — EMAIL OTP PROVIDER ERROR: ${errMsg}`);
+      (err as any).status = res.status;
+      (err as any).code = errJson?.name || (res.status === 403 ? 'EMAIL_TEST_DOMAIN_RESTRICTION' : 'RESEND_ERROR');
+      throw err;
     }
 
     return { success: true, provider: 'RESEND' };
@@ -422,8 +432,7 @@ export async function sendVerificationEmail(
   if (
     process.env.SENDGRID_API_KEY &&
     !process.env.SENDGRID_API_KEY.includes('placeholder') &&
-    !process.env.SENDGRID_API_KEY.includes('your-') &&
-    !process.env.SENDGRID_API_KEY.includes('test')
+    !process.env.SENDGRID_API_KEY.includes('your-')
   ) {
     let res: Response;
     try {
@@ -444,20 +453,29 @@ export async function sendVerificationEmail(
         }),
       });
     } catch (networkErr: any) {
-      throw new Error(`BLOCKED — EMAIL OTP PROVIDER ERROR: Network error connecting to SendGrid: ${networkErr?.message || 'fetch failed'}`);
+      const err = new Error(`BLOCKED — EMAIL OTP PROVIDER ERROR: Network error connecting to SendGrid: ${networkErr?.message || 'fetch failed'}`);
+      (err as any).status = 503;
+      (err as any).code = 'SENDGRID_NETWORK_ERROR';
+      throw err;
     }
 
     if (!res.ok) {
       const errJson = await res.json().catch(() => null);
-      const errMsg = errJson?.message || (await res.text().catch(() => '')) || 'SendGrid dispatch failed.';
-      throw new Error(`BLOCKED — EMAIL OTP PROVIDER ERROR: ${errMsg}`);
+      const errMsg = errJson?.errors?.[0]?.message || errJson?.message || (await res.text().catch(() => '')) || 'SendGrid dispatch failed.';
+      const err = new Error(`BLOCKED — EMAIL OTP PROVIDER ERROR: ${errMsg}`);
+      (err as any).status = res.status;
+      (err as any).code = 'SENDGRID_ERROR';
+      throw err;
     }
 
     return { success: true, provider: 'SENDGRID' };
   }
 
   // Actionable configuration error: Never simulate a successful live email delivery
-  throw new Error(
+  const unconfiguredErr = new Error(
     'BLOCKED — EMAIL OTP PROVIDER NOT CONFIGURED: Please configure RESEND_API_KEY and RESEND_FROM_EMAIL in your environment to send live verification emails.'
   );
+  (unconfiguredErr as any).status = 503;
+  (unconfiguredErr as any).code = 'EMAIL_PROVIDER_NOT_CONFIGURED';
+  throw unconfiguredErr;
 }

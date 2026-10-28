@@ -75,6 +75,25 @@ export default async function handler(req: any, res: any) {
         return res.status(400).json({ error: 'Reassignment reason is mandatory' });
       }
 
+      if (isRealSupabaseServerConfigured()) {
+        const supabase = getSupabaseServerClient();
+        const { error: upErr } = await supabase
+          .from('leads')
+          .update({
+            assigned_to: targetTelecallerId,
+            status: 'ASSIGNED',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', targetLeadId)
+          .eq('organization_id', profile.organization_id);
+
+        if (upErr) {
+          return res.status(500).json({ error: 'Failed to persist lead reassignment.' });
+        }
+      } else if (process.env.NODE_ENV === 'production') {
+        return res.status(503).json({ error: 'Lead reassignment requires a configured database.' });
+      }
+
       const updatedLead = db.reassignLead(targetLeadId, targetTelecallerId, reason, profile as any);
 
       // CRITICAL SECURITY INVARIANT: Strip or mask phone from response
@@ -108,6 +127,26 @@ export default async function handler(req: any, res: any) {
       },
       profile as any
     );
+
+    if (isRealSupabaseServerConfigured()) {
+      const supabase = getSupabaseServerClient();
+      const updatedLeads = (db.getLeads(profile as any) as any[]).filter(
+        (l) => ids.includes(l.id) && l.assigned_to
+      );
+      for (const lead of updatedLeads) {
+        await supabase
+          .from('leads')
+          .update({
+            assigned_to: lead.assigned_to,
+            status: 'ASSIGNED',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', lead.id)
+          .eq('organization_id', profile.organization_id);
+      }
+    } else if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({ error: 'Lead distribution requires a configured database.' });
+    }
 
     return res.status(200).json({
       success: result.success,

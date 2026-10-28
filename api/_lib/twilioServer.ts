@@ -1,3 +1,4 @@
+
 import crypto from 'crypto';
 
 export interface TwilioServerConfig {
@@ -9,31 +10,76 @@ export interface TwilioServerConfig {
 }
 
 export function getTwilioServerConfig(): TwilioServerConfig {
+  const appOrigin =
+    process.env.APP_URL ||
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : 'https://encrix.vercel.app');
+
   return {
-    accountSid: process.env.TWILIO_ACCOUNT_SID || 'AC_prod_placeholder_sid_leadvault',
-    authToken: process.env.TWILIO_AUTH_TOKEN || 'prod_auth_token_placeholder_leadvault',
-    callerId: process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_CALLER_ID || '+15550005678',
+    accountSid: process.env.TWILIO_ACCOUNT_SID || '',
+    authToken: process.env.TWILIO_AUTH_TOKEN || '',
+    callerId:
+      process.env.TWILIO_PHONE_NUMBER ||
+      process.env.TWILIO_CALLER_ID ||
+      '',
     voiceWebhookUrl:
-      process.env.TWILIO_VOICE_WEBHOOK_URL ||
-      'https://app.leadvault.io/api/telephony/voice',
+      process.env.TWILIO_VOICE_WEBHOOK_URL || `${appOrigin}/api/telephony/voice`,
     statusCallbackUrl:
-      process.env.TWILIO_STATUS_CALLBACK_URL ||
-      'https://app.leadvault.io/api/telephony/webhook',
+      process.env.TWILIO_STATUS_CALLBACK_URL || `${appOrigin}/api/telephony/webhook`,
   };
 }
 
+export function isTwilioServerConfigured(
+  config: TwilioServerConfig
+): boolean {
+  return (
+    /^AC[a-f0-9]{32}$/i.test(config.accountSid) &&
+    config.authToken.length > 0 &&
+    /^\+[1-9]\d{7,14}$/.test(config.callerId) &&
+    isValidHttpsUrl(config.voiceWebhookUrl) &&
+    isValidHttpsUrl(config.statusCallbackUrl)
+  );
+}
+
+function isValidHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === 'https:' &&
+      !url.username &&
+      !url.password
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Builds the callback URL used in Twilio's signature from the server-configured
- * public origin and callback path. Proxy Host headers are never trusted for
- * HMAC verification. Request query parameters are retained because Twilio signs
- * the externally visible URL, including its query string.
+ * Builds the URL used to verify Twilio webhook signatures.
+ * Do not trust incoming Host headers.
  */
-export function getTwilioWebhookSignatureUrl(configuredUrl: string, requestUrl: string): string | null {
+export function getTwilioWebhookSignatureUrl(
+  configuredUrl: string,
+  requestUrl: string
+): string | null {
   try {
     const configured = new URL(configuredUrl);
-    if (configured.protocol !== 'https:' || configured.username || configured.password) return null;
+
+    if (
+      configured.protocol !== 'https:' ||
+      configured.username ||
+      configured.password
+    ) {
+      return null;
+    }
+
     const requested = new URL(requestUrl, configured.origin);
-    if (requested.pathname !== configured.pathname) return null;
+
+    if (requested.pathname !== configured.pathname) {
+      return null;
+    }
+
     return `${configured.origin}${requested.pathname}${requested.search}`;
   } catch {
     return null;
@@ -41,8 +87,7 @@ export function getTwilioWebhookSignatureUrl(configuredUrl: string, requestUrl: 
 }
 
 /**
- * Cryptographically verifies the Twilio X-Twilio-Signature HMAC-SHA1 header.
- * Rejects forged or tampered webhook callbacks.
+ * Verifies Twilio's X-Twilio-Signature header.
  */
 export function verifyTwilioSignature(
   authToken: string,
@@ -55,6 +100,7 @@ export function verifyTwilioSignature(
   try {
     const sortedKeys = Object.keys(params).sort();
     let data = url;
+
     for (const key of sortedKeys) {
       data += key + params[key];
     }
@@ -64,26 +110,36 @@ export function verifyTwilioSignature(
       .update(data, 'utf-8')
       .digest('base64');
 
-    if (expected.length !== signature.length) return false;
+    const expectedBuffer = Buffer.from(expected);
+    const signatureBuffer = Buffer.from(signature);
 
-    let match = 0;
-    for (let i = 0; i < expected.length; i++) {
-      match |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
+    if (expectedBuffer.length !== signatureBuffer.length) {
+      return false;
     }
-    return match === 0;
+
+    return crypto.timingSafeEqual(
+      expectedBuffer,
+      signatureBuffer
+    );
   } catch {
     return false;
   }
 }
 
 /**
- * Masks raw phone numbers for telecaller client safety.
+ * Masks phone numbers for telecaller-facing interfaces.
  */
 export function maskPhoneNumber(phone: string): string {
   if (!phone) return '***-***-****';
+
   const clean = phone.trim();
+
   if (clean.length <= 4) return '****';
+
   const last4 = clean.slice(-4);
-  const prefix = clean.startsWith('+') ? clean.slice(0, 3) : '';
+  const prefix = clean.startsWith('+')
+    ? clean.slice(0, 3)
+    : '';
+
   return `${prefix ? prefix + ' ' : ''}******${last4}`;
 }

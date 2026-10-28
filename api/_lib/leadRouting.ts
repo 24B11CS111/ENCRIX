@@ -4,6 +4,10 @@ export const LEAD_ACTIONS = [
   'distribution-config',
   'telecaller-list',
   'telecaller-update',
+  'owner-list',
+  'owner-create',
+  'owner-assign',
+  'owner-update',
 ] as const;
 export type LeadAction = (typeof LEAD_ACTIONS)[number];
 

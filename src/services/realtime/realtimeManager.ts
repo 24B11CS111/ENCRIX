@@ -8,6 +8,7 @@ type StatusListener = (status: RealtimeConnectionStatus) => void;
 class RealtimeConnectionManager {
   private status: RealtimeConnectionStatus = 'LIVE';
   private listeners: Set<StatusListener> = new Set();
+  private reconnectListeners: Set<() => void> = new Set();
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectTimer: any = null;
@@ -73,6 +74,23 @@ class RealtimeConnectionManager {
     });
   }
 
+  public onReconnected(listener: () => void): () => void {
+    this.reconnectListeners.add(listener);
+    return () => {
+      this.reconnectListeners.delete(listener);
+    };
+  }
+
+  private notifyReconnected() {
+    this.reconnectListeners.forEach((listener) => {
+      try {
+        listener();
+      } catch (e) {
+        console.error('Reconnected listener error:', e);
+      }
+    });
+  }
+
   /**
    * Set tenant context and ensure tenant-scoped channel attachment
    */
@@ -113,6 +131,7 @@ class RealtimeConnectionManager {
             if (status === 'SUBSCRIBED') {
               this.reconnectAttempts = 0;
               this.setStatus('LIVE');
+              this.notifyReconnected();
             } else if (status === 'TIMED_OUT' || status === 'CHANNEL_ERROR') {
               if (this.reconnectAttempts < this.maxReconnectAttempts) {
                 this.reconnect();
@@ -136,6 +155,7 @@ class RealtimeConnectionManager {
       setTimeout(() => {
         this.reconnectAttempts = 0;
         this.setStatus('LIVE');
+        this.notifyReconnected();
       }, 300);
     }
   }
@@ -150,6 +170,7 @@ class RealtimeConnectionManager {
     }
     this.reconnectAttempts = 0;
     this.activeOrgId = null;
+    this.reconnectListeners.clear();
     db.unsubscribeAll();
     this.setStatus(this.isWindowOnline ? 'LIVE' : 'OFFLINE');
   }

@@ -371,6 +371,19 @@ export class AuthService {
     return '';
   }
 
+  public setSessionToken(token: string): void {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('leadvault_session_token', token);
+    }
+  }
+
+  public clearSessionToken(): void {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('leadvault_session_token');
+      localStorage.removeItem('leadvault_session');
+    }
+  }
+
   /**
    * Validates and restores session on the server.
    */
@@ -429,6 +442,283 @@ export class AuthService {
       localStorage.removeItem('leadvault_session');
     }
   }
+  /**
+   * Validates and retrieves an invitation by its cryptographic token.
+   */
+
+  public async getInvitations(currentProfile?: Profile | null): Promise<{
+    success: boolean;
+    invitations?: OrganizationInvitation[];
+    error?: string;
+  }> {
+    if (isLiveApiMode()) {
+      const token = this.getSessionToken();
+
+      if (!token) {
+        return { success: false, error: 'Please sign in again.' };
+      }
+
+      try {
+        const response = await fetch('/api/auth/invitations', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          return {
+            success: false,
+            error: data.error || 'Unable to load invitations.',
+          };
+        }
+
+        return {
+          success: true,
+          invitations: data.invitations || [],
+        };
+      } catch {
+        return {
+          success: false,
+          error: 'Network error while loading invitations.',
+        };
+      }
+    }
+
+    if (currentProfile) {
+      return {
+        success: true,
+        invitations: db.getInvitations(currentProfile),
+      };
+    }
+
+    return {
+      success: true,
+      invitations: [],
+    };
+  }
+
+  public async revokeInvitation(id: string, currentProfile?: Profile | null): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    if (isLiveApiMode()) {
+      const token = this.getSessionToken();
+
+      if (!token) {
+        return { success: false, error: 'Please sign in again.' };
+      }
+
+      try {
+        const response = await fetch('/api/auth/invitations', {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ id }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          return {
+            success: false,
+            error: data.error || 'Unable to revoke invitation.',
+          };
+        }
+
+        return { success: true };
+      } catch {
+        return {
+          success: false,
+          error: 'Network error while revoking invitation.',
+        };
+      }
+    }
+
+    if (currentProfile) {
+      try {
+        db.revokeInvitation(id, currentProfile);
+        return { success: true };
+      } catch (err: any) {
+        return {
+          success: false,
+          error: err?.message || 'Unable to revoke invitation.',
+        };
+      }
+    }
+
+    return { success: false, error: 'Session profile missing.' };
+  }
+
+  public async getOrganizationTelecallers(currentProfile?: Profile | null): Promise<{
+    success: boolean;
+    telecallers?: Profile[];
+    error?: string;
+  }> {
+    if (isLiveApiMode()) {
+      const token = this.getSessionToken();
+      if (!token) return { success: false, error: 'Please sign in again.' };
+
+      try {
+        const response = await fetch('/api/auth/team', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          return {
+            success: false,
+            error: data.error || 'Unable to load team members.',
+          };
+        }
+
+        return {
+          success: true,
+          telecallers: data.telecallers || [],
+        };
+      } catch {
+        return {
+          success: false,
+          error: 'Network error while loading team members.',
+        };
+      }
+    }
+
+    if (currentProfile) {
+      return {
+        success: true,
+        telecallers: db
+          .getProfiles(currentProfile)
+          .filter((p) => p.role === 'TELECALLER'),
+      };
+    }
+
+    return { success: true, telecallers: [] };
+  }
+
+  public async updateTelecallerStatus(
+    telecallerId: string,
+    status: 'ACTIVE' | 'DISABLED',
+    currentProfile?: Profile | null
+  ): Promise<{
+    success: boolean;
+    telecaller?: Profile;
+    error?: string;
+  }> {
+    if (isLiveApiMode()) {
+      const token = this.getSessionToken();
+      if (!token) return { success: false, error: 'Please sign in again.' };
+
+      try {
+        const response = await fetch('/api/auth/team', {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ telecallerId, status }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          return {
+            success: false,
+            error: data.error || 'Unable to update telecaller status.',
+          };
+        }
+
+        return { success: true, telecaller: data.telecaller };
+      } catch {
+        return {
+          success: false,
+          error: 'Network error while updating telecaller status.',
+        };
+      }
+    }
+
+    if (currentProfile) {
+      try {
+        db.updateProfileStatus(telecallerId, status, currentProfile);
+        const updated = db.getProfiles(currentProfile).find((p) => p.id === telecallerId);
+        return { success: true, telecaller: updated };
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Failed to update status.' };
+      }
+    }
+
+    return { success: false, error: 'Profile required.' };
+  }
+
+  public async getInvitation(token: string): Promise<{
+    success: boolean;
+    invitation?: OrganizationInvitation;
+    error?: string;
+    code?: string;
+  }> {
+    if (!token || typeof token !== 'string' || !token.trim()) {
+      return { success: false, error: 'Invitation token is required.' };
+    }
+
+    const cleanToken = token.trim();
+
+    if (isLiveApiMode()) {
+      try {
+        const res = await fetch(`/api/auth/invite?token=${encodeURIComponent(cleanToken)}`);
+        const data = await res.json();
+        if (!res.ok) {
+          return {
+            success: false,
+            error: data.error || 'Invitation link is invalid or could not be found.',
+            code: data.code,
+          };
+        }
+        return {
+          success: true,
+          invitation: data.invitation,
+        };
+      } catch (err: any) {
+        // Network fallback in offline dev/test modes
+      }
+    }
+
+    // Client mock / offline fallback
+    const inv = db.getInvitationByToken(cleanToken);
+    if (!inv) {
+      return { success: false, error: 'Invitation link is invalid or could not be found.' };
+    }
+
+    if (inv.status === 'EXPIRED') {
+      return {
+        success: false,
+        error: 'This invitation has expired. Please contact your organization owner for a new invitation.',
+        code: 'EXPIRED',
+      };
+    }
+
+    if (inv.status === 'ACCEPTED') {
+      return {
+        success: false,
+        error: 'This invitation has already been accepted. Please sign in directly.',
+        code: 'ACCEPTED',
+      };
+    }
+
+    if (inv.status === 'REVOKED') {
+      return {
+        success: false,
+        error: 'This invitation has been revoked by the organization owner.',
+        code: 'REVOKED',
+      };
+    }
+
+    return { success: true, invitation: inv };
+  }
+
   public async inviteTelecaller(params: InviteTelecallerParams): Promise<{
     success: boolean;
     invitation?: OrganizationInvitation;
@@ -464,6 +754,12 @@ export class AuthService {
         },
         params.currentProfile
       );
+
+      const canonicalOrigin =
+        typeof window !== 'undefined' && window.location?.origin
+          ? window.location.origin
+          : 'http://localhost:5173';
+      inv.inviteUrl = `${canonicalOrigin}/accept-invitation?token=${inv.token}`;
 
       return { success: true, invitation: inv };
     } catch (err: any) {

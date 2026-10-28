@@ -196,9 +196,17 @@ export const CallModal: React.FC<CallModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy-deep/20 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="w-full max-w-md rounded-[12px] border border-[#DCE4EE] bg-white shadow-dropdown p-6 text-center">
         {/* Compliance security badge */}
-        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAF7EE] border border-[#C3EBD0] text-[#16845B] text-xs font-medium mb-6">
+        <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium mb-6 ${
+          callService.isLiveMode()
+            ? 'bg-[#EAF7EE] border border-[#C3EBD0] text-[#16845B]'
+            : 'bg-[#FEF3C7] border border-[#FDE68A] text-[#92400E]'
+        }`}>
           <ShieldCheck className="w-3.5 h-3.5" />
-          <span>✓ Authorized Gateway Connection</span>
+          <span>
+            {callService.isLiveMode()
+              ? '✓ Live Telephony Gateway'
+              : '⚠️ Demo Mode • Simulated Call Session'}
+          </span>
         </div>
 
         {/* Lead & Customer info */}
@@ -254,7 +262,7 @@ export const CallModal: React.FC<CallModalProps> = ({
             {callStatus === 'CONNECTED' && (
               <div className="space-y-1">
                 <span className="text-xs font-semibold uppercase tracking-wider text-[#16845B]">
-                  Connected
+                  {callService.isLiveMode() ? 'Live Connected' : 'Simulated Call Active'}
                 </span>
                 <div className="text-3xl font-mono font-bold text-[#0B1F3A] tracking-wider">
                   {callService.isLiveMode() ? 'In progress' : formatDuration(duration)}

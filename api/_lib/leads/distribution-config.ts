@@ -64,6 +64,9 @@ export default async function handler(req: any, res: any) {
 
         return res.status(200).json({ success: true, config: data });
       } else {
+        if (process.env.NODE_ENV === 'production') {
+          return res.status(503).json({ error: 'Distribution configuration requires a configured database.' });
+        }
         const config = db.getDistributionConfig(profile as any);
         return res.status(200).json({ success: true, config });
       }
@@ -110,6 +113,9 @@ export default async function handler(req: any, res: any) {
 
       return res.status(200).json({ success: true, config: data });
     } else {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(503).json({ error: 'Distribution configuration updates require a configured database.' });
+      }
       const updated = db.updateDistributionConfig(updates, profile as any);
       return res.status(200).json({ success: true, config: updated });
     }

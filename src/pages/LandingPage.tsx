@@ -59,39 +59,46 @@ export const LandingPage: React.FC = () => {
         <div className="max-w-4xl mx-auto text-center space-y-6">
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#EAF2FB] border border-[#C7DCF3] text-xs text-[#1E4D8F] font-medium">
             <span className="w-2 h-2 rounded-full bg-[#16845B]" />
-            <span className="font-semibold text-[#0B1F3A]">Enterprise Security Architecture</span>
+            <span className="font-semibold text-[#0B1F3A]">Enterprise Access Governance</span>
             <span className="text-[#94A3B8]">•</span>
-            <span>PostgreSQL RLS Protected</span>
+            <span>Controlled Lead Confidentiality</span>
           </div>
 
           <h1 className="text-4xl sm:text-6xl font-extrabold text-[#0B1F3A] tracking-tight leading-[1.1]">
-            YOUR LEADS. <br />
-            <span className="text-[#1E4D8F]">YOUR CONTROL.</span>
+            Your Leads. Your Business. <br />
+            <span className="text-[#1E4D8F]">Your Control.</span>
           </h1>
 
-          <p className="text-lg sm:text-xl font-medium text-[#172B4D] max-w-2xl mx-auto">
-            Secure lead operations for businesses that depend on telecalling.
+          <p className="text-lg sm:text-2xl font-bold text-[#172B4D] max-w-2xl mx-auto tracking-tight">
+            Protect Your Leads. Empower Your Team. Prevent Revenue Leakage.
           </p>
 
-          <p className="text-sm sm:text-base text-[#64748B] max-w-2xl mx-auto leading-relaxed">
-            ENCRIX helps businesses control lead access, secure calling workflows, track activity and reduce uncontrolled handling of customer data.
+          <p className="text-sm sm:text-base text-[#475569] max-w-2xl mx-auto leading-relaxed">
+            Your customer data is one of your most valuable business assets. ENCRIX helps you control access to lead information, protect sensitive contact details, and manage your telecalling team with greater confidence.
           </p>
+
+          {/* Supporting Statement Banner */}
+          <div className="max-w-xl mx-auto p-3.5 rounded-[10px] bg-[#F8FAFC] border border-[#DCE4EE] text-xs text-[#475569] leading-relaxed shadow-subtle">
+            <span className="font-semibold text-[#0B1F3A]">Accountability First: </span>
+            A lead shared without control can become a business opportunity lost. Keep access accountable with ENCRIX.
+          </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3.5 pt-2">
             <Link
               to="/register"
-              className="w-full sm:w-auto px-7 py-3.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white font-semibold text-sm rounded-[10px] shadow-subtle transition-all"
+              className="w-full sm:w-auto px-7 py-3.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white font-semibold text-sm rounded-[10px] shadow-subtle transition-all flex items-center justify-center gap-2"
             >
-              GET STARTED
+              <span>Get Started</span>
+              <ArrowRight className="w-4 h-4" />
             </Link>
 
-            <Link
-              to="/login"
+            <a
+              href="#security"
               className="w-full sm:w-auto px-7 py-3.5 bg-white hover:bg-[#F6F8FB] text-[#0B1F3A] font-semibold text-sm rounded-[10px] border border-[#DCE4EE] shadow-subtle transition-all flex items-center justify-center gap-2"
             >
-              <span>SIGN IN</span>
-              <ArrowRight className="w-4 h-4 text-[#1E4D8F]" />
-            </Link>
+              <Shield className="w-4 h-4 text-[#1E4D8F]" />
+              <span>Explore Security</span>
+            </a>
           </div>
 
           {/* Hero Interface Mockup Card */}
@@ -103,14 +110,14 @@ export const LandingPage: React.FC = () => {
                     <Shield className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-[#0B1F3A]">Enterprise Control Console</h3>
-                    <p className="text-xs text-[#64748B]">Live Telecaller Pipeline • Protected Row-Level Isolation</p>
+                    <h3 className="text-sm font-bold text-[#0B1F3A]">Enterprise Access Governance Console</h3>
+                    <p className="text-xs text-[#64748B]">Controlled Telecaller Workspace • Row-Level Tenant Isolation Active</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#EAF7EE] border border-[#C3EBD0] text-[11px] font-medium text-[#16845B]">
                     <span className="w-1.5 h-1.5 rounded-full bg-[#16845B]" />
-                    ● System Secure
+                    Controlled Access Active
                   </span>
                 </div>
               </div>
@@ -123,9 +130,9 @@ export const LandingPage: React.FC = () => {
                   <div className="text-[10px] text-[#16845B] mt-0.5">✓ 100% Governed</div>
                 </div>
                 <div className="p-3 rounded-[10px] bg-[#F6F8FB] border border-[#DCE4EE]">
-                  <div className="text-[10px] font-semibold text-[#64748B] uppercase tracking-wider">Active Calls</div>
-                  <div className="text-lg font-bold text-[#0B1F3A] mt-0.5">18</div>
-                  <div className="text-[10px] text-[#1E4D8F] mt-0.5">Bridge Connected</div>
+                  <div className="text-[10px] font-semibold text-[#64748B] uppercase tracking-wider">Caller Access</div>
+                  <div className="text-lg font-bold text-[#0B1F3A] mt-0.5">Assigned Only</div>
+                  <div className="text-[10px] text-[#1E4D8F] mt-0.5">Zero Bulk Discovery</div>
                 </div>
                 <div className="p-3 rounded-[10px] bg-[#F6F8FB] border border-[#DCE4EE]">
                   <div className="text-[10px] font-semibold text-[#64748B] uppercase tracking-wider">Follow-Ups</div>
@@ -135,29 +142,45 @@ export const LandingPage: React.FC = () => {
                 <div className="p-3 rounded-[10px] bg-[#F6F8FB] border border-[#DCE4EE]">
                   <div className="text-[10px] font-semibold text-[#64748B] uppercase tracking-wider">Data Protection</div>
                   <div className="text-lg font-bold text-[#16845B] mt-0.5">Active</div>
-                  <div className="text-[10px] text-[#64748B] mt-0.5">Zero Leakage</div>
+                  <div className="text-[10px] text-[#64748B] mt-0.5">API Masking Enforced</div>
                 </div>
               </div>
 
-              {/* Sample Table Row */}
+              {/* Sample Protected Records Table */}
               <div className="rounded-[10px] border border-[#DCE4EE] bg-[#FFFFFF] overflow-hidden">
                 <div className="px-4 py-2.5 bg-[#F6F8FB] border-b border-[#DCE4EE] flex items-center justify-between text-xs font-semibold text-[#64748B]">
-                  <span>Lead Identity (Telecaller View)</span>
-                  <span>Security Status</span>
+                  <span>Protected Customer Record (Telecaller View)</span>
+                  <span>Access Boundary</span>
                 </div>
-                <div className="px-4 py-3 flex items-center justify-between text-xs">
+                <div className="px-4 py-3 flex items-center justify-between text-xs border-b border-[#F1F5F9]">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full bg-[#EAF2FB] border border-[#C7DCF3] text-[#0B1F3A] flex items-center justify-center font-bold text-xs">
                       RK
                     </div>
                     <div>
-                      <div className="font-semibold text-[#0B1F3A]">Rahul K.</div>
-                      <div className="text-[#64748B] font-mono text-[11px]">+91 ******3210</div>
+                      <div className="font-semibold text-[#0B1F3A]">Rahul K. • Lead #LV-8921</div>
+                      <div className="text-[#64748B] font-mono text-[11px]">+91 ******3210 (Masked at API)</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#EAF2FB] text-[#1E4D8F] border border-[#C7DCF3]">
-                      ✓ Masked & Protected
+                      Assigned Telecaller Only
+                    </span>
+                  </div>
+                </div>
+                <div className="px-4 py-3 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-[#F6F8FB] border border-[#DCE4EE] text-[#0B1F3A] flex items-center justify-center font-bold text-xs">
+                      PS
+                    </div>
+                    <div>
+                      <div className="font-semibold text-[#0B1F3A]">Priya S. • Lead #LV-8922</div>
+                      <div className="text-[#64748B] font-mono text-[11px]">+91 ******8450 (Masked at API)</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#EAF7EE] text-[#16845B] border border-[#C3EBD0]">
+                      Calling Bridge Ready
                     </span>
                   </div>
                 </div>
@@ -168,7 +191,7 @@ export const LandingPage: React.FC = () => {
       </section>
 
       {/* FEATURE SECTION (Section 18) */}
-      <section className="py-20 px-6">
+      <section id="security" className="py-20 px-6">
         <div className="max-w-6xl mx-auto space-y-12">
           <div className="text-center max-w-2xl mx-auto space-y-2">
             <h2 className="text-xs font-bold text-[#1E4D8F] uppercase tracking-wider">

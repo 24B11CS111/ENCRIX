@@ -4,6 +4,12 @@ import { randomBytes } from 'node:crypto';
 process.env.OTP_SERVER_SECRET = randomBytes(32).toString('hex');
 process.env.SESSION_SERVER_SECRET = randomBytes(32).toString('hex');
 
+// Ensure client-side import.meta.env does not leak server-only secrets in Vitest
+delete (import.meta.env as any).SUPABASE_SERVICE_ROLE_KEY;
+delete (import.meta.env as any).TWILIO_AUTH_TOKEN;
+delete (import.meta.env as any).TWILIO_ACCOUNT_SID;
+delete (import.meta.env as any).SUPABASE_SERVICE_KEY;
+
 // Prevent background WebSocket connections during tests in Node 22+ / jsdom environments
 if (typeof globalThis.WebSocket !== 'undefined') {
   class MockWebSocket {

@@ -1,21 +1,30 @@
+
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl =
-  process.env.VITE_SUPABASE_URL ||
-  process.env.SUPABASE_URL ||
-  'https://prod-leadvault.supabase.co';
+function getSupabaseUrl(): string {
+  return process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+}
 
-const supabaseServiceRoleKey =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.SUPABASE_SERVICE_KEY ||
-  '';
+function getSupabaseServiceRoleKey(): string {
+  return process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
+}
 
-/**
- * Returns a secure server-side Supabase client equipped with service-role permissions.
- * This client runs strictly within serverless execution environments and is NEVER bundled to the browser.
- */
+export const isRealSupabaseServerConfigured = () => {
+  const url = getSupabaseUrl();
+  const key = getSupabaseServiceRoleKey();
+  return (
+    /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(url) &&
+    Boolean(key) &&
+    !/(placeholder|mock|dummy|example|your[-_ ]|change[-_ ]?me)/i.test(key)
+  );
+};
+
 export const getSupabaseServerClient = () => {
-  return createClient(supabaseUrl, supabaseServiceRoleKey || 'service-role-placeholder', {
+  if (!isRealSupabaseServerConfigured()) {
+    throw new Error('Secure Supabase server configuration is unavailable.');
+  }
+
+  return createClient(getSupabaseUrl(), getSupabaseServiceRoleKey(), {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
@@ -23,17 +32,6 @@ export const getSupabaseServerClient = () => {
   });
 };
 
-export const isRealSupabaseServerConfigured = () => {
-  return (
-    Boolean(supabaseUrl) &&
-    Boolean(supabaseServiceRoleKey) &&
-    !supabaseUrl.includes('placeholder') &&
-    !supabaseUrl.includes('mock') &&
-    !supabaseUrl.includes('sb-mock-vault') &&
-    !supabaseServiceRoleKey.includes('placeholder') &&
-    !supabaseServiceRoleKey.includes('mock')
-  );
-};
 
 import { verifySignedSessionToken } from './sessionServer.js';
 

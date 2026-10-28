@@ -1,20 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { Shield, Mail, ArrowRight, ArrowLeft, CheckCircle2, Headphones, AlertTriangle } from 'lucide-react';
+import { Shield, Mail, ArrowRight, ArrowLeft, CheckCircle2, Headphones, AlertTriangle, Building2, UserCheck } from 'lucide-react';
 import { OtpInput } from '@/components/auth/OtpInput';
 import { normalizeEmailAddress } from '@/lib/emailNormalization';
-import { db } from '@/services/supabase/db';
+import { authService } from '@/services/auth/authService';
+
+function parseToken(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed.includes('token=')) {
+    const match = trimmed.match(/[?&]token=([a-zA-Z0-9_-]+)/);
+    if (match && match[1]) return match[1];
+  }
+  return trimmed;
+}
 
 export const AcceptInvitationPage: React.FC = () => {
   const [searchParams] = useSearchParams();
-  const tokenFromUrl = searchParams.get('token') || '';
+  const tokenFromUrl = parseToken(searchParams.get('token') || '');
   const { requestOtp, verifyOtp } = useAuth();
   const navigate = useNavigate();
 
   const [token, setToken] = useState(tokenFromUrl);
   const [invitationData, setInvitationData] = useState<any>(null);
   const [invitationError, setInvitationError] = useState<string | null>(null);
+  const [isCheckingInvitation, setIsCheckingInvitation] = useState(false);
 
   // Step 1 = Email verification form, Step 2 = OTP input
   const [step, setStep] = useState<1 | 2>(1);
@@ -29,30 +39,52 @@ export const AcceptInvitationPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (token) {
-      // Look up invitation
-      const inv = db.getInvitationByToken(token);
-      if (!inv) {
-        setInvitationError('Invitation link is invalid or could not be found.');
-      } else if (inv.status === 'EXPIRED') {
-        setInvitationError('This invitation has expired. Please contact your organization owner for a new invitation.');
-      } else if (inv.status === 'ACCEPTED') {
-        setInvitationError('This invitation has already been accepted. Please sign in directly.');
-      } else if (inv.status === 'REVOKED') {
-        setInvitationError('This invitation has been revoked by the organization owner.');
-      } else {
-        setInvitationData(inv);
-        if (inv.email) setEmail(inv.email);
-        setInvitationError(null);
-      }
+    let isCurrent = true;
+    const cleanToken = parseToken(token);
+
+    if (cleanToken) {
+      setIsCheckingInvitation(true);
+      setInvitationError(null);
+
+      authService
+        .getInvitation(cleanToken)
+        .then((res) => {
+          if (!isCurrent) return;
+          setIsCheckingInvitation(false);
+          if (res.success && res.invitation) {
+            setInvitationData(res.invitation);
+            if (res.invitation.email) {
+              setEmail(res.invitation.email);
+            }
+            setInvitationError(null);
+          } else {
+            setInvitationData(null);
+            setInvitationError(res.error || 'Invitation link is invalid or could not be found.');
+          }
+        })
+        .catch((err: any) => {
+          if (!isCurrent) return;
+          setIsCheckingInvitation(false);
+          setInvitationData(null);
+          setInvitationError(err.message || 'Invitation link is invalid or could not be found.');
+        });
+    } else {
+      setIsCheckingInvitation(false);
+      setInvitationData(null);
+      setInvitationError(null);
     }
+
+    return () => {
+      isCurrent = false;
+    };
   }, [token]);
 
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!token.trim()) {
+    const cleanToken = parseToken(token);
+    if (!cleanToken) {
       setError('Invitation token is required.');
       return;
     }
@@ -67,7 +99,7 @@ export const AcceptInvitationPage: React.FC = () => {
     const result = await requestOtp({
       email: norm.normalized,
       purpose: 'INVITATION',
-      inviteToken: token.trim(),
+      inviteToken: cleanToken,
     });
     setIsLoading(false);
 
@@ -90,6 +122,12 @@ export const AcceptInvitationPage: React.FC = () => {
       return;
     }
 
+    const cleanToken = parseToken(token);
+    if (!cleanToken) {
+      setError('Invitation token is required.');
+      return;
+    }
+
     setError(null);
     setIsLoading(true);
 
@@ -98,7 +136,7 @@ export const AcceptInvitationPage: React.FC = () => {
       email: norm.normalized,
       otp: code,
       purpose: 'INVITATION',
-      inviteToken: token.trim(),
+      inviteToken: cleanToken,
     });
     setIsLoading(false);
 
@@ -112,11 +150,12 @@ export const AcceptInvitationPage: React.FC = () => {
   const handleResendOtp = async () => {
     setError(null);
     setIsLoading(true);
+    const cleanToken = parseToken(token);
     const norm = normalizeEmailAddress(email);
     const result = await requestOtp({
       email: norm.normalized,
       purpose: 'INVITATION',
-      inviteToken: token.trim(),
+      inviteToken: cleanToken,
     });
     setIsLoading(false);
 
@@ -129,6 +168,15 @@ export const AcceptInvitationPage: React.FC = () => {
       setError(result.error || 'Failed to resend code.');
     }
   };
+
+  const orgDisplayName =
+    invitationData?.organizationName ||
+    invitationData?.organization_name ||
+    'Assigned Workspace';
+
+  const invitedFullName =
+    invitationData?.fullName ||
+    invitationData?.full_name;
 
   return (
     <div className="min-h-screen bg-[#F6F8FB] flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans">
@@ -156,14 +204,20 @@ export const AcceptInvitationPage: React.FC = () => {
             <p className="text-xs text-[#64748B] mt-1">
               {step === 1
                 ? invitationData
-                  ? `You have been invited to join ${invitationData.organization_name || 'an organization'} as a Telecaller.`
+                  ? `You have been invited to join ${orgDisplayName} as a Telecaller.`
                   : 'Enter your invitation code to activate your assigned caller workspace.'
                 : `Enter the 6-digit verification code sent to ${maskedEmail}`}
             </p>
           </div>
 
-          {invitationError ? (
-            <div className="space-y-4">
+          {isCheckingInvitation ? (
+            <div className="py-8 text-center space-y-3" data-testid="invitation-checking">
+              <div className="inline-flex items-center justify-center w-8 h-8 rounded-full border-2 border-[#0B1F3A] border-t-transparent animate-spin mb-1" />
+              <p className="text-xs font-semibold text-[#0B1F3A]">Verifying invitation credentials...</p>
+              <p className="text-[11px] text-[#64748B]">Validating tenant security token</p>
+            </div>
+          ) : invitationError ? (
+            <div className="space-y-4" data-testid="invitation-error-card">
               <div className="p-3.5 bg-[#FEECEB] border border-[#F8C8C6] rounded-[10px] text-xs text-[#C53030] flex items-start gap-2.5">
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                 <div>
@@ -172,9 +226,24 @@ export const AcceptInvitationPage: React.FC = () => {
                 </div>
               </div>
 
+              {!tokenFromUrl && (
+                <div>
+                  <label className="text-xs font-semibold text-[#172B4D] block mb-1">
+                    Try Another Token
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="inv_..."
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] font-mono shadow-subtle focus:outline-none focus:border-[#0B1F3A]"
+                  />
+                </div>
+              )}
+
               <div className="text-center pt-2">
                 <Link
-                  to="/login"
+                  to="/login?role=telecaller"
                   className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-[#0B1F3A] text-white rounded-[10px] text-xs font-semibold hover:bg-[#071A33] transition-colors"
                 >
                   <span>Go to Login</span>
@@ -193,11 +262,13 @@ export const AcceptInvitationPage: React.FC = () => {
                 <form onSubmit={handleSendOtp} className="space-y-4">
                   {!tokenFromUrl && (
                     <div>
-                      <label className="text-xs font-semibold text-[#172B4D] block mb-1">Invitation Token / Link</label>
+                      <label className="text-xs font-semibold text-[#172B4D] block mb-1">
+                        Invitation Token / Link
+                      </label>
                       <input
                         type="text"
                         required
-                        placeholder="inv_..."
+                        placeholder="inv_... or paste full invitation link"
                         value={token}
                         onChange={(e) => setToken(e.target.value)}
                         className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] font-mono shadow-subtle focus:outline-none focus:border-[#0B1F3A]"
@@ -206,14 +277,27 @@ export const AcceptInvitationPage: React.FC = () => {
                   )}
 
                   {invitationData && (
-                    <div className="p-3 bg-[#F6F8FB] border border-[#DCE4EE] rounded-[10px] text-xs space-y-1">
-                      <div className="text-[#64748B]">Invited Name: <span className="font-semibold text-[#172B4D]">{invitationData.full_name}</span></div>
-                      <div className="text-[#64748B]">Role: <span className="font-semibold text-[#1E4D8F]">TELECALLER</span></div>
+                    <div className="p-3.5 bg-[#F6F8FB] border border-[#DCE4EE] rounded-[10px] text-xs space-y-2">
+                      <div className="flex items-center gap-2 text-[#172B4D] font-semibold">
+                        <Building2 className="w-3.5 h-3.5 text-[#1E4D8F]" />
+                        <span>{orgDisplayName}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-[#64748B] pt-1 border-t border-[#E2E8F0]">
+                        <span className="flex items-center gap-1.5">
+                          <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>{invitedFullName}</span>
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#EAF2FB] text-[#1E4D8F]">
+                          TELECALLER
+                        </span>
+                      </div>
                     </div>
                   )}
 
                   <div>
-                    <label className="text-xs font-semibold text-[#172B4D] block mb-1">Work Email Address</label>
+                    <label className="text-xs font-semibold text-[#172B4D] block mb-1">
+                      Work Email Address
+                    </label>
                     <div className="relative">
                       <Mail className="w-4 h-4 text-[#64748B] absolute left-3 top-2.5" />
                       <input
@@ -232,7 +316,7 @@ export const AcceptInvitationPage: React.FC = () => {
 
                   <button
                     type="submit"
-                    disabled={isLoading}
+                    disabled={isLoading || isCheckingInvitation || !token.trim()}
                     className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white font-semibold text-xs rounded-[10px] shadow-subtle transition-all cursor-pointer disabled:opacity-50"
                   >
                     <span>{isLoading ? 'Verifying Invitation...' : 'Send Verification Code'}</span>
@@ -284,7 +368,7 @@ export const AcceptInvitationPage: React.FC = () => {
 
           <div className="pt-4 border-t border-[#DCE4EE] text-center text-xs text-[#64748B]">
             Already an active member?{' '}
-            <Link to="/login" className="font-semibold text-[#1E4D8F] hover:underline">
+            <Link to="/login?role=telecaller" className="font-semibold text-[#1E4D8F] hover:underline">
               Sign In
             </Link>
           </div>

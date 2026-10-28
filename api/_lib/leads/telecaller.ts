@@ -17,10 +17,19 @@ const ALLOWED_STATUSES = new Set([
 ]);
 
 const SAFE_LEAD_FIELDS = [
-  'id', 'organization_id', 'lead_code', 'name', 'email', 'source', 'status',
-  'priority', 'assigned_to', 'notes', 'last_contacted_at', 'calls_count',
-  'created_at', 'updated_at',
-];
+  'id',
+  'organization_id',
+  'lead_code',
+  'name',
+  'email',
+  'source',
+  'status',
+  'priority',
+  'assigned_to',
+  'notes',
+  'created_at',
+  'updated_at',
+] as const;
 
 function projectLead(row: Record<string, unknown>) {
   // Defensive allowlist in addition to the fixed database function return type.

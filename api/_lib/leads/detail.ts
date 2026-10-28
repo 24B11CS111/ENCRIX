@@ -61,6 +61,9 @@ export default async function handler(req: any, res: any) {
 
       lead = data;
     } else {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(503).json({ error: 'Lead details require a configured database.' });
+      }
       // In offline / test environments, locate lead in database store
       const allLeads = db.getAllRawLeadsForSystem();
       const found = allLeads.find((l) => l.id === leadId);

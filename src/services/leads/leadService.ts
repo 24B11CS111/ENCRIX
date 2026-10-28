@@ -122,6 +122,109 @@ export class LeadService {
     // Local / Offline demo sandbox fallback
     return db.getStudentLeadDetails(leadId, currentProfile);
   }
+
+  /**
+   * Fetches all leads belonging to the caller's organization (Owner / Admin).
+   * In live API mode, dispatches to GET /api/leads/owner.
+   */
+  public async getOwnerLeads(currentProfile: Profile): Promise<Lead[]> {
+    if (!currentProfile || !['OWNER', 'ADMIN'].includes(currentProfile.role)) {
+      throw new Error('Only owners or administrators can access organization leads.');
+    }
+
+    if (isLiveApiMode()) {
+      const token = authService.getSessionToken();
+      if (!token) throw new Error('Your session has expired. Please sign in again.');
+
+      const response = await fetch('/api/leads/owner', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        throw new Error('Organization leads could not be loaded.');
+      }
+
+      const body = await response.json();
+      return Array.isArray(body?.leads) ? body.leads : [];
+    }
+
+    return db.getLeads(currentProfile);
+  }
+
+  /**
+   * Creates a new lead in the organization.
+   * In live API mode, dispatches to POST /api/leads/owner/create.
+   */
+  public async createLead(
+    leadData: Partial<Lead>,
+    currentProfile: Profile
+  ): Promise<Lead> {
+    if (!currentProfile || !['OWNER', 'ADMIN'].includes(currentProfile.role)) {
+      throw new Error('Only owners or administrators can create leads.');
+    }
+
+    if (isLiveApiMode()) {
+      const token = authService.getSessionToken();
+      if (!token) throw new Error('Your session has expired. Please sign in again.');
+
+      const response = await fetch('/api/leads/owner/create', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(leadData),
+      });
+
+      const body = await response.json();
+      if (!response.ok || !body?.lead) {
+        throw new Error(body?.error || 'Failed to save new lead.');
+      }
+
+      return body.lead;
+    }
+
+    return db.createLead(leadData as any, currentProfile);
+  }
+
+  /**
+   * Assigns multiple leads to a telecaller.
+   * In live API mode, dispatches to POST /api/leads/owner/assign.
+   */
+  public async assignLeads(
+    leadIds: string[],
+    telecallerId: string,
+    currentProfile: Profile
+  ): Promise<number> {
+    if (!currentProfile || !['OWNER', 'ADMIN'].includes(currentProfile.role)) {
+      throw new Error('Only owners or administrators can assign leads.');
+    }
+
+    if (isLiveApiMode()) {
+      const token = authService.getSessionToken();
+      if (!token) throw new Error('Your session has expired. Please sign in again.');
+
+      const response = await fetch('/api/leads/owner/assign', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ leadIds, telecallerId }),
+      });
+
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body?.error || 'Failed to assign leads.');
+      }
+
+      return body?.assigned_count ?? leadIds.length;
+    }
+
+    return db.assignLeads(leadIds, telecallerId, currentProfile);
+  }
 }
 
 export const leadService = new LeadService();

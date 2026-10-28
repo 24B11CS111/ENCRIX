@@ -12,6 +12,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { db } from '@/services/supabase/db';
+import { notificationService } from '@/services/notifications/notificationService';
 import { realtimeManager } from '@/services/realtime/realtimeManager';
 import { RealtimeStatusBadge } from '@/components/common/RealtimeStatusBadge';
 import { Notification } from '@/types';
@@ -44,7 +45,17 @@ export const Navbar: React.FC = () => {
     }
 
     realtimeManager.setOrganization(profile.organization_id);
-    setNotifications(db.getNotifications(profile));
+
+    const loadNotifications = async () => {
+      try {
+        const notifs = await notificationService.getNotifications(profile);
+        setNotifications(notifs);
+      } catch {
+        setNotifications(db.getNotifications(profile));
+      }
+    };
+
+    loadNotifications();
 
     const unsubscribe = db.subscribe(({ type }) => {
       if (
@@ -57,7 +68,7 @@ export const Navbar: React.FC = () => {
         type === 'FOLLOWUP_UPDATED' ||
         type === 'FOLLOWUP_REMINDER_SENT'
       ) {
-        setNotifications(db.getNotifications(profile));
+        loadNotifications();
       }
     }, profile);
 
@@ -116,20 +127,32 @@ export const Navbar: React.FC = () => {
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  const handleMarkAsRead = (id: string, link?: string, e?: React.MouseEvent) => {
+  const handleMarkAsRead = async (id: string, link?: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    db.markNotificationRead(id);
-    if (profile) setNotifications(db.getNotifications(profile));
+    try {
+      await notificationService.markAsRead(id, profile);
+      const notifs = await notificationService.getNotifications(profile);
+      setNotifications(notifs);
+    } catch {
+      db.markNotificationRead(id);
+      if (profile) setNotifications(db.getNotifications(profile));
+    }
     if (link) {
       navigate(link);
       setShowNotifications(false);
     }
   };
 
-  const handleMarkAllAsRead = () => {
+  const handleMarkAllAsRead = async () => {
     if (!profile) return;
-    db.markAllNotificationsRead(profile);
-    setNotifications(db.getNotifications(profile));
+    try {
+      await notificationService.markAllAsRead(profile);
+      const notifs = await notificationService.getNotifications(profile);
+      setNotifications(notifs);
+    } catch {
+      db.markAllNotificationsRead(profile);
+      setNotifications(db.getNotifications(profile));
+    }
   };
 
   const getNotificationIcon = (type: Notification['type']) => {

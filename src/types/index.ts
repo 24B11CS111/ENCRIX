@@ -108,15 +108,20 @@ export interface OrganizationInvitation {
   id: string;
   organization_id: string;
   organization_name?: string;
+  organizationName?: string;
   phone_number?: string;
   full_name: string;
+  fullName?: string;
   email?: string;
+  maskedEmail?: string;
   invited_by: string;
   role: 'TELECALLER';
   status: InvitationStatus;
   token: string;
   expires_at: string;
+  expiresAt?: string;
   created_at: string;
+  inviteUrl?: string;
 }
 
 export interface PendingRegistration {

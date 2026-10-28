@@ -1,3 +1,4 @@
+
 # Logs
 logs
 *.log
@@ -7,19 +8,23 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Dependencies and build output
+node_modules/
+dist/
+dist-ssr/
 *.local
+
+# Environment files — never commit real secrets
 .env
-.env*.local
 .env.*
+.env*.local
 !.env.example
+!.env.staging.example
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
 *.suo
 *.ntvs*
@@ -27,6 +32,7 @@ dist-ssr
 *.sln
 *.sw?
 
+# Supabase CLI temporary files
 supabase/.temp/
 
 # Audit scratch files
@@ -34,5 +40,12 @@ audit-*.txt
 audit-*.json
 production-audit*.json
 
-.vercel
-.env*
+# Vercel
+.vercel/
+
+# Production database backups — keep out of Git
+backup_encrix_prod_schema.sql
+backup_encrix_prod_data.sql
+
+# Local working backup
+encrix-working-backup.patch

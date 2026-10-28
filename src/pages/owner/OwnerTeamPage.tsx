@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
+import { authService } from '@/services/auth/authService';
 import { db } from '@/services/supabase/db';
 import { Profile, Lead, Call, OrganizationInvitation } from '@/types';
 import { UserAvatar } from '@/components/common/UserAvatar';
@@ -35,22 +36,72 @@ export const OwnerTeamPage: React.FC = () => {
   const [inviteResult, setInviteResult] = useState<OrganizationInvitation | null>(null);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRevokingId, setIsRevokingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!profile) return;
+
     try {
-      setTelecallers(db.getProfiles(profile).filter((p) => p.role === 'TELECALLER'));
-      setInvitations(db.getInvitations(profile));
+      setTelecallers(
+        db.getProfiles(profile).filter((p) => p.role === 'TELECALLER'),
+      );
       setLeads(db.getLeads(profile));
       setCalls(db.getCalls(profile));
-    } catch {
-      // Fallback
+
+      const result = await authService.getInvitations(profile);
+
+      if (result.success && result.invitations) {
+        setInvitations(result.invitations);
+        setPageError(null);
+      } else {
+        setPageError(result.error || 'Unable to load invitations.');
+      }
+    } catch (error) {
+      console.error('Unable to load owner team data:', error);
+      setPageError('Unable to load owner team data.');
     }
   };
 
   useEffect(() => {
-    loadData();
+    let isMounted = true;
+
+    const executeLoad = async () => {
+      if (!profile) return;
+      try {
+        const tcResult = await authService.getOrganizationTelecallers(profile);
+        if (isMounted) {
+          if (tcResult.success && tcResult.telecallers) {
+            setTelecallers(tcResult.telecallers);
+          } else {
+            setTelecallers(
+              db.getProfiles(profile).filter((p) => p.role === 'TELECALLER'),
+            );
+          }
+        }
+        setLeads(db.getLeads(profile));
+        setCalls(db.getCalls(profile));
+
+        const result = await authService.getInvitations(profile);
+
+        if (isMounted) {
+          if (result.success && result.invitations) {
+            setInvitations(result.invitations);
+            setPageError(null);
+          } else {
+            setPageError(result.error || 'Unable to load invitations.');
+          }
+        }
+      } catch (error) {
+        if (isMounted) {
+          console.error('Unable to load owner team data:', error);
+          setPageError('Unable to load owner team data.');
+        }
+      }
+    };
+
+    executeLoad();
 
     const unsubscribe = db.subscribe(({ type }) => {
       if (
@@ -59,11 +110,14 @@ export const OwnerTeamPage: React.FC = () => {
         type === 'LEADS_ASSIGNED' ||
         type === 'INVITATIONS_UPDATED'
       ) {
-        loadData();
+        executeLoad();
       }
     }, profile);
 
-    return () => unsubscribe();
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, [profile]);
 
   const handleSendInvitation = async (e: React.FormEvent) => {
@@ -92,27 +146,52 @@ export const OwnerTeamPage: React.FC = () => {
     }
   };
 
-  const handleToggleStatus = (tc: Profile) => {
+  const handleToggleStatus = async (tc: Profile) => {
     if (!profile) return;
     const nextStatus = tc.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
-    db.updateProfileStatus(tc.id, nextStatus, profile);
-    loadData();
-  };
-
-  const handleRevokeInvitation = (invId: string) => {
-    if (!profile) return;
     try {
-      db.revokeInvitation(invId, profile);
+      await authService.updateTelecallerStatus(tc.id, nextStatus, profile);
       loadData();
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      setPageError(err?.message || 'Failed to update telecaller status.');
     }
   };
 
-  const handleCopyLink = (token: string) => {
-    const link = `${window.location.origin}/accept-invitation?token=${token}`;
+  const handleRevokeInvitation = async (invId: string) => {
+    if (!profile || isRevokingId) return;
+
+    const confirmed = window.confirm(
+      'Are you sure you want to revoke this pending invitation?',
+    );
+
+    if (!confirmed) return;
+
+    setIsRevokingId(invId);
+    setPageError(null);
+
+    try {
+      const result = await authService.revokeInvitation(invId, profile);
+
+      if (!result.success) {
+        setPageError(result.error || 'Failed to revoke invitation.');
+        return;
+      }
+
+      await loadData();
+    } catch (err: any) {
+      setPageError(err?.message || 'Failed to revoke invitation.');
+    } finally {
+      setIsRevokingId(null);
+    }
+  };
+
+
+  const handleCopyLink = (tokenOrUrl: string) => {
+    const link = tokenOrUrl.startsWith('http')
+      ? tokenOrUrl
+      : `${window.location.origin}/accept-invitation?token=${tokenOrUrl}`;
     navigator.clipboard.writeText(link);
-    setCopiedToken(token);
+    setCopiedToken(tokenOrUrl);
     setTimeout(() => setCopiedToken(null), 2500);
   };
 
@@ -272,6 +351,18 @@ export const OwnerTeamPage: React.FC = () => {
           </h2>
         </div>
 
+        {pageError && (
+          <div className="p-3 bg-[#FEECEB] border border-[#F8C8C6] rounded-[10px] text-xs text-[#C53030] flex items-center justify-between">
+            <span>{pageError}</span>
+            <button
+              onClick={() => setPageError(null)}
+              className="text-[#C53030] font-semibold text-xs ml-3 hover:underline cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         <div className="rounded-[12px] border border-[#DCE4EE] bg-white overflow-hidden shadow-sm">
           {invitations.length === 0 ? (
             <div className="py-8 text-center text-xs text-[#64748B]">
@@ -337,7 +428,12 @@ export const OwnerTeamPage: React.FC = () => {
 
                               <button
                                 onClick={() => handleRevokeInvitation(inv.id)}
-                                className="p-1.5 rounded-[8px] text-[#64748B] hover:text-[#C53030] hover:bg-rose-50 transition-colors cursor-pointer"
+                                disabled={isRevokingId === inv.id}
+                                className={`p-1.5 rounded-[8px] transition-colors cursor-pointer ${
+                                  isRevokingId === inv.id
+                                    ? 'opacity-40 cursor-not-allowed text-[#64748B]'
+                                    : 'text-[#64748B] hover:text-[#C53030] hover:bg-rose-50'
+                                }`}
                                 title="Revoke Invitation"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -372,17 +468,17 @@ export const OwnerTeamPage: React.FC = () => {
                     <span>Invitation Created Successfully</span>
                   </div>
                   <p className="text-emerald-700 text-[11px]">
-                    Share this verified onboarding link with <span className="font-semibold">{inviteResult.full_name}</span>:
+                    Share this verified onboarding link with <span className="font-semibold">{inviteResult.full_name || inviteResult.fullName}</span>:
                   </p>
                   <div className="p-2 bg-white rounded-[8px] border border-emerald-200 font-mono text-[11px] text-[#172B4D] break-all select-all">
-                    {`${window.location.origin}/accept-invitation?token=${inviteResult.token}`}
+                    {inviteResult.inviteUrl || `${window.location.origin}/accept-invitation?token=${inviteResult.token}`}
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between gap-3 pt-2">
                   <button
                     type="button"
-                    onClick={() => handleCopyLink(inviteResult.token)}
+                    onClick={() => handleCopyLink(inviteResult.inviteUrl || inviteResult.token)}
                     className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white text-xs font-semibold rounded-[10px] shadow-sm transition-all cursor-pointer"
                   >
                     {copiedToken === inviteResult.token ? (

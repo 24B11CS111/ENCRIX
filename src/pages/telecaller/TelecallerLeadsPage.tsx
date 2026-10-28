@@ -103,16 +103,18 @@ export const TelecallerLeadsPage: React.FC = () => {
     };
     void refresh();
 
-    const unsubscribe = (!isRealSupabaseConfigured() && IS_DEMO_MODE) ? db.subscribe(({ type }) => {
+    const unsubscribe = db.subscribe(({ type }) => {
       if (
         type === 'LEADS_ASSIGNED' ||
         type === 'LEADS_ASSIGNED_ROUND_ROBIN' ||
+        type === 'LEAD_CREATED' ||
+        type === 'LEAD_UPDATED' ||
         type === 'CALL_RECORDED' ||
         type === 'CALL_OUTCOME_SAVED'
       ) {
         void loadData();
       }
-    }, profile) : undefined;
+    }, profile);
 
     return () => {
       current = false;

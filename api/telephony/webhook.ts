@@ -77,7 +77,7 @@ export default async function handler(req: any, res: any) {
     }
   }
 
-  const supabase = getSupabaseServerClient();
+  const supabase = isRealSupabaseServerConfigured() ? getSupabaseServerClient() : null;
 
   // 1. Cryptographic HMAC-SHA1 signature verification
   const isValid = verifyTwilioSignature(
@@ -89,13 +89,15 @@ export default async function handler(req: any, res: any) {
 
   if (!isValid) {
     // Log security event for forged webhook
-    await supabase.from('security_events').insert({
-      organization_id: 'SYSTEM',
-      event_type: 'TWILIO_WEBHOOK_FORGERY_ATTEMPT',
-      severity: 'HIGH',
-      description: 'Rejected forged Twilio webhook callback. Signature mismatch.',
-      metadata: {},
-    });
+    if (supabase) {
+      await supabase.from('security_events').insert({
+        organization_id: 'SYSTEM',
+        event_type: 'TWILIO_WEBHOOK_FORGERY_ATTEMPT',
+        severity: 'HIGH',
+        description: 'Rejected forged Twilio webhook callback. Signature mismatch.',
+        metadata: {},
+      });
+    }
 
     return res.status(401).json({ error: 'Unauthorized: Invalid Twilio HMAC signature' });
   }
@@ -120,7 +122,7 @@ export default async function handler(req: any, res: any) {
   // A valid signature is not enough: the provider SID must resolve to a
   // persisted ENCRIX call before the callback can alter tenant data.
   let targetCall: any = null;
-  if (isRealSupabaseServerConfigured()) {
+  if (isRealSupabaseServerConfigured() && supabase) {
     const { data, error } = await supabase
       .from('calls')
       .select('id, organization_id, lead_id, telecaller_id, provider, provider_call_id, status, duration_seconds, recording_url')
@@ -138,7 +140,7 @@ export default async function handler(req: any, res: any) {
 
   // 2. Webhook Idempotency Check (Duplicate / Replay prevention)
   let isDuplicate = false;
-  if (isRealSupabaseServerConfigured()) {
+  if (isRealSupabaseServerConfigured() && supabase) {
     const { error } = await supabase.from('webhook_events').insert({
       provider: 'TWILIO',
       provider_event_id: providerEventId,
@@ -181,14 +183,16 @@ export default async function handler(req: any, res: any) {
     // 4a. Validate URL against SSRF and trusted Twilio host
     const urlValidation = validateTwilioRecordingUrl(recordingUrl);
     if (!urlValidation.valid) {
-      await supabase.from('security_events').insert({
-        organization_id: 'SYSTEM',
-        event_type: 'UNTRUSTED_RECORDING_URL_REJECTED',
-        severity: 'HIGH',
-        description: 'Rejected untrusted Twilio recording URL.',
-        metadata: {},
-      });
-    } else if (isRealSupabaseServerConfigured()) {
+      if (supabase) {
+        await supabase.from('security_events').insert({
+          organization_id: 'SYSTEM',
+          event_type: 'UNTRUSTED_RECORDING_URL_REJECTED',
+          severity: 'HIGH',
+          description: 'Rejected untrusted Twilio recording URL.',
+          metadata: {},
+        });
+      }
+    } else if (isRealSupabaseServerConfigured() && supabase) {
       // Recording URLs are accepted only on terminal callbacks and remain
       // server-side inputs to the private-storage pipeline.
       const pipelineResult = await downloadAndStoreRecording({
@@ -216,7 +220,7 @@ export default async function handler(req: any, res: any) {
   }
 
   let updatedCall: any = null;
-  if (isRealSupabaseServerConfigured()) {
+  if (isRealSupabaseServerConfigured() && supabase) {
     if (Object.keys(updatePayload).length > 0) {
       const { data, error } = await supabase
         .from('calls')

@@ -1,13 +1,13 @@
 -- Phase 24.7: bridge custom server sessions to the sanitized telecaller lead
--- workflow without granting browser roles access to the service operations.
+-- workflow without granting browser roles access to service operations.
 -- The API must authenticate the custom session and supply identity values from
 -- its active profile lookup. These functions independently revalidate that
 -- identity, tenant, role, status, and assignment before returning or changing data.
 --
 -- SAFE ROLLBACK PROCEDURE:
--- To roll back this migration safely:
---   DROP FUNCTION IF EXISTS public.server_update_assigned_telecaller_lead(UUID, UUID, UUID, UUID, TEXT, TEXT);
---   DROP FUNCTION IF EXISTS public.server_get_assigned_telecaller_leads(UUID, UUID, UUID);
+-- DROP FUNCTION IF EXISTS public.server_update_assigned_telecaller_lead(UUID, UUID, UUID, UUID, TEXT, TEXT);
+-- DROP FUNCTION IF EXISTS public.server_get_assigned_telecaller_leads(UUID, UUID, UUID);
+--
 -- The underlying leads, profiles, triggers, views, and RLS policies remain untouched.
 
 CREATE OR REPLACE FUNCTION public.server_get_assigned_telecaller_leads(
@@ -26,8 +26,6 @@ RETURNS TABLE (
     priority VARCHAR(50),
     assigned_to UUID,
     notes TEXT,
-    last_contacted_at TIMESTAMPTZ,
-    calls_count INTEGER,
     created_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ
 )
@@ -43,17 +41,25 @@ AS $$
         CASE
             WHEN pg_catalog.strpos(cleaned.clean_name, ' ') = 0
                 THEN COALESCE(NULLIF(cleaned.clean_name, ''), 'Student')
-            ELSE pg_catalog.split_part(cleaned.clean_name, ' ', 1) || ' ' ||
-                 pg_catalog.left(pg_catalog.split_part(cleaned.clean_name, ' ', 2), 1) || '.'
+            ELSE
+                pg_catalog.split_part(cleaned.clean_name, ' ', 1) || ' ' ||
+                pg_catalog.left(
+                    pg_catalog.split_part(cleaned.clean_name, ' ', 2),
+                    1
+                ) || '.'
         END AS name,
         '***@***.***'::TEXT AS email,
-        pg_catalog.regexp_replace(lead.source, '[0-9]', '', 'g') AS source,
+        pg_catalog.regexp_replace(
+            COALESCE(lead.source, ''),
+            '[0-9]', '', 'g'
+        ) AS source,
         lead.status,
         lead.priority,
         lead.assigned_to,
-        pg_catalog.regexp_replace(lead.notes, '[0-9]', '', 'g') AS notes,
-        lead.last_contacted_at,
-        lead.calls_count,
+        pg_catalog.regexp_replace(
+            COALESCE(lead.notes, ''),
+            '[0-9]', '', 'g'
+        ) AS notes,
         lead.created_at,
         lead.updated_at
     FROM public.leads AS lead
@@ -64,7 +70,10 @@ AS $$
         SELECT pg_catalog.btrim(
             pg_catalog.regexp_replace(
                 pg_catalog.regexp_replace(
-                    pg_catalog.regexp_replace(COALESCE(lead.name, ''), '[0-9]', '', 'g'),
+                    pg_catalog.regexp_replace(
+                        COALESCE(lead.name, ''),
+                        '[0-9]', '', 'g'
+                    ),
                     '[-_./,()+]+', ' ', 'g'
                 ),
                 '[[:space:]]+', ' ', 'g'
@@ -98,16 +107,22 @@ DECLARE
     v_profile_exists BOOLEAN;
     v_updated_rows INTEGER;
 BEGIN
-    IF p_user_id IS NULL OR p_profile_id IS NULL OR p_organization_id IS NULL
-       OR p_lead_id IS NULL OR p_status IS NULL OR p_notes IS NULL
+    IF p_user_id IS NULL
+       OR p_profile_id IS NULL
+       OR p_organization_id IS NULL
+       OR p_lead_id IS NULL
+       OR p_status IS NULL
+       OR p_notes IS NULL
        OR p_status NOT IN (
            'NEW', 'ASSIGNED', 'CONTACTED', 'INTERESTED', 'FOLLOW_UP',
            'CONVERTED', 'NOT_INTERESTED', 'INVALID', 'DO_NOT_CONTACT'
-       ) OR pg_catalog.length(p_notes) > 10000 THEN
+       )
+       OR pg_catalog.length(p_notes) > 10000 THEN
         RETURN FALSE;
     END IF;
 
-    SELECT TRUE INTO v_profile_exists
+    SELECT TRUE
+      INTO v_profile_exists
       FROM public.profiles AS profile
      WHERE profile.id = p_profile_id
        AND profile.user_id = p_user_id
@@ -120,8 +135,7 @@ BEGIN
         RETURN FALSE;
     END IF;
 
-    -- This function changes exactly the two fields allowed by the existing
-    -- telecaller policy and trigger; it never accepts client tenant/assignment data.
+    -- Only status and notes can be changed by this function.
     UPDATE public.leads AS lead
        SET status = p_status,
            notes = p_notes
@@ -130,20 +144,37 @@ BEGIN
        AND lead.assigned_to = p_profile_id;
 
     GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
+
     RETURN v_updated_rows = 1;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.server_get_assigned_telecaller_leads(UUID, UUID, UUID)
+REVOKE ALL ON FUNCTION
+    public.server_get_assigned_telecaller_leads(UUID, UUID, UUID)
     FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.server_update_assigned_telecaller_lead(UUID, UUID, UUID, UUID, TEXT, TEXT)
+
+REVOKE ALL ON FUNCTION
+    public.server_update_assigned_telecaller_lead(
+        UUID, UUID, UUID, UUID, TEXT, TEXT
+    )
     FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.server_get_assigned_telecaller_leads(UUID, UUID, UUID)
-    TO service_role;
-GRANT EXECUTE ON FUNCTION public.server_update_assigned_telecaller_lead(UUID, UUID, UUID, UUID, TEXT, TEXT)
+
+GRANT EXECUTE ON FUNCTION
+    public.server_get_assigned_telecaller_leads(UUID, UUID, UUID)
     TO service_role;
 
-COMMENT ON FUNCTION public.server_get_assigned_telecaller_leads(UUID, UUID, UUID) IS
-    'Service-role-only sanitized lead projection; caller identity must be derived from an authenticated active server profile.';
-COMMENT ON FUNCTION public.server_update_assigned_telecaller_lead(UUID, UUID, UUID, UUID, TEXT, TEXT) IS
-    'Service-role-only update of status and notes for a lead assigned to the supplied active telecaller profile in its organization.';
+GRANT EXECUTE ON FUNCTION
+    public.server_update_assigned_telecaller_lead(
+        UUID, UUID, UUID, UUID, TEXT, TEXT
+    )
+    TO service_role;
+
+COMMENT ON FUNCTION
+    public.server_get_assigned_telecaller_leads(UUID, UUID, UUID)
+IS 'Service-role-only sanitized lead projection; caller identity must be derived from an authenticated active server profile.';
+
+COMMENT ON FUNCTION
+    public.server_update_assigned_telecaller_lead(
+        UUID, UUID, UUID, UUID, TEXT, TEXT
+    )
+IS 'Service-role-only update of status and notes for a lead assigned to the supplied active telecaller profile in its organization.';

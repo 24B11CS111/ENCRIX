@@ -6,6 +6,7 @@ import { IS_DEMO_MODE } from '@/lib/config';
 import { rateLimiter } from '@/lib/rateLimiter';
 import { supabase, isRealSupabaseConfigured } from '@/services/supabase/client';
 import { authService, SendOtpParams, SendOtpResult, VerifyOtpParams, VerifyOtpResult } from '@/services/auth/authService';
+import { realtimeManager } from '@/services/realtime/realtimeManager';
 
 interface AuthContextType {
   user: { id: string; email: string } | null;
@@ -197,6 +198,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       authSubscription?.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (profile?.organization_id) {
+      realtimeManager.setOrganization(profile.organization_id);
+    } else {
+      realtimeManager.cleanup();
+    }
+  }, [profile?.organization_id]);
 
   const login = async (email: string, password?: string) => {
     // Rate limit login attempts: 5 attempts per 60 seconds
@@ -445,6 +454,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
     }
     db.unsubscribeAll();
+    realtimeManager.cleanup();
     localStorage.removeItem('leadvault_session');
     localStorage.removeItem('leadvault_session_token');
     setProfile(null);

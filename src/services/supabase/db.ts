@@ -412,7 +412,80 @@ class LeadVaultDatabase {
                   schema: 'public',
                   filter: `organization_id=eq.${orgId}`,
                 },
-                (payload) => {
+                (payload: any) => {
+                  const table = payload.table;
+                  const newRec = payload.new;
+                  const oldRec = payload.old;
+
+                  // 1. Synchronize in-memory caches if present
+                  if (table === 'leads' && newRec) {
+                    const idx = this.leads.findIndex((l) => l.id === newRec.id);
+                    if (idx !== -1) {
+                      this.leads[idx] = { ...this.leads[idx], ...newRec };
+                    } else if (payload.eventType === 'INSERT') {
+                      this.leads.unshift(newRec);
+                    }
+                  } else if (table === 'profiles' && newRec) {
+                    const idx = this.profiles.findIndex((p) => p.id === newRec.id);
+                    if (idx !== -1) {
+                      this.profiles[idx] = { ...this.profiles[idx], ...newRec };
+                    } else if (payload.eventType === 'INSERT') {
+                      this.profiles.push(newRec);
+                    }
+                  } else if (table === 'calls' && newRec) {
+                    const idx = this.calls.findIndex((c) => c.id === newRec.id);
+                    if (idx !== -1) {
+                      this.calls[idx] = { ...this.calls[idx], ...newRec };
+                    } else if (payload.eventType === 'INSERT') {
+                      this.calls.unshift(newRec);
+                    }
+                  } else if (table === 'notifications' && newRec) {
+                    const idx = this.notifications.findIndex((n) => n.id === newRec.id);
+                    if (idx !== -1) {
+                      this.notifications[idx] = { ...this.notifications[idx], ...newRec };
+                    } else if (payload.eventType === 'INSERT') {
+                      this.notifications.unshift(newRec);
+                    }
+                  }
+
+                  // 2. Dispatch domain-specific event types that UI subscribers listen for
+                  if (table === 'leads') {
+                    if (payload.eventType === 'INSERT') {
+                      this.notifyListeners({ type: 'LEAD_CREATED', payload: newRec, organization_id: orgId });
+                    } else if (payload.eventType === 'UPDATE') {
+                      this.notifyListeners({ type: 'LEAD_UPDATED', payload: newRec, organization_id: orgId });
+                      if (newRec.assigned_to && (!oldRec || oldRec.assigned_to !== newRec.assigned_to)) {
+                        this.notifyListeners({
+                          type: 'LEADS_ASSIGNED',
+                          payload: { leadIds: [newRec.id], telecallerId: newRec.assigned_to },
+                          organization_id: orgId,
+                        });
+                      }
+                    }
+                  } else if (table === 'profiles') {
+                    this.notifyListeners({ type: 'TEAM_UPDATED', payload: newRec, organization_id: orgId });
+                  } else if (table === 'organization_invitations') {
+                    this.notifyListeners({ type: 'INVITATIONS_UPDATED', payload: newRec, organization_id: orgId });
+                    this.notifyListeners({ type: 'TEAM_UPDATED', payload: newRec, organization_id: orgId });
+                  } else if (table === 'calls') {
+                    this.notifyListeners({ type: 'CALL_RECORDED', payload: newRec, organization_id: orgId });
+                  } else if (table === 'follow_ups') {
+                    this.notifyListeners({
+                      type: payload.eventType === 'INSERT' ? 'FOLLOWUP_CREATED' : 'FOLLOWUP_UPDATED',
+                      payload: newRec,
+                      organization_id: orgId,
+                    });
+                  } else if (table === 'security_events') {
+                    this.notifyListeners({ type: 'SECURITY_EVENT_RAISED', payload: newRec, organization_id: orgId });
+                  } else if (table === 'notifications') {
+                    this.notifyListeners({
+                      type: payload.eventType === 'INSERT' ? 'NEW_NOTIFICATION' : 'NOTIFICATION_READ',
+                      payload: newRec,
+                      organization_id: orgId,
+                    });
+                  }
+
+                  // 3. Always dispatch base record event
                   this.notifyListeners({
                     type:
                       payload.eventType === 'INSERT'
@@ -3588,6 +3661,45 @@ class LeadVaultDatabase {
       },
     });
 
+    this.emit('FOLLOWUP_UPDATED', updated, { organization_id: fup.organization_id });
+    return updated;
+  }
+
+  public updateFollowUpNotes(
+    id: string,
+    notes: string,
+    currentProfile: Profile
+  ): FollowUp {
+    this.ensureActive(currentProfile);
+    const index = this.followUps.findIndex((f) => f.id === id);
+    if (index === -1) throw new Error('Follow-up not found.');
+
+    const fup = this.followUps[index];
+    if (currentProfile.role !== 'ADMIN' && fup.organization_id !== currentProfile.organization_id) {
+      throw new Error('Forbidden: Follow-up belongs to another organization.');
+    }
+
+    if (currentProfile.role === 'TELECALLER' && fup.assigned_to !== currentProfile.id) {
+      this.recordSecurityEvent(
+        {
+          event_type: 'UNAUTHORIZED_FOLLOWUP_MODIFICATION',
+          severity: 'HIGH',
+          description: `Telecaller ${currentProfile.full_name} (${currentProfile.id}) attempted to update follow-up ${id} assigned to ${fup.assigned_to}. Blocked.`,
+          metadata: { followUpId: id },
+        },
+        currentProfile
+      );
+      throw new Error("Forbidden: Cannot modify another telecaller's follow-up.");
+    }
+
+    const sanitizedNotes = sanitizeText(notes ? notes.trim() : '');
+    this.followUps[index] = {
+      ...fup,
+      notes: sanitizedNotes,
+      updated_at: new Date().toISOString(),
+    };
+
+    const updated = this.followUps[index];
     this.emit('FOLLOWUP_UPDATED', updated, { organization_id: fup.organization_id });
     return updated;
   }

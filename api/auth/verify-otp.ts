@@ -1,5 +1,6 @@
 import crypto from 'crypto';
-import { getSupabaseServerClient } from '../_lib/supabaseServer.js';
+import { getSupabaseServerClient, isRealSupabaseServerConfigured } from '../_lib/supabaseServer.js';
+import { getServerInvitation, updateServerInvitationStatus } from '../_lib/invitationServer.js';
 import { verifyOtpHash, OTP_CONFIG, serverOtpStore, verifyVerificationTicket, markTicketConsumed } from '../_lib/otpServer.js';
 import { createSignedSessionToken } from '../_lib/sessionServer.js';
 import { getRequiredServerSecret } from '../_lib/serverSecret.js';
@@ -46,8 +47,60 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: secretErr.message || 'SESSION_SERVER_SECRET is missing or invalid' });
     }
 
-    const supabase = getSupabaseServerClient();
+    let supabase: any = null;
+    try {
+      supabase = getSupabaseServerClient();
+    } catch {
+      supabase = null;
+    }
     const now = new Date();
+
+    // Pre-flight invitation status check before consuming OTP or updating attempt limits
+    if (purpose === 'INVITATION') {
+      if (!inviteToken || typeof inviteToken !== 'string' || !inviteToken.trim()) {
+        return res.status(400).json({ error: 'Invitation token is required.' });
+      }
+
+      const cleanToken = inviteToken.trim();
+      let preInv: any = null;
+      if (supabase) {
+        try {
+          const { data, error: invErr } = await supabase
+            .from('organization_invitations')
+            .select('status, expires_at, email')
+            .eq('token', cleanToken)
+            .maybeSingle();
+
+          if (!invErr && data) {
+            preInv = data;
+          }
+        } catch {
+          // Fallback handled
+        }
+      }
+
+      if (!preInv && !isRealSupabaseServerConfigured()) {
+        preInv = getServerInvitation(cleanToken);
+      }
+
+      if (preInv) {
+        if (preInv.status === 'REVOKED') {
+          return res.status(403).json({ error: 'This invitation has been revoked by the organization owner.' });
+        }
+        if (preInv.status === 'EXPIRED' || new Date(preInv.expires_at).getTime() < now.getTime()) {
+          return res.status(400).json({ error: 'This invitation has expired. Request a new invitation.' });
+        }
+        if (preInv.status === 'ACCEPTED') {
+          return res.status(400).json({ error: 'This invitation has already been accepted. Please sign in directly.' });
+        }
+        if (preInv.email) {
+          const invEmailNorm = normalizeEmail(preInv.email);
+          if (invEmailNorm.normalized !== normalizedEmail) {
+            return res.status(400).json({ error: 'Email address does not match this invitation.' });
+          }
+        }
+      }
+    }
 
     // 1. Fetch active OTP record
     let otpRecord: any = null;
@@ -591,55 +644,191 @@ export default async function handler(req: any, res: any) {
       }
     } else if (purpose === 'INVITATION') {
       // Telecaller Invitation Acceptance
-      if (!inviteToken) {
+      if (!inviteToken || typeof inviteToken !== 'string' || !inviteToken.trim()) {
         return res.status(400).json({ error: 'Invitation token is required.' });
       }
 
+      const cleanToken = inviteToken.trim();
       let inv: any = null;
-      try {
-        const { data, error: invErr } = await supabase
-          .from('organization_invitations')
-          .select('*')
-          .eq('token', inviteToken)
-          .single();
 
-        if (!invErr && data) {
-          inv = data;
+      if (supabase) {
+        try {
+          const { data, error: invErr } = await supabase
+            .from('organization_invitations')
+            .select('*')
+            .eq('token', cleanToken)
+            .maybeSingle();
+
+          if (!invErr && data) {
+            inv = data;
+          }
+        } catch {
+          // Invitation lookup error handled
         }
-      } catch {
-        // Invitation lookup error handled
       }
 
-      if (!inv || inv.status !== 'PENDING') {
+      if (!inv) {
+        inv = getServerInvitation(cleanToken);
+      }
+
+      if (!inv) {
+        return res.status(404).json({ error: 'Invalid invitation link.' });
+      }
+
+      // Check Expiration
+      const isExpired =
+        inv.status === 'EXPIRED' || new Date(inv.expires_at).getTime() < now.getTime();
+      if (isExpired) {
+        return res.status(400).json({ error: 'This invitation has expired. Request a new invitation.' });
+      }
+
+      // Check Invitation Status
+      if (inv.status === 'ACCEPTED') {
+        return res.status(400).json({ error: 'This invitation has already been accepted. Please sign in directly.' });
+      }
+      if (inv.status === 'REVOKED') {
+        return res.status(403).json({ error: 'This invitation has been revoked by the organization owner.' });
+      }
+      if (inv.status !== 'PENDING') {
         return res.status(400).json({ error: 'Invalid or already accepted invitation.' });
+      }
+
+      // Check Email Binding (Telecaller email must match the invitation)
+      if (inv.email) {
+        const invEmailNorm = normalizeEmail(inv.email);
+        if (invEmailNorm.normalized !== normalizedEmail) {
+          return res.status(400).json({ error: 'Email address does not match this invitation.' });
+        }
       }
 
       // Fetch inviting organization
       let org: any = null;
-      try {
-        const { data: orgData, error: orgErr } = await supabase
-          .from('organizations')
-          .select('*')
-          .eq('id', inv.organization_id)
-          .single();
+      if (supabase) {
+        try {
+          const { data: orgData, error: orgErr } = await supabase
+            .from('organizations')
+            .select('*')
+            .eq('id', inv.organization_id)
+            .single();
 
-        if (!orgErr && orgData) {
-          org = orgData;
+          if (!orgErr && orgData) {
+            org = orgData;
+          }
+        } catch {
+          // Org lookup error handled
         }
-      } catch {
-        // Org lookup error handled
       }
 
       if (!org) {
-        return res.status(404).json({ error: 'Inviting organization no longer exists.' });
+        org = {
+          id: inv.organization_id,
+          name: inv.organization_name || 'ENCRIX Workspace',
+          status: 'ACTIVE',
+        };
       }
 
-      // Create Telecaller Profile (Strictly TELECALLER role)
-      let newTc: any = null;
-      try {
-        const { data: tcData, error: tcErr } = await supabase
-          .from('profiles')
-          .insert({
+      if (!org || org.status !== 'ACTIVE') {
+        return res.status(404).json({ error: 'Inviting organization no longer exists or is suspended.' });
+      }
+
+      // Check if email already belongs to a profile (prevent cross-tenant hijacking)
+      let existingProfile: any = null;
+      if (supabase) {
+        try {
+          const { data: profData } = await supabase
+            .from('profiles')
+            .select('id, user_id, organization_id, full_name, email, role, status')
+            .eq('email', normalizedEmail)
+            .maybeSingle();
+
+          if (profData) {
+            existingProfile = profData;
+          }
+        } catch {
+          // Profile lookup error handled
+        }
+      }
+
+      if (existingProfile) {
+        if (existingProfile.organization_id !== org.id) {
+          return res.status(409).json({
+            error: 'An account with this email address already belongs to another organization.',
+          });
+        }
+      }
+
+      // Atomic Status Update to Prevent Race Conditions and Replay Attacks
+      let markedAccepted = false;
+      if (supabase) {
+        try {
+          const { data: updatedInv, error: updateErr } = await supabase
+            .from('organization_invitations')
+            .update({ status: 'ACCEPTED' })
+            .eq('id', inv.id)
+            .eq('status', 'PENDING')
+            .select('*')
+            .maybeSingle();
+
+          if (!updateErr && updatedInv) {
+            markedAccepted = true;
+          }
+        } catch {
+          // Update error handled
+        }
+      }
+
+      if (!markedAccepted && !supabase) {
+        const mem = getServerInvitation(cleanToken);
+        if (mem) {
+          if (mem.status !== 'PENDING') {
+            return res.status(400).json({ error: 'This invitation has already been accepted.' });
+          }
+          mem.status = 'ACCEPTED';
+          markedAccepted = true;
+        }
+      }
+
+      if (!markedAccepted) {
+        return res.status(400).json({ error: 'This invitation has already been accepted.' });
+      }
+
+      updateServerInvitationStatus(cleanToken, 'ACCEPTED');
+
+      // Create or activate Telecaller Profile (Strictly TELECALLER role)
+      let newTc: any = existingProfile;
+      if (!newTc) {
+        if (supabase) {
+          try {
+            const { data: tcData, error: tcErr } = await supabase
+              .from('profiles')
+              .insert({
+                user_id: crypto.randomUUID(),
+                organization_id: org.id,
+                full_name: inv.full_name,
+                email: normalizedEmail,
+                phone: inv.phone_number || null,
+                email_verified: true,
+                phone_verified: false,
+                role: 'TELECALLER',
+                status: 'ACTIVE',
+              })
+              .select('*')
+              .single();
+
+            if (!tcErr && tcData) {
+              newTc = tcData;
+            }
+          } catch {
+            // Insert error handled by fallback
+          }
+        }
+
+        if (!newTc) {
+          if (process.env.NODE_ENV === 'production') {
+            return res.status(500).json({ error: 'Failed to activate telecaller account. Please try again shortly.' });
+          }
+          newTc = {
+            id: `tc-${Date.now().toString(36)}`,
             user_id: crypto.randomUUID(),
             organization_id: org.id,
             full_name: inv.full_name,
@@ -649,60 +838,27 @@ export default async function handler(req: any, res: any) {
             phone_verified: false,
             role: 'TELECALLER',
             status: 'ACTIVE',
-          })
-          .select('*')
-          .single();
-
-        if (!tcErr && tcData) {
-          newTc = tcData;
+          };
         }
-      } catch {
-        // Insert error handled by fallback
-      }
-
-      if (!newTc) {
-        if (process.env.NODE_ENV === 'production') {
-          return res.status(500).json({ error: 'Failed to activate telecaller account. Please try again shortly.' });
-        }
-        newTc = {
-          id: `tc-${Date.now().toString(36)}`,
-          user_id: crypto.randomUUID(),
-          organization_id: org.id,
-          full_name: inv.full_name,
-          email: normalizedEmail,
-          phone: inv.phone_number || null,
-          email_verified: true,
-          phone_verified: false,
-          role: 'TELECALLER',
-          status: 'ACTIVE',
-        };
-      }
-
-      // Mark invitation accepted
-      try {
-        await supabase
-          .from('organization_invitations')
-          .update({ status: 'ACCEPTED' })
-          .eq('id', inv.id);
-      } catch {
-        // Update error handled
       }
 
       resultProfile = newTc;
       resultOrg = org;
 
-      try {
-        await supabase.from('security_events').insert({
-          organization_id: org.id,
-          user_id: newTc.id,
-          user_name: newTc.full_name,
-          event_type: 'INVITATION_ACCEPTED',
-          severity: 'LOW',
-          description: `Telecaller ${newTc.full_name} accepted invitation and joined organization ${org.name}.`,
-          metadata: { emailMasked: normEmail.masked, role: 'TELECALLER' },
-        });
-      } catch {
-        // Event log error handled
+      if (supabase) {
+        try {
+          await supabase.from('security_events').insert({
+            organization_id: org.id,
+            user_id: newTc.id,
+            user_name: newTc.full_name,
+            event_type: 'INVITATION_ACCEPTED',
+            severity: 'LOW',
+            description: `Telecaller ${newTc.full_name} accepted invitation and joined organization ${org.name}.`,
+            metadata: { emailMasked: normEmail.masked, role: 'TELECALLER', invitedBy: inv.invited_by },
+          });
+        } catch {
+          // Event log error handled
+        }
       }
     }
 
