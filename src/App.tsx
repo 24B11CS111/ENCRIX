@@ -7,6 +7,7 @@ import { AppSplashScreen } from '@/components/AppSplashScreen';
 
 // Public Pages
 import { LandingPage } from '@/pages/LandingPage';
+import { DemoWorkspace } from '@/pages/DemoWorkspace';
 import { LoginPage } from '@/pages/auth/LoginPage';
 import { RegisterPage } from '@/pages/auth/RegisterPage';
 import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage';
@@ -163,12 +164,15 @@ const AppContent: React.FC = () => {
 export const App: React.FC = () => {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
+      <Routes>
+        {/* Keep the synthetic sandbox outside AuthProvider so it never restores or reads a live session. */}
+        <Route path="/demo" element={<DemoWorkspace />} />
+        <Route path="*" element={<AuthProvider><AppContent /></AuthProvider>} />
+      </Routes>
     </BrowserRouter>
   );
 };
 
 export default App;
+
 

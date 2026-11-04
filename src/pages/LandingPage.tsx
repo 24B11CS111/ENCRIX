@@ -38,6 +38,13 @@ export const LandingPage: React.FC = () => {
           <div className="flex items-center gap-3">
 
             <Link
+              to="/demo"
+              className="px-4 py-2 text-xs font-semibold text-[#1E4D8F] hover:text-[#0B1F3A] transition-colors"
+            >
+              Try the Demo
+            </Link>
+
+            <Link
               to="/login"
               className="px-4 py-2 text-xs font-semibold text-[#172B4D] hover:text-[#0B1F3A] transition-colors"
             >
@@ -83,6 +90,13 @@ export const LandingPage: React.FC = () => {
               className="w-full sm:w-auto px-7 py-3.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white font-semibold text-sm rounded-[10px] shadow-subtle transition-all"
             >
               GET STARTED
+            </Link>
+
+            <Link
+              to="/demo"
+              className="w-full sm:w-auto px-7 py-3.5 bg-white hover:bg-[#F6F8FB] text-[#0B1F3A] font-semibold text-sm rounded-[10px] border border-[#DCE4EE] shadow-subtle transition-all flex items-center justify-center gap-2"
+            >
+              Explore interactive demo
             </Link>
 
             <Link
@@ -492,3 +506,4 @@ export const LandingPage: React.FC = () => {
     </div>
   );
 };
+
