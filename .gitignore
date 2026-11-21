@@ -44,8 +44,25 @@ production-audit*.json
 .vercel/
 
 # Production database backups — keep out of Git
+backups/
 backup_encrix_prod_schema.sql
 backup_encrix_prod_data.sql
 
 # Local working backup
 encrix-working-backup.patch
+.vercel
+.env*
+
+# Database dumps and staging backups
+staging*.sql
+*.backup.sql
+supabase/staging_all_migrations.sql
+
+# Test caches and temporary configs
+.vitest/
+vercel.json.before-*
+
+# Schema dumps and local review files
+remote-public-schema.sql
+encrix-billing-review.txt
+*.pt

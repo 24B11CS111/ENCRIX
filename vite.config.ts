@@ -4,6 +4,10 @@ import react from '@vitejs/plugin-react'
 import { fileURLToPath } from 'url'
 import path from 'path'
 import fs from 'fs'
+import {
+  ENCRIX_PRODUCTION_SUPABASE_PROJECT_REF,
+  validateFrontendSupabaseBuildEnvironment,
+} from './src/lib/supabaseProject.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -123,21 +127,35 @@ function localApiServerPlugin(): Plugin {
 }
 
 // https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [react(), localApiServerPlugin()],
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
+export default defineConfig(({ mode }) => {
+  const buildEnvironment = loadEnv(mode, process.cwd(), '')
+  const validation = validateFrontendSupabaseBuildEnvironment(mode, process.env.VERCEL_ENV, buildEnvironment)
+  if (!validation.valid) {
+    throw new Error(`Invalid production Supabase frontend configuration: ${validation.reason}`)
+  }
+
+  const enforceExpectedProductionProject = mode === 'production' && process.env.VERCEL_ENV !== 'preview'
+  return {
+    define: {
+      __ENCRIX_EXPECTED_SUPABASE_PROJECT_REF__: JSON.stringify(
+        enforceExpectedProductionProject ? ENCRIX_PRODUCTION_SUPABASE_PROJECT_REF : '',
+      ),
     },
-  },
-  build: {
-    // Production Security: Never generate source maps in production to prevent leaking symbols or architecture
-    sourcemap: false,
-  },
-  test: {
-    globals: true,
-    environment: 'jsdom',
-    setupFiles: './src/test/setup.ts',
-    pool: 'threads',
-  },
+    plugins: [react(), localApiServerPlugin()],
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, './src'),
+      },
+    },
+    build: {
+      // Production Security: Never generate source maps in production to prevent leaking symbols or architecture
+      sourcemap: false,
+    },
+    test: {
+      globals: true,
+      environment: 'jsdom',
+      setupFiles: './src/test/setup.ts',
+      pool: 'threads',
+    },
+  }
 })

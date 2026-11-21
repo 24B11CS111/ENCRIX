@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+﻿import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -13,12 +13,23 @@ import {
   clearServerInvitations,
   updateServerInvitationStatus,
 } from '../../api/_lib/invitationServer';
-import inviteHandler from '../../api/auth/invite';
-import sendOtpHandler from '../../api/auth/send-otp';
-import verifyOtpHandler from '../../api/auth/verify-otp';
+import inviteHandler from '../../api/_lib/authHandlers/invite';
+import sendOtpHandler from '../../api/_lib/authHandlers/send-otp';
+import verifyOtpHandler from '../../api/_lib/authHandlers/verify-otp';
 import { hashOtp, serverOtpStore } from '../../api/_lib/otpServer';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
+
+vi.mock('../../api/_lib/emailDelivery.js', () => ({
+  sendInvitationEmail: vi.fn(async () => ({ id: 'mock-invitation-email' })),
+  sendFollowUpReminderEmail: vi.fn(async () => ({ id: 'mock-reminder-email' })),
+}));
 import { Profile } from '@/types';
+import * as supabaseServerModule from '../../api/_lib/supabaseServer';
+import { createDurableOtpSupabaseMock, seedDurableOtp } from './helpers/durableOtpSupabaseMock';
+
+vi.mock('../../api/_lib/paidEntitlement.js', () => ({
+  requirePaidEntitlement: vi.fn(async () => true),
+}));
 
 function createMockReqRes(options: {
   method?: string;
@@ -56,6 +67,7 @@ function createMockReqRes(options: {
 
 describe('ENCRIX Phase 27: Telecaller Invitation Acceptance & Hardened Onboarding', () => {
   const originalEnv = { ...process.env };
+  let durableOtpRows: any[] = [];
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -68,6 +80,9 @@ describe('ENCRIX Phase 27: Telecaller Invitation Acceptance & Hardened Onboardin
     delete process.env.VITE_SUPABASE_URL;
     process.env.OTP_SERVER_SECRET = 'c8f7e2a1b4d3e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0';
     process.env.SESSION_SERVER_SECRET = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2';
+    const durableMock = createDurableOtpSupabaseMock();
+    durableOtpRows = durableMock.rows;
+    vi.spyOn(supabaseServerModule, 'getSupabaseServerClient').mockReturnValue(durableMock.client);
   });
 
   afterEach(() => {
@@ -117,9 +132,9 @@ describe('ENCRIX Phase 27: Telecaller Invitation Acceptance & Hardened Onboardin
   });
 
   // =========================================================================
-  // 2. Invitation Token Lookup & Validation Endpoint (GET /api/auth/invite)
+  // 2. Invitation Token Lookup & Validation Endpoint (GET /api/_lib/authHandlers/invite)
   // =========================================================================
-  describe('2. Invitation Token Lookup & Validation (GET /api/auth/invite)', () => {
+  describe('2. Invitation Token Lookup & Validation (GET /api/_lib/authHandlers/invite)', () => {
     it('rejects missing or empty token with 400', async () => {
       const { req, res } = createMockReqRes({ method: 'GET', query: {} });
       await inviteHandler(req, res);
@@ -250,9 +265,9 @@ describe('ENCRIX Phase 27: Telecaller Invitation Acceptance & Hardened Onboardin
   });
 
   // =========================================================================
-  // 3. Invitation Creation (POST /api/auth/invite)
+  // 3. Invitation Creation (POST /api/_lib/authHandlers/invite)
   // =========================================================================
-  describe('3. Invitation Creation (POST /api/auth/invite)', () => {
+  describe('3. Invitation Creation (POST /api/_lib/authHandlers/invite)', () => {
     it('rejects unauthenticated requests with 401', async () => {
       const { req, res } = createMockReqRes({
         method: 'POST',
@@ -323,9 +338,9 @@ describe('ENCRIX Phase 27: Telecaller Invitation Acceptance & Hardened Onboardin
   });
 
   // =========================================================================
-  // 4. Invitation OTP Request Validation (POST /api/auth/send-otp)
+  // 4. Invitation OTP Request Validation (POST /api/_lib/authHandlers/send-otp)
   // =========================================================================
-  describe('4. Invitation OTP Request Validation (POST /api/auth/send-otp)', () => {
+  describe('4. Invitation OTP Request Validation (POST /api/_lib/authHandlers/send-otp)', () => {
     const validToken = 'inv_otp_test_token_1234567890';
 
     beforeEach(() => {
@@ -412,12 +427,13 @@ describe('ENCRIX Phase 27: Telecaller Invitation Acceptance & Hardened Onboardin
   });
 
   // =========================================================================
-  // 5. Verification & Workspace Activation (POST /api/auth/verify-otp)
+  // 5. Verification & Workspace Activation (POST /api/_lib/authHandlers/verify-otp)
   // =========================================================================
-  describe('5. Verification & Workspace Activation (POST /api/auth/verify-otp)', () => {
+  describe('5. Verification & Workspace Activation (POST /api/_lib/authHandlers/verify-otp)', () => {
     const inviteToken = 'inv_verify_telecaller_token_9876543210';
     const telecallerEmail = 'rohit.mehta@callcenter.com';
     const correctOtp = '654321';
+    let verificationTicket = '';
 
     beforeEach(() => {
       storeServerInvitation({
@@ -434,17 +450,7 @@ describe('ENCRIX Phase 27: Telecaller Invitation Acceptance & Hardened Onboardin
         created_at: new Date().toISOString(),
       });
 
-      // Prepare active OTP in serverOtpStore
-      serverOtpStore.set(`${telecallerEmail}:INVITATION`, {
-        identifier: telecallerEmail,
-        purpose: 'INVITATION',
-        otpHash: hashOtp(telecallerEmail, correctOtp),
-        attempts: 0,
-        resendAfter: new Date(Date.now() + 60000).toISOString(),
-        expiresAt: new Date(Date.now() + 300000).toISOString(),
-        used: false,
-        createdAt: new Date().toISOString(),
-      });
+      verificationTicket = seedDurableOtp(durableOtpRows, telecallerEmail, correctOtp, 'INVITATION', inviteToken);
     });
 
     it('rejects verification if wrong OTP is provided', async () => {
@@ -455,6 +461,7 @@ describe('ENCRIX Phase 27: Telecaller Invitation Acceptance & Hardened Onboardin
           otp: '000000',
           purpose: 'INVITATION',
           inviteToken,
+          verificationTicket,
         },
       });
       await verifyOtpHandler(req, res);
@@ -482,6 +489,7 @@ describe('ENCRIX Phase 27: Telecaller Invitation Acceptance & Hardened Onboardin
           otp: correctOtp,
           purpose: 'INVITATION',
           inviteToken,
+          verificationTicket,
         },
       });
       await verifyOtpHandler(req, res);
@@ -497,6 +505,7 @@ describe('ENCRIX Phase 27: Telecaller Invitation Acceptance & Hardened Onboardin
           otp: correctOtp,
           purpose: 'INVITATION',
           inviteToken,
+          verificationTicket,
         },
       });
       await verifyOtpHandler(req, res);
@@ -521,22 +530,13 @@ describe('ENCRIX Phase 27: Telecaller Invitation Acceptance & Hardened Onboardin
           otp: correctOtp,
           purpose: 'INVITATION',
           inviteToken,
+          verificationTicket,
         },
       });
       await verifyOtpHandler(req1, res1);
       expect(res1.statusCode).toBe(200);
 
-      // Re-arm OTP for testing duplicate invitation acceptance attempt
-      serverOtpStore.set(`${telecallerEmail}:INVITATION`, {
-        identifier: telecallerEmail,
-        purpose: 'INVITATION',
-        otpHash: hashOtp(telecallerEmail, correctOtp),
-        attempts: 0,
-        resendAfter: new Date(Date.now() + 60000).toISOString(),
-        expiresAt: new Date(Date.now() + 300000).toISOString(),
-        used: false,
-        createdAt: new Date().toISOString(),
-      });
+      verificationTicket = seedDurableOtp(durableOtpRows, telecallerEmail, correctOtp, 'INVITATION', inviteToken);
 
       // 2nd acceptance attempt with same token
       const { req: req2, res: res2 } = createMockReqRes({
@@ -546,6 +546,7 @@ describe('ENCRIX Phase 27: Telecaller Invitation Acceptance & Hardened Onboardin
           otp: correctOtp,
           purpose: 'INVITATION',
           inviteToken,
+          verificationTicket,
         },
       });
       await verifyOtpHandler(req2, res2);

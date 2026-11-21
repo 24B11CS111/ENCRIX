@@ -1,5 +1,5 @@
 import { getSupabaseServerClient, isRealSupabaseServerConfigured } from './supabaseServer.js';
-import { getTwilioServerConfig } from './twilioServer.js';
+import type { OrganizationTwilioCredentials } from './twilioCredentials.js';
 
 // Maximum supported recording size: 50 MB
 export const MAX_RECORDING_SIZE_BYTES = 52_428_800;
@@ -44,25 +44,13 @@ export function validateTwilioRecordingUrl(rawUrl: string): ValidationResult {
 
     // 2. Strict Hostname Allowlist
     const hostname = parsed.hostname.toLowerCase();
-    const isTwilioHost =
-      hostname === 'api.twilio.com' ||
-      hostname === 'recording.twilio.com' ||
-      hostname.endsWith('.twilio.com');
+    const isTwilioHost = hostname === 'api.twilio.com' || hostname === 'recording.twilio.com';
 
     if (!isTwilioHost) {
       return { valid: false, error: `Untrusted recording hostname '${hostname}'. Must be on twilio.com.` };
     }
-
-    // Explicitly reject private IP, loopback, or cloud metadata endpoints
-    if (
-      hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
-      hostname === '169.254.169.254' ||
-      hostname.startsWith('10.') ||
-      hostname.startsWith('192.168.') ||
-      hostname.startsWith('172.16.')
-    ) {
-      return { valid: false, error: 'Access to loopback, private, or metadata endpoints is forbidden.' };
+    if (parsed.username || parsed.password || (parsed.port && parsed.port !== '443')) {
+      return { valid: false, error: 'Recording URL must not contain credentials or a non-standard port.' };
     }
 
     // 3. Expected Twilio Recording Path Pattern
@@ -162,6 +150,7 @@ export async function downloadAndStoreRecording(options: {
   callId: string;
   organizationId: string;
   recordingUrl: string;
+  twilioCredentials?: OrganizationTwilioCredentials;
   downloaderOverride?: (url: string) => Promise<{ buffer: Buffer; contentType: string }>;
 }): Promise<DownloadResult> {
   const { callId, organizationId, recordingUrl, downloaderOverride } = options;
@@ -198,28 +187,36 @@ export async function downloadAndStoreRecording(options: {
       audioBuffer = downloaded.buffer;
       responseContentType = downloaded.contentType;
     } else {
-      const twilioConfig = getTwilioServerConfig();
+      const accountSid = options.twilioCredentials?.accountSid || '';
+      const authToken = options.twilioCredentials?.authToken || '';
+      if (!accountSid || !authToken) {
+        return { success: false, error: 'Organization recording credentials are unavailable' };
+      }
       // Ensure audio format extension
       const downloadTarget = recordingUrl.endsWith('.mp3') || recordingUrl.endsWith('.wav')
         ? recordingUrl
         : `${recordingUrl}.mp3`;
 
       const authHeader = `Basic ${Buffer.from(
-        `${twilioConfig.accountSid}:${twilioConfig.authToken}`
+        `${accountSid}:${authToken}`
       ).toString('base64')}`;
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
 
-      const resp = await fetch(downloadTarget, {
-        headers: {
-          Authorization: authHeader,
-          'User-Agent': 'ENCRIX-SecureRecordingPipeline/1.0',
-        },
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
+      let resp: Response;
+      try {
+        resp = await fetch(downloadTarget, {
+          headers: {
+            Authorization: authHeader,
+            'User-Agent': 'ENCRIX-SecureRecordingPipeline/1.0',
+          },
+          redirect: 'error',
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!resp.ok) {
         return { success: false, error: `Twilio download failed with HTTP ${resp.status}` };

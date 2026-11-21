@@ -1,46 +1,44 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/features/auth/AuthContext';
 import { RoleGate } from '@/features/auth/RoleGate';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { AppSplashScreen } from '@/components/AppSplashScreen';
 
-// Public Pages
-import { LandingPage } from '@/pages/LandingPage';
-import { LoginPage } from '@/pages/auth/LoginPage';
-import { RegisterPage } from '@/pages/auth/RegisterPage';
-import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage';
-import { ResetPasswordPage } from '@/pages/auth/ResetPasswordPage';
-import { AcceptInvitationPage } from '@/pages/auth/AcceptInvitationPage';
-
-// Owner Pages
-import { OwnerDashboard } from '@/pages/owner/OwnerDashboard';
-import { OwnerLeadsPage } from '@/pages/owner/OwnerLeadsPage';
-import { LeadImportWizard } from '@/features/leads/LeadImportWizard';
-import { OwnerAssignmentsPage } from '@/pages/owner/OwnerAssignmentsPage';
-import { OwnerTeamPage } from '@/pages/owner/OwnerTeamPage';
-import { OwnerCallsPage } from '@/pages/owner/OwnerCallsPage';
-import { OwnerFollowUpsPage } from '@/pages/owner/OwnerFollowUpsPage';
-import { OwnerAnalyticsPage } from '@/pages/owner/OwnerAnalyticsPage';
-import { OwnerActivityPage } from '@/pages/owner/OwnerActivityPage';
-import { OwnerSecurityPage } from '@/pages/owner/OwnerSecurityPage';
-import { OwnerSettingsPage } from '@/pages/owner/OwnerSettingsPage';
-
-// Telecaller Pages
-import { TelecallerDashboard } from '@/pages/telecaller/TelecallerDashboard';
-import { TelecallerLeadsPage } from '@/pages/telecaller/TelecallerLeadsPage';
-import { TelecallerCallsPage } from '@/pages/telecaller/TelecallerCallsPage';
-import { TelecallerFollowUpsPage } from '@/pages/telecaller/TelecallerFollowUpsPage';
-import { TelecallerPerformancePage } from '@/pages/telecaller/TelecallerPerformancePage';
-import { TelecallerProfilePage } from '@/pages/telecaller/TelecallerProfilePage';
-
-// Admin Pages
-import { AdminDashboard } from '@/pages/admin/AdminDashboard';
-import { AdminOrganizationsPage } from '@/pages/admin/AdminOrganizationsPage';
-import { AdminUsersPage } from '@/pages/admin/AdminUsersPage';
-import { AdminActivityPage } from '@/pages/admin/AdminActivityPage';
-import { AdminSecurityPage } from '@/pages/admin/AdminSecurityPage';
-import { AdminSystemPage } from '@/pages/admin/AdminSystemPage';
+const LandingPage = React.lazy(() => import('@/pages/LandingPage').then((module) => ({ default: module.LandingPage })));
+const LoginPage = React.lazy(() => import('@/pages/auth/LoginPage').then((module) => ({ default: module.LoginPage })));
+const RegisterPage = React.lazy(() => import('@/pages/auth/RegisterPage').then((module) => ({ default: module.RegisterPage })));
+const ForgotPasswordPage = React.lazy(() => import('@/pages/auth/ForgotPasswordPage').then((module) => ({ default: module.ForgotPasswordPage })));
+const ResetPasswordPage = React.lazy(() => import('@/pages/auth/ResetPasswordPage').then((module) => ({ default: module.ResetPasswordPage })));
+const AcceptInvitationPage = React.lazy(() => import('@/pages/auth/AcceptInvitationPage').then((module) => ({ default: module.AcceptInvitationPage })));
+const OwnerDashboard = React.lazy(() => import('@/pages/owner/OwnerDashboard').then((module) => ({ default: module.OwnerDashboard })));
+const OwnerLeadsPage = React.lazy(() => import('@/pages/owner/OwnerLeadsPage').then((module) => ({ default: module.OwnerLeadsPage })));
+const LeadImportWizard = React.lazy(() => import('@/features/leads/LeadImportWizard').then((module) => ({ default: module.LeadImportWizard })));
+const OwnerAssignmentsPage = React.lazy(() => import('@/pages/owner/OwnerAssignmentsPage').then((module) => ({ default: module.OwnerAssignmentsPage })));
+const OwnerTeamPage = React.lazy(() => import('@/pages/owner/OwnerTeamPage').then((module) => ({ default: module.OwnerTeamPage })));
+const OwnerCallsPage = React.lazy(() => import('@/pages/owner/OwnerCallsPage').then((module) => ({ default: module.OwnerCallsPage })));
+const OwnerFollowUpsPage = React.lazy(() => import('@/pages/owner/OwnerFollowUpsPage').then((module) => ({ default: module.OwnerFollowUpsPage })));
+const OwnerAnalyticsPage = React.lazy(() => import('@/pages/owner/OwnerAnalyticsPage').then((module) => ({ default: module.OwnerAnalyticsPage })));
+const OwnerActivityPage = React.lazy(() => import('@/pages/owner/OwnerActivityPage').then((module) => ({ default: module.OwnerActivityPage })));
+const OwnerSecurityPage = React.lazy(() => import('@/pages/owner/OwnerSecurityPage').then((module) => ({ default: module.OwnerSecurityPage })));
+const OwnerSettingsPage = React.lazy(() => import('@/pages/owner/OwnerSettingsPage').then((module) => ({ default: module.OwnerSettingsPage })));
+const OwnerPricingPage = React.lazy(() => import('@/pages/owner/OwnerPricingPage').then((module) => ({ default: module.OwnerPricingPage })));
+const OwnerCheckoutPage = React.lazy(() => import('@/pages/owner/OwnerCheckoutPage').then((module) => ({ default: module.OwnerCheckoutPage })));
+const PricingPage = React.lazy(() => import('@/pages/PricingPage').then((module) => ({ default: module.PricingPage })));
+const DemoWorkspace = React.lazy(() => import('@/pages/DemoWorkspace').then((module) => ({ default: module.DemoWorkspace })));
+const TelecallerDashboard = React.lazy(() => import('@/pages/telecaller/TelecallerDashboard').then((module) => ({ default: module.TelecallerDashboard })));
+const TelecallerLeadsPage = React.lazy(() => import('@/pages/telecaller/TelecallerLeadsPage').then((module) => ({ default: module.TelecallerLeadsPage })));
+const TelecallerCallsPage = React.lazy(() => import('@/pages/telecaller/TelecallerCallsPage').then((module) => ({ default: module.TelecallerCallsPage })));
+const TelecallerFollowUpsPage = React.lazy(() => import('@/pages/telecaller/TelecallerFollowUpsPage').then((module) => ({ default: module.TelecallerFollowUpsPage })));
+const TelecallerPerformancePage = React.lazy(() => import('@/pages/telecaller/TelecallerPerformancePage').then((module) => ({ default: module.TelecallerPerformancePage })));
+const TelecallerProfilePage = React.lazy(() => import('@/pages/telecaller/TelecallerProfilePage').then((module) => ({ default: module.TelecallerProfilePage })));
+const AdminDashboard = React.lazy(() => import('@/pages/admin/AdminDashboard').then((module) => ({ default: module.AdminDashboard })));
+const AdminOrganizationsPage = React.lazy(() => import('@/pages/admin/AdminOrganizationsPage').then((module) => ({ default: module.AdminOrganizationsPage })));
+const AdminUsersPage = React.lazy(() => import('@/pages/admin/AdminUsersPage').then((module) => ({ default: module.AdminUsersPage })));
+const AdminActivityPage = React.lazy(() => import('@/pages/admin/AdminActivityPage').then((module) => ({ default: module.AdminActivityPage })));
+const AdminSecurityPage = React.lazy(() => import('@/pages/admin/AdminSecurityPage').then((module) => ({ default: module.AdminSecurityPage })));
+const AdminSystemPage = React.lazy(() => import('@/pages/admin/AdminSystemPage').then((module) => ({ default: module.AdminSystemPage })));
+const AdminRefundsPage = React.lazy(() => import('@/pages/admin/AdminRefundsPage').then((module) => ({ default: module.AdminRefundsPage })));
 
 const AppRoutes: React.FC = () => {
   const { profile, isAuthenticated } = useAuth();
@@ -58,6 +56,7 @@ const AppRoutes: React.FC = () => {
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/pricing" element={<PricingPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/onboarding" element={<RegisterPage />} />
@@ -84,6 +83,8 @@ const AppRoutes: React.FC = () => {
         <Route path="activity" element={<OwnerActivityPage />} />
         <Route path="security" element={<OwnerSecurityPage />} />
         <Route path="settings" element={<OwnerSettingsPage />} />
+        <Route path="pricing" element={<OwnerPricingPage />} />
+        <Route path="pricing/checkout" element={<OwnerCheckoutPage />} />
       </Route>
 
       {/* Telecaller Protected Routes */}
@@ -118,6 +119,7 @@ const AppRoutes: React.FC = () => {
         <Route path="activity" element={<AdminActivityPage />} />
         <Route path="security" element={<AdminSecurityPage />} />
         <Route path="system" element={<AdminSystemPage />} />
+        <Route path="refunds" element={<AdminRefundsPage />} />
       </Route>
 
       {/* Dynamic Fallback / Role Home */}
@@ -162,13 +164,16 @@ const AppContent: React.FC = () => {
 
 export const App: React.FC = () => {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
-    </BrowserRouter>
+    <Suspense fallback={<div className="p-6 text-center text-sm text-slate-500" role="status">Loading page...</div>}>
+      <BrowserRouter>
+        <Routes>
+          {/* Keep the synthetic sandbox outside AuthProvider so it never restores or reads a live session. */}
+          <Route path="/demo" element={<DemoWorkspace />} />
+          <Route path="*" element={<AuthProvider><AppContent /></AuthProvider>} />
+        </Routes>
+      </BrowserRouter>
+    </Suspense>
   );
 };
 
 export default App;
-

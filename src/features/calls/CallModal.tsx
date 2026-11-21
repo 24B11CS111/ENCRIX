@@ -35,9 +35,14 @@ export const CallModal: React.FC<CallModalProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
+  const idempotencyKeyRef = useRef('');
 
   useEffect(() => {
-    if (!isOpen || !profile) return;
+    if (!isOpen) {
+      idempotencyKeyRef.current = '';
+      return;
+    }
+    if (!profile) return;
 
     const startCall = async () => {
       try {
@@ -46,12 +51,16 @@ export const CallModal: React.FC<CallModalProps> = ({
         setIsMuted(false);
         setActionError(null);
         setStatusMessage(null);
+        if (!idempotencyKeyRef.current) {
+          idempotencyKeyRef.current = window.crypto.randomUUID();
+        }
 
         // Secure call placement: caller client only provides leadId and caller profile.
         // Raw customer phone is never retrieved into client component memory.
         const dispatchResult = await callService.dispatchCall({
           leadId: lead.id,
           callerProfile: profile,
+          idempotencyKey: idempotencyKeyRef.current,
         });
 
         setCallId(dispatchResult.session.callId);
@@ -61,6 +70,7 @@ export const CallModal: React.FC<CallModalProps> = ({
             ? 'CONNECTED'
             : dispatchResult.session.status;
           setCallStatus(modalStatus);
+          setStatusMessage(dispatchResult.consentNotice);
 
           let polling = false;
           const pollStatus = async () => {

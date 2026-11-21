@@ -5,6 +5,7 @@ import {
 } from '../_lib/supabaseServer.js';
 import { db } from '../../src/services/supabase/db.js';
 import type { Profile } from '../../src/types/index.js';
+import { requirePaidEntitlement } from '../_lib/paidEntitlement.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') {
@@ -82,6 +83,8 @@ export default async function handler(req: any, res: any) {
         return res.status(403).json({ error: 'Forbidden: You can only access recordings of calls initiated by you' });
       }
     }
+
+    if (!await requirePaidEntitlement(res, profile, supabase)) return;
 
     // Only sign the canonical private-storage object; never follow legacy stored URLs.
     const filePath = `${call.organization_id}/${call.id}.mp3`;

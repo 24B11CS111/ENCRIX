@@ -1,14 +1,32 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Shield, Mail, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { supabase } from '@/services/supabase/client';
 
 export const ForgotPasswordPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [submitting, setSubmitting] = useState(false);
+  const [requestError, setRequestError] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitted(true);
+    setSubmitting(true);
+    setRequestError(false);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) setRequestError(true);
+    } catch {
+      // Keep the response identical for known and unknown addresses.
+      setRequestError(true);
+    } finally {
+      // Supabase intentionally returns the same result for unknown accounts.
+      setSubmitted(true);
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -34,10 +52,11 @@ export const ForgotPasswordPage: React.FC = () => {
           {submitted ? (
             <div className="p-4 rounded-[10px] bg-[#EAF7EE] border border-[#C3EBD0] text-center space-y-2">
               <CheckCircle2 className="w-8 h-8 text-[#16845B] mx-auto" />
-              <div className="text-sm font-bold text-[#0B1F3A]">Recovery email sent</div>
+              <div className="text-sm font-bold text-[#0B1F3A]">Check your email</div>
               <p className="text-xs text-[#172B4D]">
-                If an account exists for <span className="font-semibold text-[#16845B]">{email}</span>, a secure password reset link has been dispatched.
+                If an account exists for this address, recovery instructions will be sent. This response does not reveal whether the address has an account.
               </p>
+              {requestError && <p role="status" className="text-xs text-[#64748B]">The request could not be completed right now. Please try again later.</p>}
               <Link to="/login" className="inline-block mt-3 text-xs text-[#1E4D8F] font-semibold hover:underline">
                 Return to Login
               </Link>
@@ -45,10 +64,11 @@ export const ForgotPasswordPage: React.FC = () => {
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="text-xs font-semibold text-[#172B4D] block mb-1">Work Email</label>
+                <label htmlFor="recovery-email" className="text-xs font-semibold text-[#172B4D] block mb-1">Work Email</label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-[#64748B] absolute left-3 top-2.5" />
                   <input
+                    id="recovery-email"
                     type="email"
                     required
                     value={email}
@@ -63,7 +83,7 @@ export const ForgotPasswordPage: React.FC = () => {
                 type="submit"
                 className="w-full py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white font-semibold text-xs rounded-[10px] shadow-subtle transition-all"
               >
-                Send Reset Link
+                {submitting ? 'Sending…' : 'Send Reset Link'}
               </button>
 
               <div className="text-center pt-2">

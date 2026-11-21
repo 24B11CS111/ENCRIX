@@ -13,7 +13,6 @@ import {
 } from 'lucide-react';
 import { db } from '@/services/supabase/db';
 import { notificationService } from '@/services/notifications/notificationService';
-import { realtimeManager } from '@/services/realtime/realtimeManager';
 import { RealtimeStatusBadge } from '@/components/common/RealtimeStatusBadge';
 import { Notification } from '@/types';
 import { formatRelativeTime } from '@/lib/utils';
@@ -44,8 +43,6 @@ export const Navbar: React.FC = () => {
       return;
     }
 
-    realtimeManager.setOrganization(profile.organization_id);
-
     const loadNotifications = async () => {
       try {
         const notifs = await notificationService.getNotifications(profile);
@@ -63,6 +60,7 @@ export const Navbar: React.FC = () => {
         type === 'NOTIFICATION_READ' ||
         type === 'CALL_OUTCOME_SAVED' ||
         type === 'LEADS_ASSIGNED' ||
+        type === 'LEAD_REFRESH_REQUIRED' ||
         type === 'SECURITY_EVENT_RAISED' ||
         type === 'FOLLOWUP_CREATED' ||
         type === 'FOLLOWUP_UPDATED' ||

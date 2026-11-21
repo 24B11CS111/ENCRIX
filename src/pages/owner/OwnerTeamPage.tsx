@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { authService } from '@/services/auth/authService';
 import { db } from '@/services/supabase/db';
+import { leadService } from '@/services/leads/leadService';
 import { Profile, Lead, Call, OrganizationInvitation } from '@/types';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import {
@@ -47,7 +48,7 @@ export const OwnerTeamPage: React.FC = () => {
       setTelecallers(
         db.getProfiles(profile).filter((p) => p.role === 'TELECALLER'),
       );
-      setLeads(db.getLeads(profile));
+      setLeads(await leadService.getOwnerLeads(profile));
       setCalls(db.getCalls(profile));
 
       const result = await authService.getInvitations(profile);
@@ -80,7 +81,7 @@ export const OwnerTeamPage: React.FC = () => {
             );
           }
         }
-        setLeads(db.getLeads(profile));
+        setLeads(await leadService.getOwnerLeads(profile));
         setCalls(db.getCalls(profile));
 
         const result = await authService.getInvitations(profile);
@@ -105,6 +106,7 @@ export const OwnerTeamPage: React.FC = () => {
 
     const unsubscribe = db.subscribe(({ type }) => {
       if (
+        type === 'LEAD_REFRESH_REQUIRED' ||
         type === 'TEAM_UPDATED' ||
         type === 'CALL_RECORDED' ||
         type === 'LEADS_ASSIGNED' ||

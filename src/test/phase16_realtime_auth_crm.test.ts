@@ -250,8 +250,8 @@ describe('ENCRIX Phase 16: Real-Time Production Authentication & Live CRM Test S
     unsub();
   });
 
-  // 10. Telecaller realtime assignment
-  it('10. Telecaller realtime assignment: telecaller receives immediate event with ZERO phone exposure when assigned', () => {
+  // 10. Telecaller lead events carry no lead row; the sanitized refresh signal drives reload.
+  it('10. Telecaller realtime assignment: lead events expose no phone or row payload', () => {
     const telecaller = db.getProfiles({ role: 'ADMIN', organization_id: '' } as Profile).find((p) => p.role === 'TELECALLER')!;
     const owner = db.getProfiles({ role: 'ADMIN', organization_id: '' } as Profile).find((p) => p.role === 'OWNER')!;
 
@@ -273,11 +273,7 @@ describe('ENCRIX Phase 16: Real-Time Production Authentication & Live CRM Test S
       status: 'NEW',
     }, owner);
 
-    expect(deliveredEvent).not.toBeNull();
-    const payload = (deliveredEvent as any)?.payload;
-    expect(payload.assigned_to).toBe(telecaller.id);
-    expect(payload.phone).toBeUndefined();
-    expect('phone' in payload).toBe(false);
+    expect(deliveredEvent).toMatchObject({ type: 'LEAD_CREATED', payload: undefined });
 
     unsub();
   });
@@ -426,7 +422,7 @@ describe('ENCRIX Phase 16: Real-Time Production Authentication & Live CRM Test S
   });
 
   // 16. Reconnect behavior
-  it('16. Reconnect behavior: transitions through OFFLINE -> RECONNECTING -> LIVE on network interruption', () => {
+  it('16. Reconnect behavior: refuses an unauthenticated reconnect without a verified identity', () => {
     realtimeManager.setStatus('LIVE');
     expect(realtimeManager.getStatus()).toBe('LIVE');
 
@@ -440,9 +436,9 @@ describe('ENCRIX Phase 16: Real-Time Production Authentication & Live CRM Test S
     expect(realtimeManager.getStatus()).toBe('OFFLINE');
     expect(recordedStatus).toBe('OFFLINE');
 
-    // Trigger reconnect
+    // A reconnect without an active verified profile must not open a channel.
     realtimeManager.reconnect();
-    expect(realtimeManager.getStatus()).toBe('RECONNECTING');
+    expect(realtimeManager.getStatus()).toBe('OFFLINE');
 
     // Connection restored
     realtimeManager.setStatus('LIVE');

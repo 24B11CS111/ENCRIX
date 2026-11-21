@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
+import { leadService } from '@/services/leads/leadService';
 import { metricsService, TelecallerDashboardMetrics } from '@/services/metrics/metricsService';
 import { Lead, Call, FollowUp } from '@/types';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -41,7 +42,11 @@ export const TelecallerDashboard: React.FC = () => {
 
   const loadData = async () => {
     if (!profile) return;
-    setAssignedLeads(db.getLeads(profile));
+    try {
+      setAssignedLeads(await leadService.getAssignedTelecallerLeads(profile));
+    } catch {
+      setAssignedLeads([]);
+    }
     setCalls(db.getCalls(profile));
     setFollowUps(db.getFollowUps(profile));
 
@@ -60,6 +65,7 @@ export const TelecallerDashboard: React.FC = () => {
 
     const unsubscribe = db.subscribe(({ type }) => {
       if (
+        type === 'LEAD_REFRESH_REQUIRED' ||
         type === 'LEADS_ASSIGNED' ||
         type === 'LEADS_ASSIGNED_ROUND_ROBIN' ||
         type === 'CALL_RECORDED' ||

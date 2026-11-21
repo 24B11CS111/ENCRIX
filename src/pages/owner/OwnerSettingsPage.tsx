@@ -1,121 +1,170 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
-import { db } from '@/services/supabase/db';
-import {
-  Settings,
-  Building,
-  PhoneCall,
-  Shield,
-  CheckCircle2,
-} from 'lucide-react';
+import { authService } from '@/services/auth/authService';
+import { Building, CheckCircle2, LoaderCircle, PhoneCall, ShieldCheck } from 'lucide-react';
+
+type TwilioConfigView = {
+  configured: boolean;
+  phoneNumberMasked: string | null;
+  updatedAt: string | null;
+};
 
 export const OwnerSettingsPage: React.FC = () => {
   const { profile, organization } = useAuth();
-  const [provider, setProvider] = useState('MOCK');
-  const [consentPolicy, setConsentPolicy] = useState(true);
-  const [savedNotice, setSavedNotice] = useState(false);
+  const [config, setConfig] = useState<TwilioConfigView | null>(null);
+  const [accountSid, setAccountSid] = useState('');
+  const [authToken, setAuthToken] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [revoking, setRevoking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    setSavedNotice(true);
-    setTimeout(() => setSavedNotice(false), 3000);
+  useEffect(() => {
+    if (profile?.role !== 'OWNER') return;
+    let active = true;
+    const loadConfig = async () => {
+      setLoading(true);
+      try {
+        const token = authService.getSessionToken();
+        const response = await fetch('/api/telephony/config', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(data?.error || 'Twilio settings could not be loaded');
+        if (active) setConfig(data);
+      } catch {
+        if (active) setError('Twilio settings could not be loaded. Try again later.');
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    void loadConfig();
+    return () => { active = false; };
+  }, [profile?.id, profile?.role]);
+
+  const saveTwilioConfig = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    setNotice(null);
+    setSaving(true);
+    try {
+      const token = authService.getSessionToken();
+      if (!token) throw new Error('Sign in again to update telephony settings.');
+      const response = await fetch('/api/telephony/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ accountSid, authToken, phoneNumber }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || 'Twilio settings could not be saved');
+      setConfig({ configured: true, phoneNumberMasked: data.phoneNumberMasked, updatedAt: new Date().toISOString() });
+      setAccountSid('');
+      setAuthToken('');
+      setPhoneNumber('');
+      setNotice('Twilio credentials encrypted and saved for this organization.');
+    } catch (saveError: any) {
+      setError(saveError?.message || 'Twilio settings could not be saved.');
+    } finally {
+        // Keep a failed submission from leaving an Auth Token in component state.
+        setAuthToken('');
+      setSaving(false);
+    }
+  };
+
+  const disableTwilioConfig = async () => {
+    if (!window.confirm('Disable this organization’s Twilio configuration? New calls will stop.')) return;
+    setError(null);
+    setNotice(null);
+    setRevoking(true);
+    try {
+      const token = authService.getSessionToken();
+      if (!token) throw new Error('Sign in again to update telephony settings.');
+      const response = await fetch('/api/telephony/config', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || 'Twilio configuration could not be disabled');
+      setConfig({ configured: false, phoneNumberMasked: null, updatedAt: new Date().toISOString() });
+      setNotice('Twilio configuration disabled.');
+    } catch (revokeError: any) {
+      setError(revokeError?.message || 'Twilio configuration could not be disabled.');
+    } finally {
+      setRevoking(false);
+    }
   };
 
   return (
     <div className="max-w-3xl space-y-6">
-      {/* Header */}
-      <div className="border-b border-[#DCE4EE] pb-5">
-        <h1 className="text-xl font-bold text-[#0B1F3A] tracking-tight">Organization Settings</h1>
-        <p className="text-xs text-[#64748B] mt-1">
-          Configure calling gateway, statutory recording policies, and organization profile.
-        </p>
-      </div>
+      <header className="border-b border-[#DCE4EE] pb-5">
+        <h1 className="text-xl font-bold tracking-tight text-[#0B1F3A]">Organization Settings</h1>
+        <p className="mt-1 text-xs text-[#64748B]">Manage organization profile and your organization-owned Twilio account.</p>
+      </header>
 
-      {savedNotice && (
-        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-[10px] text-xs text-[#16845B] flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4" />
-          <span>Configuration saved successfully.</span>
+      {(error || notice) && (
+        <div role={error ? 'alert' : 'status'} className={`flex items-center gap-2 rounded-[10px] border p-3 text-xs ${error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+          {error ? <ShieldCheck className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+          <span>{error || notice}</span>
         </div>
       )}
 
-      <form onSubmit={handleSave} className="space-y-6">
-        {/* Organization Info */}
-        <div className="p-5 rounded-[16px] bg-white border border-[#DCE4EE] shadow-sm space-y-4">
-          <div className="flex items-center gap-2 text-[#0B1F3A] font-semibold text-sm">
-            <Building className="w-4 h-4 text-[#1E4D8F]" />
-            <span>Organization Profile</span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-            <div>
-              <label className="text-[#64748B] block mb-1">Company Name</label>
-              <input
-                type="text"
-                disabled
-                value={organization?.name || 'Vertex Consultancy'}
-                className="w-full px-3 py-2 bg-[#F6F8FB] border border-[#DCE4EE] rounded-[10px] text-[#64748B] cursor-not-allowed"
-              />
-            </div>
-
-            <div>
-              <label className="text-[#64748B] block mb-1">Industry</label>
-              <input
-                type="text"
-                disabled
-                value={organization?.industry || 'Education Consultancy'}
-                className="w-full px-3 py-2 bg-[#F6F8FB] border border-[#DCE4EE] rounded-[10px] text-[#64748B] cursor-not-allowed"
-              />
-            </div>
-          </div>
+      <section className="space-y-4 rounded-[16px] border border-[#DCE4EE] bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-2 text-sm font-semibold text-[#0B1F3A]">
+          <Building className="h-4 w-4 text-[#1E4D8F]" />
+          <span>Organization Profile</span>
         </div>
-
-        {/* Telephony Gateway Settings (Section 20 & 21) */}
-        <div className="p-5 rounded-[16px] bg-white border border-[#DCE4EE] shadow-sm space-y-4">
-          <div className="flex items-center gap-2 text-[#0B1F3A] font-semibold text-sm">
-            <PhoneCall className="w-4 h-4 text-[#1E4D8F]" />
-            <span>Telephony Infrastructure Provider</span>
-          </div>
-
-          <div className="space-y-2 text-xs">
-            <label className="text-[#64748B] block">Active Provider Gateway</label>
-            <select
-              value={provider}
-              onChange={(e) => setProvider(e.target.value)}
-              className="w-full px-3 py-2 bg-white border border-[#DCE4EE] rounded-[10px] text-xs text-[#172B4D] focus:outline-none focus:border-[#0B1F3A]"
-            >
-              <option value="MOCK">Mock Telephony Gateway (Development & Evaluation)</option>
-              <option value="TWILIO">Twilio Voice SIP Trunking</option>
-              <option value="EXOTEL">Exotel Cloud Telephony API</option>
-              <option value="KNOWLARITY">Knowlarity Smart Voice Gateway</option>
-            </select>
-          </div>
-
-          <div className="pt-2 flex items-center justify-between text-xs">
-            <div>
-              <span className="text-[#172B4D] font-medium block">Automatic Call Consent Notice</span>
-              <span className="text-[#64748B] text-[11px]">
-                Plays statutory recording advisory to customer before agent connects
-              </span>
-            </div>
-            <input
-              type="checkbox"
-              checked={consentPolicy}
-              onChange={(e) => setConsentPolicy(e.target.checked)}
-              className="w-4 h-4 rounded text-[#0B1F3A] bg-white border-[#DCE4EE]"
-            />
-          </div>
+        <div className="grid grid-cols-1 gap-4 text-xs sm:grid-cols-2">
+          <label className="text-[#64748B]">Company Name
+            <input type="text" disabled value={organization?.name || ''} className="mt-1 w-full cursor-not-allowed rounded-[10px] border border-[#DCE4EE] bg-[#F6F8FB] px-3 py-2 text-[#64748B]" />
+          </label>
+          <label className="text-[#64748B]">Industry
+            <input type="text" disabled value={organization?.industry || ''} className="mt-1 w-full cursor-not-allowed rounded-[10px] border border-[#DCE4EE] bg-[#F6F8FB] px-3 py-2 text-[#64748B]" />
+          </label>
         </div>
+      </section>
 
-        {/* Actions */}
-        <div className="flex items-center justify-end pt-2">
-          <button
-            type="submit"
-            className="px-5 py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white text-xs font-semibold rounded-[10px] shadow-sm transition-all cursor-pointer"
-          >
-            Save Settings
-          </button>
-        </div>
-      </form>
+      {profile?.role === 'OWNER' && (
+        <section className="space-y-4 rounded-[16px] border border-[#DCE4EE] bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 text-sm font-semibold text-[#0B1F3A]">
+            <PhoneCall className="h-4 w-4 text-[#1E4D8F]" />
+            <span>Organization Twilio Account</span>
+          </div>
+          <p className="text-xs leading-relaxed text-[#64748B]">
+            Your organization owns its Twilio account, phone number and usage. The Auth Token is encrypted before storage and is never returned to this browser. Re-enter all three values to replace or rotate the stored account credentials.
+          </p>
+          {loading ? (
+            <div className="flex items-center gap-2 text-xs text-[#64748B]"><LoaderCircle className="h-4 w-4 animate-spin" />Loading secure configuration…</div>
+          ) : (
+            <>
+              <div className="rounded-[10px] bg-[#F6F8FB] p-3 text-xs text-[#475569]" aria-live="polite">
+                {config?.configured
+                  ? <>Connected number: <strong>{config.phoneNumberMasked}</strong></>
+                  : 'No Twilio account is configured for this organization.'}
+              </div>
+              <form onSubmit={(event) => void saveTwilioConfig(event)} className="space-y-3">
+                <label className="block text-xs font-medium text-[#475569]">Twilio Account SID
+                  <input required autoComplete="off" value={accountSid} onChange={(event) => setAccountSid(event.target.value)} className="mt-1 w-full rounded-[10px] border border-[#DCE4EE] px-3 py-2" placeholder="AC…" />
+                </label>
+                <label className="block text-xs font-medium text-[#475569]">Twilio Auth Token
+                  <input required type="password" autoComplete="new-password" value={authToken} onChange={(event) => setAuthToken(event.target.value)} className="mt-1 w-full rounded-[10px] border border-[#DCE4EE] px-3 py-2" />
+                </label>
+                <label className="block text-xs font-medium text-[#475569]">Twilio Phone Number (E.164)
+                  <input required type="tel" autoComplete="off" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} className="mt-1 w-full rounded-[10px] border border-[#DCE4EE] px-3 py-2" placeholder="+14155550123" />
+                </label>
+                <div className="flex flex-wrap justify-end gap-2 pt-1">
+                  {config?.configured && <button type="button" disabled={revoking || saving} onClick={() => void disableTwilioConfig()} className="rounded-[10px] border border-rose-200 px-4 py-2 text-xs font-semibold text-rose-700 disabled:opacity-50">{revoking ? 'Disabling…' : 'Disable Twilio'}</button>}
+                  <button type="submit" disabled={saving || revoking} className="rounded-[10px] bg-[#0B1F3A] px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-50">{saving ? 'Encrypting and saving…' : config?.configured ? 'Replace credentials' : 'Save Twilio configuration'}</button>
+                </div>
+              </form>
+              <p className="text-[11px] leading-relaxed text-amber-800">
+                Live calling stays unavailable until the database migrations and provider callback settings have been applied and verified for your deployment. Saving credentials does not place or enable calls by itself.
+              </p>
+            </>
+          )}
+        </section>
+      )}
     </div>
   );
 };

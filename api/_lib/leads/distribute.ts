@@ -3,6 +3,7 @@ import {
   getSupabaseServerClient,
   isRealSupabaseServerConfigured,
 } from '../supabaseServer.js';
+import { requirePaidEntitlement } from '../paidEntitlement.js';
 import { db } from '../../../src/services/supabase/db.js';
 import type { DistributionMode } from '../../../src/types/index.js';
 
@@ -32,6 +33,7 @@ export default async function handler(req: any, res: any) {
 
     // GET: Distribution Preview & Workload Stats
     if (req.method === 'GET') {
+      if (!await requirePaidEntitlement(res, profile)) return;
       const rawLeadIds = req.query?.leadIds;
       const leadIds: string[] = typeof rawLeadIds === 'string'
         ? rawLeadIds.split(',').filter(Boolean)
@@ -74,6 +76,7 @@ export default async function handler(req: any, res: any) {
       if (!reason || typeof reason !== 'string' || !reason.trim()) {
         return res.status(400).json({ error: 'Reassignment reason is mandatory' });
       }
+      if (!await requirePaidEntitlement(res, profile)) return;
 
       if (isRealSupabaseServerConfigured()) {
         const supabase = getSupabaseServerClient();
@@ -116,6 +119,7 @@ export default async function handler(req: any, res: any) {
     if (ids.length === 0) {
       return res.status(400).json({ error: 'leadIds array is required' });
     }
+    if (!await requirePaidEntitlement(res, profile)) return;
 
     const result = db.distributeLeads(
       {

@@ -5,6 +5,7 @@ import {
 } from '../supabaseServer.js';
 import { db } from '../../../src/services/supabase/db.js';
 import type { DistributionMode } from '../../../src/types/index.js';
+import { requirePaidEntitlement } from '../paidEntitlement.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET' && req.method !== 'POST' && req.method !== 'PUT') {
@@ -34,6 +35,7 @@ export default async function handler(req: any, res: any) {
 
     // GET: Retrieve configuration
     if (req.method === 'GET') {
+      if (!await requirePaidEntitlement(res, profile)) return;
       if (isRealSupabaseServerConfigured()) {
         const supabase = getSupabaseServerClient();
         const { data, error } = await supabase
@@ -89,6 +91,7 @@ export default async function handler(req: any, res: any) {
       }
       updates.max_workload = val;
     }
+    if (!await requirePaidEntitlement(res, profile)) return;
 
     if (isRealSupabaseServerConfigured()) {
       const supabase = getSupabaseServerClient();

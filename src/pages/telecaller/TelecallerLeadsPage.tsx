@@ -105,6 +105,7 @@ export const TelecallerLeadsPage: React.FC = () => {
 
     const unsubscribe = db.subscribe(({ type }) => {
       if (
+        type === 'LEAD_REFRESH_REQUIRED' ||
         type === 'LEADS_ASSIGNED' ||
         type === 'LEADS_ASSIGNED_ROUND_ROBIN' ||
         type === 'LEAD_CREATED' ||

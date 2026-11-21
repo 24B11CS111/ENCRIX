@@ -54,8 +54,9 @@ export class CallService {
   public async dispatchCall(params: {
     leadId: string;
     callerProfile: Profile;
+    idempotencyKey?: string;
   }): Promise<{ session: TelephonySession; consentNotice: string }> {
-    const { leadId, callerProfile } = params;
+    const { leadId, callerProfile, idempotencyKey } = params;
 
     // 1. Verify caller active status
     if (callerProfile.status === 'DISABLED' || callerProfile.status === 'SUSPENDED') {
@@ -77,7 +78,7 @@ export class CallService {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ leadId }),
+        body: JSON.stringify({ leadId, idempotencyKey }),
       });
 
       const data = await res.json().catch(() => null);
@@ -102,7 +103,7 @@ export class CallService {
       return {
         session,
         consentNotice:
-          'Authorized call placed via ENCRIX Twilio Gateway. Compliant with TRAI/FCC calling standards; recorded for compliance.',
+          'Your verified caller phone will ring first. After you answer, the assigned lead is connected through your organization’s Twilio number.',
       };
     }
 

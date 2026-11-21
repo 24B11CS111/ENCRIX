@@ -1,6 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import fs from 'fs';
 import path from 'path';
+import dns from 'dns';
+
+dns.setServers(['8.8.8.8', '1.1.1.1']);
 
 // Load .env.staging safely
 const envContent = fs.readFileSync('.env.staging', 'utf8');
@@ -24,12 +27,27 @@ if (!stagingUrl.includes('vhqqczgomrznisvbhpvf')) {
   process.exit(1);
 }
 
+const resilientFetch = async (url, options) => {
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await fetch(url, options);
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 2) await new Promise(r => setTimeout(r, 600));
+    }
+  }
+  throw lastErr;
+};
+
 const adminClient = createClient(stagingUrl, serviceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
+  global: { fetch: resilientFetch },
 });
 
 const anonClient = createClient(stagingUrl, anonKey, {
   auth: { persistSession: false, autoRefreshToken: false },
+  global: { fetch: resilientFetch },
 });
 
 async function run() {
@@ -83,19 +101,20 @@ async function run() {
     ]);
     console.log('  PASS: Profiles upserted');
 
-    // C. Lead Lifecycle in Org A
-    const { data: createdLead, error: leadErr } = await adminClient.from('leads').insert({
-      id: testLeadAId,
-      organization_id: testOrgAId,
-      lead_code: 'STG-001',
-      name: 'Staging Integration Candidate',
-      phone: '+919999988888',
-      source: 'Direct',
-      priority: 'HIGH',
-      status: 'NEW',
-    }).select().single();
+    // C. Lead Lifecycle in Org A (using secure create_owner_lead RPC per 20261031130000 hardening)
+    const testPhone = '+91' + Math.floor(6000000000 + Math.random() * 3999999999);
+    const { data: createData, error: leadErr } = await adminClient.rpc('create_owner_lead', {
+      p_organization_id: testOrgAId,
+      p_actor_profile_id: testOwnerAId,
+      p_name: 'Staging Integration Candidate',
+      p_phone: testPhone,
+      p_source: 'Direct',
+      p_priority: 'HIGH',
+    });
 
-    if (leadErr) throw new Error(`Lead insert failed: ${leadErr.message}`);
+    if (leadErr || !createData?.lead) throw new Error(`Lead insert failed: ${leadErr?.message || 'No lead returned'}`);
+    const createdLead = createData.lead;
+    const testLeadAId = createdLead.id;
     console.log('  PASS: Lead created in Org Alpha');
 
     // Update & Assign Lead
@@ -177,7 +196,6 @@ async function run() {
     console.log('\n[3] Cleaning up disposable staging test records...');
     await adminClient.from('notifications').delete().eq('id', testNotificationAId);
     await adminClient.from('follow_ups').delete().eq('id', testFollowUpAId);
-    await adminClient.from('leads').delete().eq('id', testLeadAId);
     await adminClient.from('profiles').delete().in('id', [testOwnerAId, testCallerAId, testOwnerBId]);
     await adminClient.from('organizations').delete().in('id', [testOrgAId, testOrgBId]);
     console.log('  PASS: Cleanup completed cleanly');
@@ -222,6 +240,8 @@ async function run() {
 
   console.log('\n--- Staging Verification Summary ---');
   results.forEach(r => console.log(`  [${r.status}] ${r.name} ${r.error ? `(${r.error})` : ''}`));
+  const allPassed = results.every(r => r.status === 'PASS');
+  process.exit(allPassed ? 0 : 1);
 }
 
 run().catch(err => {

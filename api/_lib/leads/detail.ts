@@ -3,6 +3,7 @@ import {
   getSupabaseServerClient,
   isRealSupabaseServerConfigured,
 } from '../supabaseServer.js';
+import { requirePaidEntitlement } from '../paidEntitlement.js';
 import { db } from '../../../src/services/supabase/db.js';
 import {
   scrubPhoneFromText,
@@ -157,6 +158,7 @@ export default async function handler(req: any, res: any) {
 
       return res.status(403).json({ error: 'Forbidden: You do not have permission to access this lead' });
     }
+    if (!await requirePaidEntitlement(res, profile)) return;
 
     // 6. Record Statutory Lead-Detail Access Audit Log
     // Logs user ID, lead ID, organization ID, and timestamp without sensitive academic or contact values

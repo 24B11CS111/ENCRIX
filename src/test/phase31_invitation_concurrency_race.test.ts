@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import verifyOtpHandler from '../../api/auth/verify-otp';
-import invitationsHandler from '../../api/auth/invitations';
+﻿import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import verifyOtpHandler from '../../api/_lib/authHandlers/verify-otp';
+import invitationsHandler from '../../api/_lib/authHandlers/invitations';
 import * as supabaseServerModule from '../../api/_lib/supabaseServer';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
 import {
@@ -8,7 +8,11 @@ import {
   storeServerInvitation,
   getServerInvitation,
 } from '../../api/_lib/invitationServer';
-import { serverOtpStore, hashOtp } from '../../api/_lib/otpServer';
+import { createVerificationTicket, serverOtpStore, hashOtp, verifyVerificationTicket } from '../../api/_lib/otpServer';
+
+vi.mock('../../api/_lib/paidEntitlement.js', () => ({
+  requirePaidEntitlement: vi.fn(async () => true),
+}));
 
 function createMockReqRes(options: {
   method?: string;
@@ -254,6 +258,25 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
           select: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => null) })) })),
         };
       }),
+      rpc: vi.fn(async (name: string, args: any) => {
+        if (name !== 'complete_email_otp_verification') return { data: null, error: null };
+        const row = mockEmailOtpsDb.find((candidate) => candidate.ticket_id === args.p_ticket_id &&
+          candidate.email === args.p_email && candidate.purpose === args.p_purpose);
+        if (!row || row.used) return { data: { verified: false, reason: row ? 'consumed' : 'unavailable' }, error: null };
+        if (new Date(row.expires_at).getTime() <= Date.now()) {
+          row.used = true;
+          return { data: { verified: false, reason: 'expired' }, error: null };
+        }
+        if (row.attempts >= 5) return { data: { verified: false, reason: 'locked', attempts: row.attempts }, error: null };
+        if (!args.p_is_valid) {
+          row.attempts += 1;
+          if (row.attempts >= 5) row.used = true;
+          return { data: { verified: false, reason: row.used ? 'locked' : 'invalid', attempts: row.attempts }, error: null };
+        }
+        row.used = true;
+        row.verified_at = new Date().toISOString();
+        return { data: { verified: true, attempts: row.attempts }, error: null };
+      }),
     };
 
     vi.spyOn(supabaseServerModule, 'getSupabaseServerClient').mockImplementation(() => mockSupabase);
@@ -265,13 +288,18 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
     vi.restoreAllMocks();
   });
 
-  function seedOtp(email: string, otp: string, purpose = 'INVITATION') {
+  function seedOtp(email: string, otp: string, purpose = 'INVITATION', inviteToken?: string) {
     const normalizedEmail = email.toLowerCase().trim();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const otpHash = hashOtp(normalizedEmail, otp);
+    const verificationTicket = createVerificationTicket({
+      email: normalizedEmail, purpose: purpose as 'LOGIN' | 'INVITATION', otpHash, expiresAt, inviteToken,
+    });
+    const ticketId = verifyVerificationTicket(verificationTicket)!.ticketId;
 
     mockEmailOtpsDb.push({
       id: `otp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      ticket_id: ticketId,
       email: normalizedEmail,
       purpose,
       otp_hash: otpHash,
@@ -292,6 +320,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
       used: false,
       createdAt: new Date().toISOString(),
     });
+    return verificationTicket;
   }
 
   // ---------------------------------------------------------------------------
@@ -315,7 +344,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
       created_at: new Date().toISOString(),
     });
 
-    seedOtp(email, '123456', 'INVITATION');
+    const verificationTicket = seedOtp(email, '123456', 'INVITATION', token);
 
     const { req, res } = createMockReqRes({
       method: 'POST',
@@ -324,6 +353,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
         otp: '123456',
         purpose: 'INVITATION',
         inviteToken: token,
+        verificationTicket,
       },
     });
 
@@ -338,9 +368,9 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
   });
 
   // ---------------------------------------------------------------------------
-  // Test 2: Revocation via DELETE /api/auth/invitations prevents telecaller account activation
+  // Test 2: Revocation via DELETE /api/_lib/authHandlers/invitations prevents telecaller account activation
   // ---------------------------------------------------------------------------
-  it('2. revoking a pending invitation via DELETE /api/auth/invitations prevents telecaller account activation', async () => {
+  it('2. revoking a pending invitation via DELETE /api/_lib/authHandlers/invitations prevents telecaller account activation', async () => {
     const invId = '55555555-5555-4555-8555-555555555555';
     const token = 'inv_token_to_be_revoked_789';
     const email = 'caller.targeted@encrix.io';
@@ -381,7 +411,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
     expect(mockInvitationsDb[0].status).toBe('REVOKED');
 
     // Step B: Telecaller tries to accept using OTP and the revoked token
-    seedOtp(email, '654321', 'INVITATION');
+    const verificationTicket = seedOtp(email, '654321', 'INVITATION', token);
 
     const { req: verifyReq, res: verifyRes } = createMockReqRes({
       method: 'POST',
@@ -390,6 +420,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
         otp: '654321',
         purpose: 'INVITATION',
         inviteToken: token,
+        verificationTicket,
       },
     });
 
@@ -424,7 +455,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
       created_at: new Date().toISOString(),
     });
 
-    seedOtp(email, '999888', 'INVITATION');
+    const verificationTicket = seedOtp(email, '999888', 'INVITATION', token);
 
     // Simulate concurrent revocation occurring right after pre-flight select:
     // When update is called, the invitation in DB is already REVOKED, so .eq('status', 'PENDING') fails!
@@ -472,6 +503,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
         otp: '999888',
         purpose: 'INVITATION',
         inviteToken: token,
+        verificationTicket,
       },
     });
 
@@ -507,7 +539,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
       created_at: new Date().toISOString(),
     });
 
-    seedOtp(email, '112233', 'INVITATION');
+    const firstTicket = seedOtp(email, '112233', 'INVITATION', token);
 
     // Request 1: First request executes and marks status = ACCEPTED
     const { req: req1, res: res1 } = createMockReqRes({
@@ -517,6 +549,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
         otp: '112233',
         purpose: 'INVITATION',
         inviteToken: token,
+        verificationTicket: firstTicket,
       },
     });
 
@@ -530,7 +563,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
     expect(mockInvitationsDb[0].status).toBe('ACCEPTED');
 
     // Request 2: Concurrent/duplicate request with same credentials
-    seedOtp(email, '112233', 'INVITATION');
+    const secondTicket = seedOtp(email, '112233', 'INVITATION', token);
     const { req: req2, res: res2 } = createMockReqRes({
       method: 'POST',
       body: {
@@ -538,6 +571,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
         otp: '112233',
         purpose: 'INVITATION',
         inviteToken: token,
+        verificationTicket: secondTicket,
       },
     });
 
@@ -590,7 +624,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
       created_at: new Date().toISOString(),
     });
 
-    seedOtp(email, '445566', 'INVITATION');
+    const verificationTicket = seedOtp(email, '445566', 'INVITATION', token);
 
     const { req, res } = createMockReqRes({
       method: 'POST',
@@ -599,6 +633,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
         otp: '445566',
         purpose: 'INVITATION',
         inviteToken: token,
+        verificationTicket,
       },
     });
 
@@ -634,7 +669,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
       created_at: new Date().toISOString(),
     });
 
-    seedOtp(email, '789012', 'INVITATION');
+    const verificationTicket = seedOtp(email, '789012', 'INVITATION', token);
 
     const { req, res } = createMockReqRes({
       method: 'POST',
@@ -643,6 +678,7 @@ describe('ENCRIX Phase 31: Invitation Revocation & Concurrency Race Validation',
         otp: '789012',
         purpose: 'INVITATION',
         inviteToken: token,
+        verificationTicket,
       },
     });
 

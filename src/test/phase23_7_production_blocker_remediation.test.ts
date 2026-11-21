@@ -5,6 +5,10 @@ import { db } from '@/services/supabase/db';
 import { recordingService } from '@/services/telephony/recordingService';
 import { Profile } from '@/types';
 
+vi.mock('../../api/_lib/paidEntitlement.js', () => ({
+  requirePaidEntitlement: vi.fn(async () => true),
+}));
+
 const serverMocks = vi.hoisted(() => ({
   authenticateServerRequest: vi.fn(),
   getSupabaseServerClient: vi.fn(),
@@ -236,7 +240,7 @@ describe('Phase 23.7 production blocker remediation', () => {
       unsubscribe();
       expect(received).toHaveLength(1);
       expect(JSON.stringify(received[0])).not.toMatch(/9876543210|contact_phone/);
-      expect((received[0].payload as any).new.assigned_to).toBe(telecaller.id);
+      expect(received[0]).toMatchObject({ type: 'RECORD_INSERTED', payload: undefined });
     });
 
     it('does not restore a revoked session from its signed role claim when profile verification fails', async () => {

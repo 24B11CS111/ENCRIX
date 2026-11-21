@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
+import { leadService } from '@/services/leads/leadService';
 import { Lead, Call, Profile } from '@/types';
 import {
   ResponsiveContainer,
@@ -36,9 +37,24 @@ export const OwnerAnalyticsPage: React.FC = () => {
 
   useEffect(() => {
     if (!profile) return;
-    setLeads(db.getLeads(profile));
-    setCalls(db.getCalls(profile));
-    setTelecallers(db.getTelecallers(profile));
+    let active = true;
+    const loadData = async () => {
+      try {
+        const nextLeads = await leadService.getOwnerLeads(profile);
+        if (active) setLeads(nextLeads);
+      } catch {
+        if (active) setLeads([]);
+      }
+      if (active) {
+        setCalls(db.getCalls(profile));
+        setTelecallers(db.getTelecallers(profile));
+      }
+    };
+    void loadData();
+    const unsubscribe = db.subscribe(({ type }) => {
+      if (type === 'LEAD_REFRESH_REQUIRED') void loadData();
+    }, profile);
+    return () => { active = false; unsubscribe(); };
   }, [profile]);
 
   // Section 34 Metrics

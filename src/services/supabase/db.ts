@@ -31,9 +31,7 @@ import {
   sanitizeLeadForRole,
   sanitizeLeadsForRole,
   maskPhoneNumber,
-  maskName,
   scrubPhoneFromText,
-  redactLongDigitsFromText,
 } from '../../lib/dataMasking.js';
 import { sanitizeFormulaInjection, sanitizeText } from '../../lib/validation.js';
 import { normalizePhoneNumber, formatMaskedPhone } from '../../lib/phoneNormalization.js';
@@ -85,7 +83,6 @@ class LeadVaultDatabase {
 
   private subscriptions: Set<SubscriptionEntry> = new Set();
   private broadcastChannel: BroadcastChannel | null = null;
-  private supabaseChannels: Map<string, any> = new Map();
   private initialized = false;
 
   constructor() {
@@ -194,76 +191,25 @@ class LeadVaultDatabase {
       target_user_id: meta?.target_user_id,
     };
 
+    // Apply the existing assignment/tenant filters against the internal event,
+    // then sanitize before the event crosses into any subscriber state.
     this.notifyListeners(event);
     if (this.broadcastChannel) {
       try {
-        this.broadcastChannel.postMessage({
-          ...event,
-          payload: this.sanitizeRealtimeValueForTelecaller(event.payload),
-        });
+        this.broadcastChannel.postMessage(this.stripLeadRowPayload(event));
       } catch {
         // Fallback
       }
     }
   }
 
-  private sanitizeRealtimeValueForTelecaller(value: unknown, key?: string): unknown {
-    if (Array.isArray(value)) {
-      return value.map((item) => this.sanitizeRealtimeValueForTelecaller(item));
-    }
-    if (!value || typeof value !== 'object') {
-      if (typeof value === 'number') return Math.abs(value) >= 1_000_000 ? null : value;
-      if (typeof value !== 'string') return value;
-      if (key === 'name' || key === 'lead_name') return maskName(value);
-      if (key === 'email') return '***@***.***';
-      if (
-        key === 'lead_code' ||
-        key === 'id' ||
-        key === 'assigned_to' ||
-        key?.endsWith('_id') ||
-        key?.endsWith('_at')
-      ) {
-        return value;
-      }
-      return redactLongDigitsFromText(scrubPhoneFromText(value));
-    }
-
-    const sanitized: Record<string, unknown> = {};
-    const leadLike = 'phone' in value || 'assigned_to' in value || 'lead_code' in value;
-    for (const [childKey, childValue] of Object.entries(value)) {
-      if (/phone|mobile|contact|whatsapp|telephone/i.test(childKey)) continue;
-      if (leadLike && childKey === 'email') {
-        sanitized[childKey] = '***@***.***';
-        continue;
-      }
-      if (leadLike && ['father_name', 'mother_name', 'city', 'state'].includes(childKey)) {
-        sanitized[childKey] =
-          typeof childValue === 'string' ? childValue.replace(/\d/g, '') : childValue;
-        continue;
-      }
-      sanitized[childKey] = this.sanitizeRealtimeValueForTelecaller(childValue, childKey);
-    }
-    return sanitized;
-  }
-
-  private sanitizeRealtimePayloadForTelecaller(event: RealtimeEvent): RealtimeEvent {
-    const payload = this.sanitizeRealtimeValueForTelecaller(event.payload);
-    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-      const lead = payload as Partial<Lead> & { lead?: Partial<Lead> };
-      if (lead.name && (lead.status || lead.lead_code)) {
-        return { ...event, payload: sanitizeLeadForRole(lead as Lead, 'TELECALLER') };
-      }
-      if (lead.lead && typeof lead.lead === 'object') {
-        return {
-          ...event,
-          payload: {
-            ...payload,
-            lead: sanitizeLeadForRole(lead.lead as Lead, 'TELECALLER'),
-          },
-        };
-      }
-    }
-    return { ...event, payload };
+  private stripLeadRowPayload(event: RealtimeEvent): RealtimeEvent {
+    const leadEvents = new Set([
+      'LEAD_CREATED', 'LEAD_UPDATED', 'LEAD_DELETED', 'LEAD_REASSIGNED',
+      'LEADS_IMPORTED', 'LEADS_ASSIGNED', 'LEADS_ASSIGNED_ROUND_ROBIN',
+      'LEADS_DISTRIBUTED', 'RECORD_INSERTED', 'RECORD_UPDATED', 'RECORD_DELETED',
+    ]);
+    return leadEvents.has(event.type) ? { ...event, payload: undefined } : event;
   }
 
   private notifyListeners(event: RealtimeEvent) {
@@ -358,13 +304,7 @@ class LeadVaultDatabase {
           }
         }
 
-        // Always sanitize / mask lead contact details for telecaller listeners
-        let eventToDeliver = event;
-        if (sub.profile && sub.profile.role === 'TELECALLER') {
-          eventToDeliver = this.sanitizeRealtimePayloadForTelecaller(event);
-        }
-
-        sub.listener(eventToDeliver);
+        sub.listener(this.stripLeadRowPayload(event));
       } catch (e) {
         console.error('Realtime listener error:', e);
       }
@@ -388,143 +328,36 @@ class LeadVaultDatabase {
     const entry: SubscriptionEntry = { listener, profile: userProfile };
     this.subscriptions.add(entry);
 
-    // The browser-only Supabase client is loaded only for a browser Realtime subscription.
-    // Server API imports of this module never initialize the browser client.
-    if (typeof window !== 'undefined' && userProfile?.organization_id) {
-      const orgId = userProfile.organization_id;
-      if (!this.supabaseChannels.has(orgId)) {
-        void import('./client.js')
-          .then(({ supabase, isRealSupabaseConfigured }) => {
-            if (
-              !isRealSupabaseConfigured() ||
-              !this.subscriptions.has(entry) ||
-              this.supabaseChannels.has(orgId)
-            ) {
-              return;
-            }
-
-            const channel = supabase
-              .channel(`encrix_org_${orgId}`)
-              .on(
-                'postgres_changes',
-                {
-                  event: '*',
-                  schema: 'public',
-                  filter: `organization_id=eq.${orgId}`,
-                },
-                (payload: any) => {
-                  const table = payload.table;
-                  const newRec = payload.new;
-                  const oldRec = payload.old;
-
-                  // 1. Synchronize in-memory caches if present
-                  if (table === 'leads' && newRec) {
-                    const idx = this.leads.findIndex((l) => l.id === newRec.id);
-                    if (idx !== -1) {
-                      this.leads[idx] = { ...this.leads[idx], ...newRec };
-                    } else if (payload.eventType === 'INSERT') {
-                      this.leads.unshift(newRec);
-                    }
-                  } else if (table === 'profiles' && newRec) {
-                    const idx = this.profiles.findIndex((p) => p.id === newRec.id);
-                    if (idx !== -1) {
-                      this.profiles[idx] = { ...this.profiles[idx], ...newRec };
-                    } else if (payload.eventType === 'INSERT') {
-                      this.profiles.push(newRec);
-                    }
-                  } else if (table === 'calls' && newRec) {
-                    const idx = this.calls.findIndex((c) => c.id === newRec.id);
-                    if (idx !== -1) {
-                      this.calls[idx] = { ...this.calls[idx], ...newRec };
-                    } else if (payload.eventType === 'INSERT') {
-                      this.calls.unshift(newRec);
-                    }
-                  } else if (table === 'notifications' && newRec) {
-                    const idx = this.notifications.findIndex((n) => n.id === newRec.id);
-                    if (idx !== -1) {
-                      this.notifications[idx] = { ...this.notifications[idx], ...newRec };
-                    } else if (payload.eventType === 'INSERT') {
-                      this.notifications.unshift(newRec);
-                    }
-                  }
-
-                  // 2. Dispatch domain-specific event types that UI subscribers listen for
-                  if (table === 'leads') {
-                    if (payload.eventType === 'INSERT') {
-                      this.notifyListeners({ type: 'LEAD_CREATED', payload: newRec, organization_id: orgId });
-                    } else if (payload.eventType === 'UPDATE') {
-                      this.notifyListeners({ type: 'LEAD_UPDATED', payload: newRec, organization_id: orgId });
-                      if (newRec.assigned_to && (!oldRec || oldRec.assigned_to !== newRec.assigned_to)) {
-                        this.notifyListeners({
-                          type: 'LEADS_ASSIGNED',
-                          payload: { leadIds: [newRec.id], telecallerId: newRec.assigned_to },
-                          organization_id: orgId,
-                        });
-                      }
-                    }
-                  } else if (table === 'profiles') {
-                    this.notifyListeners({ type: 'TEAM_UPDATED', payload: newRec, organization_id: orgId });
-                  } else if (table === 'organization_invitations') {
-                    this.notifyListeners({ type: 'INVITATIONS_UPDATED', payload: newRec, organization_id: orgId });
-                    this.notifyListeners({ type: 'TEAM_UPDATED', payload: newRec, organization_id: orgId });
-                  } else if (table === 'calls') {
-                    this.notifyListeners({ type: 'CALL_RECORDED', payload: newRec, organization_id: orgId });
-                  } else if (table === 'follow_ups') {
-                    this.notifyListeners({
-                      type: payload.eventType === 'INSERT' ? 'FOLLOWUP_CREATED' : 'FOLLOWUP_UPDATED',
-                      payload: newRec,
-                      organization_id: orgId,
-                    });
-                  } else if (table === 'security_events') {
-                    this.notifyListeners({ type: 'SECURITY_EVENT_RAISED', payload: newRec, organization_id: orgId });
-                  } else if (table === 'notifications') {
-                    this.notifyListeners({
-                      type: payload.eventType === 'INSERT' ? 'NEW_NOTIFICATION' : 'NOTIFICATION_READ',
-                      payload: newRec,
-                      organization_id: orgId,
-                    });
-                  }
-
-                  // 3. Always dispatch base record event
-                  this.notifyListeners({
-                    type:
-                      payload.eventType === 'INSERT'
-                        ? 'RECORD_INSERTED'
-                        : payload.eventType === 'UPDATE'
-                        ? 'RECORD_UPDATED'
-                        : 'RECORD_DELETED',
-                    payload,
-                    organization_id: orgId,
-                  });
-                }
-              )
-              .subscribe();
-            this.supabaseChannels.set(orgId, channel);
-          })
-          .catch(() => {
-            // Keep the local event subscription when browser Supabase Realtime is unavailable.
-          });
-      }
-    }
-
     return () => {
       this.subscriptions.delete(entry);
     };
   }
 
-  /**
-   * Clean up all subscriptions and channel connections (e.g. on logout or org switch)
-   */
+  /** Deliver only revision metadata to matching active owner/admin or telecaller subscribers. */
+  public dispatchLeadRefreshRequired(profile: Profile, revision: number): void {
+    if (!profile || profile.status !== 'ACTIVE' || !profile.organization_id || !Number.isSafeInteger(revision) || revision < 0) return;
+    const isTelecaller = profile.role === 'TELECALLER';
+    const event: RealtimeEvent = {
+      type: 'LEAD_REFRESH_REQUIRED',
+      payload: { revision },
+      organization_id: profile.organization_id,
+      target_user_id: isTelecaller ? profile.id : undefined,
+    };
+    this.subscriptions.forEach((sub) => {
+      const subscriber = sub.profile;
+      if (!subscriber || subscriber.status !== 'ACTIVE' || subscriber.organization_id !== profile.organization_id) return;
+      if (isTelecaller) {
+        if (subscriber.role !== 'TELECALLER' || subscriber.id !== profile.id) return;
+      } else if (!['OWNER', 'ADMIN'].includes(subscriber.role)) {
+        return;
+      }
+      try { sub.listener(event); } catch (error) { console.error('Realtime listener error:', error); }
+    });
+  }
+
+  /** Remove all in-process event listeners (remote transport is owned by RealtimeConnectionManager). */
   public unsubscribeAll(): void {
     this.subscriptions.clear();
-    this.supabaseChannels.forEach((channel) => {
-      try {
-        channel.unsubscribe?.();
-      } catch {
-        // Fallback
-      }
-    });
-    this.supabaseChannels.clear();
   }
 
   /**
@@ -1024,6 +857,10 @@ class LeadVaultDatabase {
       email?: string;
       industry?: string;
       companySize?: string;
+      businessEmail?: string;
+      businessPhone?: string;
+      businessLocation?: string;
+      websiteUrl?: string;
     };
     inviteToken?: string;
   }): {

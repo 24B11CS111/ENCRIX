@@ -51,6 +51,7 @@ function createMockReqRes(options: {
 
 // In-Memory Database Harness for Mock Supabase Client
 interface MockDatabaseState {
+  organizations?: any[];
   followUps: any[];
   leads: any[];
   profiles: any[];
@@ -61,6 +62,9 @@ interface MockDatabaseState {
 
 function getTableData(state: MockDatabaseState, table: string): any[] {
   switch (table) {
+    case 'organizations':
+      return state.organizations || [...new Set(state.followUps.map((item) => item.organization_id))]
+        .filter(Boolean).map((id) => ({ id, status: 'ACTIVE' }));
     case 'follow_ups':
       return state.followUps;
     case 'leads':
@@ -81,6 +85,9 @@ function getTableData(state: MockDatabaseState, table: string): any[] {
 function createMockSupabaseClient(state: MockDatabaseState, options?: { failNotificationInsert?: boolean; enableRpc?: boolean }) {
   return {
     rpc: async (fnName: string, params: any) => {
+      if (fnName === 'organization_has_active_paid_entitlement') {
+        return { data: true, error: null };
+      }
       if (options?.enableRpc && fnName === 'process_follow_up_reminders_cron') {
         return {
           data: {
@@ -298,7 +305,7 @@ describe('ENCRIX Phase 23.3: Production-Safe Follow-Up Cron Remediation', () => 
       expect(timingSafeCompare('valid-secret-1234', '')).toBe(false);
     });
 
-    it('authorizes authenticated Owner session token scoped strictly to their organization', async () => {
+    it('fails closed for an authenticated Owner session when paid entitlement storage is unavailable', async () => {
       const ownerProfile: Profile = {
         id: 'prof-owner-alpha',
         user_id: 'user-owner-alpha',
@@ -329,8 +336,10 @@ describe('ENCRIX Phase 23.3: Production-Safe Follow-Up Cron Remediation', () => 
       });
 
       await cronHandler(req, res);
-      expect(res.statusCode).toBe(200);
-      expect(res.body.success).toBe(true);
+      expect(res.statusCode).toBe(500);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error).toBe('Reminder processing completed with errors.');
+      expect(res.body.errors).toBeUndefined();
     });
 
     it('blocks an Owner session token from processing follow-ups of another tenant', async () => {
@@ -393,7 +402,8 @@ describe('ENCRIX Phase 23.3: Production-Safe Follow-Up Cron Remediation', () => 
 
       expect(res.statusCode).toBe(500);
       expect(res.body.success).toBe(false);
-      expect(res.body.errors.join(' ')).toMatch(/atomic database procedure is unavailable/i);
+      expect(res.body.error).toBe('Reminder processing completed with errors.');
+      expect(res.body.errors).toBeUndefined();
       expect(state.followUps[0].owner_alerted_at).toBeNull();
       expect(state.notifications).toHaveLength(0);
     });
@@ -974,8 +984,8 @@ describe('ENCRIX Phase 23.3: Production-Safe Follow-Up Cron Remediation', () => 
       delete process.env.SENDGRID_API_KEY;
       expect(evaluateEmailReminderStatus()).toBe('missing_provider_credentials');
 
-      process.env.RESEND_API_KEY = 're_valid_resend_api_key_sample_token';
-      expect(evaluateEmailReminderStatus()).toBe('provider_not_integrated');
+      process.env.RESEND_API_KEY = 're_valid_resend_api_key_987654321';
+      expect(evaluateEmailReminderStatus()).toBe('ready');
     });
   });
 

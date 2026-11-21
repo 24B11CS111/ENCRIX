@@ -54,6 +54,10 @@ export interface VerificationTicketPayload {
   phone?: string | null;
   industry?: string;
   companySize?: string;
+  businessEmail?: string;
+  businessPhone?: string;
+  businessLocation?: string;
+  websiteUrl?: string;
   inviteToken?: string;
   issuedAt: number;
 }
@@ -208,6 +212,10 @@ export interface StoredServerOtp {
     phone?: string | null;
     industry?: string;
     companySize?: string;
+    businessEmail?: string;
+    businessPhone?: string;
+    businessLocation?: string;
+    websiteUrl?: string;
   };
 }
 

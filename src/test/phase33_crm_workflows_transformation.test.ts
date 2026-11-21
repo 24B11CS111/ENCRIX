@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import followUpsHandler from '../../api/follow-ups';
-import metricsHandler from '../../api/metrics';
-import notificationsHandler from '../../api/notifications';
+import metricsHandler from '../../api/_lib/publicRoutes/metrics';
+import notificationsHandler from '../../api/_lib/publicRoutes/notifications';
 import webhookHandler from '../../api/telephony/webhook';
 import * as supabaseServerModule from '../../api/_lib/supabaseServer';
 import * as twilioServerModule from '../../api/_lib/twilioServer';
@@ -206,6 +206,9 @@ describe('ENCRIX Phase 33: Complete Real-Time CRM Workflows', () => {
 
     // Mock Supabase Server Client
     mockSupabase = {
+      rpc: vi.fn(async (fnName: string) => fnName === 'organization_has_active_paid_entitlement'
+        ? { data: true, error: null }
+        : { data: null, error: { code: '42883', message: 'Mock RPC unavailable' } }),
       from: vi.fn((table: string) => {
         if (table === 'follow_ups') {
           return {
@@ -607,6 +610,18 @@ describe('ENCRIX Phase 33: Complete Real-Time CRM Workflows', () => {
   // ---------------------------------------------------------------------------
   // 2. Server-side Dashboard Metrics
   // ---------------------------------------------------------------------------
+  it('preserves metrics and notifications method restrictions', async () => {
+    const metrics = createMockReqRes({ method: 'PATCH' });
+    await metricsHandler(metrics.req, metrics.res);
+    expect(metrics.res.statusCode).toBe(405);
+    expect(metrics.res.headers.Allow).toBe('GET');
+
+    const notifications = createMockReqRes({ method: 'DELETE' });
+    await notificationsHandler(notifications.req, notifications.res);
+    expect(notifications.res.statusCode).toBe(405);
+    expect(notifications.res.headers.Allow).toBe('GET, PATCH, POST');
+  });
+
   it('5. calculates authoritative organization dashboard metrics without double-counting', async () => {
     const ownerToken = createOwnerSession();
     const { req, res } = createMockReqRes({
@@ -697,7 +712,7 @@ describe('ENCRIX Phase 33: Complete Real-Time CRM Workflows', () => {
   // ---------------------------------------------------------------------------
   // 4. Calling Lifecycle Webhook Signature & Idempotency
   // ---------------------------------------------------------------------------
-  it('8. rejects forged or unsigned Twilio webhook callbacks with 401', async () => {
+  it('8. rejects unscoped legacy Twilio webhook callbacks before processing', async () => {
     vi.spyOn(twilioServerModule, 'verifyTwilioSignature').mockReturnValue(false);
 
     const { req, res } = createMockReqRes({
@@ -708,11 +723,11 @@ describe('ENCRIX Phase 33: Complete Real-Time CRM Workflows', () => {
     });
 
     await webhookHandler(req, res);
-    expect(res.statusCode).toBe(401);
-    expect(res.body.error).toContain('Invalid Twilio HMAC signature');
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toContain('Invalid webhook route');
   });
 
-  it('9. processes valid Twilio status callback and rejects duplicate/replayed events idempotently', async () => {
+  it('9. rejects unscoped legacy status callback replays before changing call state', async () => {
     vi.spyOn(twilioServerModule, 'verifyTwilioSignature').mockReturnValue(true);
 
     const callSid = 'CA11111111111111111111111111111111';
@@ -731,9 +746,8 @@ describe('ENCRIX Phase 33: Complete Real-Time CRM Workflows', () => {
     });
 
     await webhookHandler(firstReq, firstRes);
-    expect(firstRes.statusCode).toBe(200);
-    expect(firstRes.body.ok).toBe(true);
-    expect(firstRes.body.duplicate).toBe(false);
+    expect(firstRes.statusCode).toBe(400);
+    expect(firstRes.body.error).toContain('Invalid webhook route');
 
     // Second delivery of same webhook (idempotency check)
     const { req: secondReq, res: secondRes } = createMockReqRes({
@@ -749,9 +763,8 @@ describe('ENCRIX Phase 33: Complete Real-Time CRM Workflows', () => {
     });
 
     await webhookHandler(secondReq, secondRes);
-    expect(secondRes.statusCode).toBe(200);
-    expect(secondRes.body.ok).toBe(true);
-    expect(secondRes.body.duplicate).toBe(true);
+    expect(secondRes.statusCode).toBe(400);
+    expect(secondRes.body.error).toContain('Invalid webhook route');
   });
 
   // ---------------------------------------------------------------------------

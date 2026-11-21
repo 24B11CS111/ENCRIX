@@ -3,6 +3,7 @@ import {
   getSupabaseServerClient,
   isRealSupabaseServerConfigured,
 } from '../supabaseServer.js';
+import { requirePaidEntitlement } from '../paidEntitlement.js';
 
 const ALLOWED_STATUSES = new Set([
   'NEW',
@@ -72,6 +73,7 @@ export default async function handler(req: any, res: any) {
   try {
     const profile = await authorize(req, res);
     if (!profile) return;
+    if (!await requirePaidEntitlement(res, profile)) return;
     const supabase = getSupabaseServerClient();
     const identity = {
       p_user_id: profile.user_id,

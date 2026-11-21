@@ -14,8 +14,17 @@ export interface SessionPayload {
   sessionId?: string;
 }
 
-// In-memory revocation cache for revoked sessions
-const revokedSessions = new Set<string>();
+const revokedSessions = new Map<string, number>();
+
+function isLocallyRevoked(sessionId: string): boolean {
+  const expiresAt = revokedSessions.get(sessionId);
+  if (expiresAt === undefined) return false;
+  if (expiresAt <= Math.floor(Date.now() / 1000)) {
+    revokedSessions.delete(sessionId);
+    return false;
+  }
+  return true;
+}
 
 function base64UrlEncode(str: string): string {
   return Buffer.from(str, 'utf-8').toString('base64url');
@@ -110,12 +119,7 @@ export function verifySignedSessionToken(token: string): SessionPayload | null {
     }
 
     // Check revocation
-    if (payload.sessionId && revokedSessions.has(payload.sessionId)) {
-      return null;
-    }
-    if (revokedSessions.has(token)) {
-      return null;
-    }
+    if (payload.sessionId && isLocallyRevoked(payload.sessionId)) return null;
 
     return payload;
   } catch {
@@ -126,20 +130,24 @@ export function verifySignedSessionToken(token: string): SessionPayload | null {
 /**
  * Revokes a session token so it cannot be reused.
  */
-export function revokeSession(tokenOrSessionId: string): void {
-  if (!tokenOrSessionId) return;
-  revokedSessions.add(tokenOrSessionId);
-
-  // If passed a full token, also extract and revoke the sessionId
-  const payload = verifySignedSessionToken(tokenOrSessionId);
-  if (payload?.sessionId) {
-    revokedSessions.add(payload.sessionId);
-  }
+export function revokeSession(token: string): SessionPayload | null {
+  const payload = verifySignedSessionToken(token);
+  if (!payload?.sessionId) return null;
+  revokedSessions.set(payload.sessionId, payload.exp);
+  return payload;
 }
 
 /**
  * Checks whether a session has been explicitly revoked.
  */
 export function isSessionRevoked(tokenOrSessionId: string): boolean {
-  return revokedSessions.has(tokenOrSessionId);
+  if (isLocallyRevoked(tokenOrSessionId)) return true;
+  const parts = tokenOrSessionId.split('.');
+  if (parts.length !== 3) return false;
+  try {
+    const payload = JSON.parse(base64UrlDecode(parts[1])) as SessionPayload;
+    return typeof payload.sessionId === 'string' && isLocallyRevoked(payload.sessionId);
+  } catch {
+    return false;
+  }
 }

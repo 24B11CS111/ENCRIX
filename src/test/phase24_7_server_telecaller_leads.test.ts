@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import leadsDispatcher from '../../api/leads';
 import telecallerLeadsHandler from '../../api/_lib/leads/telecaller';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
@@ -81,8 +81,16 @@ describe('Phase 24.7: Secure Server-Side Telecaller Lead API', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Prevent auth-helper tests from contacting any developer-configured
+    // Supabase project; handlers below use the mocked server client.
+    vi.stubEnv('NODE_ENV', 'test');
+    vi.stubEnv('SUPABASE_URL', 'https://placeholder.supabase.co');
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'placeholder-test-key');
 
     mockRpc = vi.fn(async (funcName: string, args: any) => {
+      if (funcName === 'organization_has_active_paid_entitlement') {
+        return { data: true, error: null };
+      }
       if (funcName === 'server_get_assigned_telecaller_leads') {
         if (
           args.p_user_id === telecallerUserId &&
@@ -142,6 +150,11 @@ describe('Phase 24.7: Secure Server-Side Telecaller Lead API', () => {
 
     vi.spyOn(supabaseServerModule, 'getSupabaseServerClient').mockReturnValue(mockSupabase as any);
     vi.spyOn(supabaseServerModule, 'isRealSupabaseServerConfigured').mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   function createValidToken(overrides?: Partial<Parameters<typeof createSignedSessionToken>[0]>) {
@@ -227,6 +240,29 @@ describe('Phase 24.7: Secure Server-Side Telecaller Lead API', () => {
   // 2. AUTHORIZATION & PROFILE ENFORCEMENT
   // =========================================================================
   describe('2. Authorization & Profile Integrity', () => {
+    async function expectInactiveTelecallerBlocked(
+      status: 'SUSPENDED' | 'PENDING',
+      profileId: string,
+      route: 'telecaller-list' | 'telecaller-update',
+      method: 'GET' | 'POST'
+    ) {
+      const token = createValidToken({ profileId, status });
+      const { req, res } = createMockReqRes({
+        method,
+        headers: { authorization: `Bearer ${token}` },
+        query: { _route: route },
+        body: route === 'telecaller-update'
+          ? { leadId, status: 'CONTACTED', notes: 'must not be saved' }
+          : {},
+      });
+
+      await leadsDispatcher(req, res);
+
+      expect(res.statusCode).toBe(403);
+      expect(res.body.error).toMatch(/active telecaller account is required/i);
+      expect(mockRpc).not.toHaveBeenCalled();
+    }
+
     it('rejects inactive or disabled telecaller profiles (403)', async () => {
       const token = createValidToken({ profileId: 'disabled-profile-id', status: 'DISABLED' });
 
@@ -239,6 +275,22 @@ describe('Phase 24.7: Secure Server-Side Telecaller Lead API', () => {
       await leadsDispatcher(req, res);
       expect(res.statusCode).toBe(403);
       expect(res.body.error).toMatch(/active telecaller account is required/i);
+    });
+
+    it('rejects a suspended telecaller from listing leads', async () => {
+      await expectInactiveTelecallerBlocked('SUSPENDED', 'suspended-profile-id', 'telecaller-list', 'GET');
+    });
+
+    it('rejects a suspended telecaller from updating leads', async () => {
+      await expectInactiveTelecallerBlocked('SUSPENDED', 'suspended-profile-id', 'telecaller-update', 'POST');
+    });
+
+    it('rejects a pending telecaller from listing leads', async () => {
+      await expectInactiveTelecallerBlocked('PENDING', 'pending-profile-id', 'telecaller-list', 'GET');
+    });
+
+    it('rejects a pending telecaller from updating leads', async () => {
+      await expectInactiveTelecallerBlocked('PENDING', 'pending-profile-id', 'telecaller-update', 'POST');
     });
 
     it('rejects non-telecaller roles (OWNER, ADMIN) on telecaller endpoint (403)', async () => {
@@ -318,6 +370,26 @@ describe('Phase 24.7: Secure Server-Side Telecaller Lead API', () => {
   // 4. ASSIGNED LEADS READ FLOW (telecaller-list)
   // =========================================================================
   describe('4. Assigned Leads Read Flow', () => {
+    it('denies an unpaid telecaller before reading assigned lead rows', async () => {
+      mockRpc.mockImplementation(async (funcName: string) => funcName === 'organization_has_active_paid_entitlement'
+        ? { data: false, error: null }
+        : { data: [dbAssignedLead], error: null });
+      const token = createValidToken();
+      const { req, res } = createMockReqRes({
+        method: 'GET',
+        headers: { authorization: `Bearer ${token}` },
+        query: { _route: 'telecaller-list' },
+      });
+
+      await leadsDispatcher(req, res);
+      expect(res.statusCode).toBe(402);
+      expect(res.body.error).toBe('ACTIVE_SUBSCRIPTION_REQUIRED');
+      expect(mockRpc).toHaveBeenCalledTimes(1);
+      expect(mockRpc).toHaveBeenCalledWith('organization_has_active_paid_entitlement', {
+        p_organization_id: orgA,
+      });
+    });
+
     it('fetches assigned leads using server-derived profile identity and returns sanitized projection', async () => {
       const token = createValidToken();
       const { req, res } = createMockReqRes({
@@ -356,7 +428,9 @@ describe('Phase 24.7: Secure Server-Side Telecaller Lead API', () => {
     });
 
     it('returns 503 when the underlying database RPC fails', async () => {
-      mockRpc.mockResolvedValueOnce({ data: null, error: { message: 'Database connection error' } });
+      mockRpc.mockImplementation(async (funcName: string) => funcName === 'organization_has_active_paid_entitlement'
+        ? { data: true, error: null }
+        : { data: null, error: { message: 'Database connection error' } });
       const token = createValidToken();
 
       const { req, res } = createMockReqRes({
@@ -523,7 +597,10 @@ describe('Phase 24.7: Secure Server-Side Telecaller Lead API', () => {
     });
 
     it('returns 404 when RPC returns false (unauthorized or lead not assigned)', async () => {
-      mockRpc.mockImplementationOnce(async (funcName: string) => {
+      mockRpc.mockImplementation(async (funcName: string) => {
+        if (funcName === 'organization_has_active_paid_entitlement') {
+          return { data: true, error: null };
+        }
         if (funcName === 'server_update_assigned_telecaller_lead') {
           return { data: false, error: null };
         }

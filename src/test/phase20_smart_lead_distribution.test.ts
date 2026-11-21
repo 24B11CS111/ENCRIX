@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+vi.mock('../../api/_lib/paidEntitlement.js', () => ({
+  requirePaidEntitlement: vi.fn(async () => true),
+}));
 import { db } from '@/services/supabase/db';
 import { Profile, Lead, DistributionMode } from '@/types';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';

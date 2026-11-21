@@ -12,7 +12,10 @@
  * 7. Forward migration DDL integrity (20261019000000_phase22_phone_exposure_remediation.sql)
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+vi.mock('../../api/_lib/paidEntitlement.js', () => ({
+  requirePaidEntitlement: vi.fn(async () => true),
+}));
 import { db } from '@/services/supabase/db';
 import {
   sanitizeStudentName,

@@ -14,6 +14,10 @@ import { Call, Profile } from '@/types';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
 import { getTwilioServerConfig } from '../../api/_lib/twilioServer';
 
+vi.mock('../../api/_lib/paidEntitlement.js', () => ({
+  requirePaidEntitlement: vi.fn(async () => true),
+}));
+
 vi.mock('../../api/_lib/supabaseServer.js', async () => {
   const { verifySignedSessionToken } = await vi.importActual<typeof import('../../api/_lib/sessionServer')>(
     '../../api/_lib/sessionServer',
@@ -247,6 +251,18 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
       }
     });
 
+    it('rejects untrusted Twilio subdomains, URL credentials, and non-standard ports', () => {
+      const forbiddenUrls = [
+        'https://attacker.twilio.com/Recordings/RE123.mp3',
+        'https://user:password@api.twilio.com/Recordings/RE123.mp3',
+        'https://api.twilio.com:8443/Recordings/RE123.mp3',
+      ];
+
+      for (const url of forbiddenUrls) {
+        expect(validateTwilioRecordingUrl(url).valid).toBe(false);
+      }
+    });
+
     it('rejects loopback, private RFC-1918 IPs, and cloud metadata endpoints', () => {
       const forbiddenUrls = [
         'https://localhost/Recordings/RE123.mp3',
@@ -366,6 +382,32 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
       expect(result.success).toBe(true);
       expect(result.storagePath).toBe(`${orgAId}/call-valid-01.mp3`);
     });
+
+    it('does not follow redirects while downloading provider recordings', async () => {
+      const responseBytes = Buffer.from([0x49, 0x44, 0x33, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20]);
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+        expect(init?.redirect).toBe('error');
+        return new Response(responseBytes, {
+          status: 200,
+          headers: { 'content-type': 'audio/mpeg' },
+        });
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const result = await downloadAndStoreRecording({
+        callId: 'call-no-redirect',
+        organizationId: orgAId,
+        recordingUrl: 'https://api.twilio.com/2010-04-01/Accounts/AC123/Recordings/RE_redirect.mp3',
+        twilioCredentials: {
+          accountSid: `AC${'a'.repeat(32)}`,
+          authToken: 'synthetic-test-auth-token-that-is-long-enough',
+          phoneNumber: '+15551234567',
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(fetchMock).toHaveBeenCalledOnce();
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -374,7 +416,7 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
   describe('4. Webhook Handling & Zero Provider URL Exposure', () => {
     const webhookUrl = 'https://app.leadvault.io/api/telephony/webhook';
 
-    it('rejects webhook with untrusted recording URL and logs security event', async () => {
+    it('fails closed when a signed recording callback has no durable tenant bridge context', async () => {
       const body = {
         CallSid: `CA${'c'.repeat(32)}`,
         CallStatus: 'completed',
@@ -396,13 +438,13 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
       });
 
       await webhookHandler(req, res);
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(503);
 
       // Verify that provider URL was NEVER stored or returned
       expect(JSON.stringify(res.body)).not.toContain('attacker.evil.com');
     });
 
-    it('webhook response NEVER leaks the provider recording URL', async () => {
+    it('does not expose a recording URL when durable tenant bridge context is unavailable', async () => {
       const body = {
         CallSid: `CA${'a'.repeat(32)}`,
         CallStatus: 'completed',
@@ -425,7 +467,7 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
       });
 
       await webhookHandler(req, res);
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(503);
 
       // The returned response body MUST NOT contain the provider recording URL
       expect(res.body.recordingUrl).toBeUndefined();
@@ -433,7 +475,7 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
       expect(JSON.stringify(res.body)).not.toContain('api.twilio.com');
     });
 
-    it('duplicate webhook callbacks are processed idempotently without repeating storage upload', async () => {
+    it('refuses an unscoped duplicate callback instead of processing it from memory', async () => {
       const body = {
         CallSid: `CA${'b'.repeat(32)}`,
         CallStatus: 'completed',
@@ -456,7 +498,7 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
       });
 
       await webhookHandler(req1, res1);
-      expect(res1.statusCode).toBe(200);
+      expect(res1.statusCode).toBe(503);
 
       // Re-send the exact duplicate callback
       const { req: req2, res: res2 } = createMockReqRes({
@@ -470,8 +512,8 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
       });
 
       await webhookHandler(req2, res2);
-      expect(res2.statusCode).toBe(200);
-      expect(res2.body.duplicate).toBe(true);
+      expect(res2.statusCode).toBe(503);
+      expect(res2.body?.error).toMatch(/Webhook processing unavailable/i);
     });
 
     it('keeps terminal call state when an older non-terminal webhook arrives later', async () => {
@@ -491,8 +533,8 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
         url: '/api/telephony/webhook',
       });
       await webhookHandler(completedReqRes.req, completedReqRes.res);
-      expect(completedReqRes.res.statusCode).toBe(200);
-      expect(completedReqRes.res.body.status).toBe('COMPLETED');
+      expect(completedReqRes.res.statusCode).toBe(503);
+      expect(completedReqRes.res.body?.error).toMatch(/Webhook processing unavailable/i);
 
       const delayed = { CallSid: sid, CallStatus: 'ringing', SequenceNumber: '1' };
       const delayedSignature = createValidSignature(webhookUrl, delayed);
@@ -504,9 +546,9 @@ describe('ENCRIX Phase 23.2.4: Secure Private Recording Pipeline', () => {
       });
       await webhookHandler(delayedReqRes.req, delayedReqRes.res);
 
-      expect(delayedReqRes.res.statusCode).toBe(200);
-      expect(delayedReqRes.res.body.status).toBe('COMPLETED');
-      expect((db as any).calls.find((call: Call) => call.provider_call_id === sid).status).toBe('COMPLETED');
+      expect(delayedReqRes.res.statusCode).toBe(503);
+      expect(delayedReqRes.res.body?.error).toMatch(/Webhook processing unavailable/i);
+      expect((db as any).calls.find((call: Call) => call.provider_call_id === sid).status).toBe('IN_PROGRESS');
     });
   });
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
+import { leadService } from '@/services/leads/leadService';
 import { Lead, Profile, OrganizationDistributionConfig, LeadAssignment, DistributionMode } from '@/types';
 import { LeadAssignModal } from '@/features/leads/LeadAssignModal';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -48,10 +49,13 @@ export const OwnerAssignmentsPage: React.FC = () => {
   const [isReassigning, setIsReassigning] = useState(false);
   const [reassignError, setReassignError] = useState<string | null>(null);
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!profile) return;
-    const allLeads = db.getLeads(profile);
-    setLeads(allLeads);
+    try {
+      setLeads(await leadService.getOwnerLeads(profile));
+    } catch {
+      setLeads([]);
+    }
     const allTc = db.getTelecallers(profile);
     setTelecallers(allTc);
     const asgns = db.getLeadAssignments(profile);
@@ -80,6 +84,7 @@ export const OwnerAssignmentsPage: React.FC = () => {
         type === 'LEAD_REASSIGNED' ||
         type === 'LEADS_IMPORTED' ||
         type === 'LEAD_CREATED' ||
+        type === 'LEAD_REFRESH_REQUIRED' ||
         type === 'DISTRIBUTION_CONFIG_UPDATED'
       ) {
         loadData();

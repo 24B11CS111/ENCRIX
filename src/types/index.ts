@@ -159,6 +159,10 @@ export interface Organization {
   owner_id: string;
   industry: string;
   company_size?: string;
+  business_email?: string | null;
+  business_phone?: string | null;
+  business_location?: string | null;
+  website_url?: string | null;
   logo_url?: string;
   status: OrgStatus;
   created_at: string;

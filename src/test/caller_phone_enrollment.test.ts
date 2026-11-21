@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+﻿import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   enrollment: null as any,
   rpc: vi.fn(),
   completionOutcome: 'VERIFIED',
+  twilioConfig: null as any,
 }));
 
 vi.mock('../../api/_lib/supabaseServer.js', () => ({
@@ -36,8 +37,12 @@ vi.mock('../../api/_lib/supabaseServer.js', () => ({
   }),
   isRealSupabaseServerConfigured: () => true,
 }));
+vi.mock('../../api/_lib/twilioOrganizationConfig.js', () => ({
+  getOrganizationTwilioConfig: vi.fn(async (_supabase: unknown, organizationId: string) =>
+    organizationId === state.profile?.organization_id ? state.twilioConfig : null),
+}));
 
-import enrollmentHandler from '../../api/auth/phone-enrollment';
+import enrollmentHandler from '../../api/_lib/authHandlers/phone-enrollment';
 
 const profile = {
   id: '10000000-0000-4000-8000-000000000001',
@@ -74,13 +79,18 @@ beforeEach(() => {
   state.profile = profile;
   state.enrollment = null;
   state.completionOutcome = 'VERIFIED';
+  state.twilioConfig = {
+    record: { organization_id: profile.organization_id },
+    credentials: {
+      accountSid: `AC${'a'.repeat(32)}`,
+      authToken: randomBytes(48).toString('hex'),
+      phoneNumber: '+15550000000',
+    },
+  };
   state.rpc.mockReset();
   vi.stubEnv('SUPABASE_URL', 'https://synthetic-project.supabase.co');
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', randomBytes(48).toString('hex'));
   vi.stubEnv('OTP_SERVER_SECRET', randomBytes(48).toString('hex'));
-  vi.stubEnv('TWILIO_ACCOUNT_SID', `AC${'a'.repeat(32)}`);
-  vi.stubEnv('TWILIO_AUTH_TOKEN', randomBytes(48).toString('hex'));
-  vi.stubEnv('TWILIO_PHONE_NUMBER', '+15550000000');
   state.rpc.mockImplementation(async (name: string, args: Record<string, any>) => {
     if (name === 'begin_caller_phone_enrollment') {
       state.enrollment = {
@@ -143,9 +153,7 @@ describe('server-controlled caller phone enrollment', () => {
   });
 
   it('fails closed when live SMS delivery is not configured', async () => {
-    vi.stubEnv('TWILIO_ACCOUNT_SID', '');
-    vi.stubEnv('TWILIO_AUTH_TOKEN', '');
-    vi.stubEnv('TWILIO_PHONE_NUMBER', '');
+    state.twilioConfig = null;
     const call = request({ action: 'send', phone: '+15551234567' });
     await enrollmentHandler(call.req, call.res);
     expect(call.res.statusCode).toBe(503);

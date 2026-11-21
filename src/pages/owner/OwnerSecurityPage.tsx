@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
+import { leadService } from '@/services/leads/leadService';
 import { SecurityEvent } from '@/types';
 import { formatDateTime, formatRelativeTime } from '@/lib/utils';
 import {
@@ -38,12 +39,12 @@ export const OwnerSecurityPage: React.FC = () => {
   }, [profile]);
 
   // Authorized Owner export (strictly for owner/admin compliance, never telecallers)
-  const handleOwnerExport = () => {
+  const handleOwnerExport = async () => {
     if (!profile) return;
     setIsExporting(true);
 
     try {
-      const leads = db.getLeads(profile);
+      const leads = await leadService.getOwnerLeads(profile);
       const csvContent =
         'data:text/csv;charset=utf-8,' +
         ['LeadCode,Name,Phone,Email,Status,Source,CreatedAt']

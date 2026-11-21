@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+﻿import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -9,11 +9,11 @@ const loaderPath = resolve(projectRoot, 'src/test/support/node_ts_loader.mjs');
 describe('server API module loading in native Node.js', () => {
   it('loads API modules that depend on db without Vite import.meta.env or browser Supabase initialization', () => {
     const routes = [
-      './api/auth/invite.ts',
-      './api/auth/phone-enrollment.ts',
-      './api/auth/send-otp.ts',
-      './api/auth/session.ts',
-      './api/auth/verify-otp.ts',
+      './api/_lib/authHandlers/invite.ts',
+      './api/_lib/authHandlers/phone-enrollment.ts',
+      './api/_lib/authHandlers/send-otp.ts',
+      './api/_lib/authHandlers/session.ts',
+      './api/_lib/authHandlers/verify-otp.ts',
       './api/cron/follow-up-reminders.ts',
       './api/leads.ts',
       './api/billing.ts',

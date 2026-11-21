@@ -1,6 +1,8 @@
-# ENCRIX billing foundation (draft)
+# ENCRIX billing foundation (historical implementation note)
 
-This phase adds server-only plan placeholders and an unapplied, additive schema migration. It does not call Razorpay, activate subscriptions, change authentication, or enforce a paywall. The plan values are intentionally unset until commercial values are approved.
+> **Current commercial source of truth:** ENCRIX offers one subscription: ₹9,999 INR per year. There is no onboarding or registration fee. Twilio account, number, and usage charges are paid separately by the customer to Twilio. This note documents the original billing foundation and rollout decisions; its earlier multi-plan proposals below are superseded. The implementation permits Test Mode checkout only when the server-side Razorpay test plan, credentials, and database are verified. Live keys are rejected.
+
+This note began as a billing foundation proposal. The implementation described below has since evolved: server-side Test Mode checkout, payment verification, webhook reconciliation, and unconditional paid-entitlement checks are implemented in the current source. Database migration application and provider verification remain separate release gates.
 
 ## Data model proposal
 
@@ -22,9 +24,11 @@ There were 12 current Vercel API entrypoints: 4 auth, 1 cron, 3 leads, and 4 tel
 
 ## Test Mode integration and remaining configuration blockers
 
-The API accepts only `RAZORPAY_KEY_ID` values with the Test Mode `rzp_test_` prefix and reads `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, and `RAZORPAY_PLAN_STARTER`, `RAZORPAY_PLAN_PROFESSIONAL`, `RAZORPAY_PLAN_BUSINESS`, plus `RAZORPAY_SUBSCRIPTION_TOTAL_COUNT` from server environment. The key ID, keys, plan IDs, and duration are not present in local environment files. The plan catalog also intentionally has null pricing/limits and `checkoutEnabled: false`, so checkout returns a safe configuration error before contacting Razorpay.
+The API accepts only `RAZORPAY_KEY_ID` values with the Test Mode `rzp_test_` prefix and reads `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, `RAZORPAY_PLAN_BUSINESS`, and `RAZORPAY_SUBSCRIPTION_TOTAL_COUNT` from the server environment. The only published plan is Business: ₹9,999 INR yearly (999900 paise), interval 1. Checkout is dynamically unavailable until all test credentials, plan details, and database configuration validate. Captured payment persistence and subscription activation use the atomic `apply_verified_razorpay_payment` RPC from migration `20261031170000_razorpay_atomic_subscription_lifecycle.sql`.
 
-To prepare Razorpay Test Mode after commercial approval: switch the Razorpay Dashboard to Test Mode; create three monthly INR plans with interval 1 and approved amounts; record each immutable plan ID; generate the Test Mode API key pair; configure a webhook endpoint ending in `/api/billing/webhook` with an independently chosen webhook secret and subscription/payment lifecycle events; then set the names above in local server environment and Vercel Preview/Test configuration. The selected recurring billing period count must be approved before setting `RAZORPAY_SUBSCRIPTION_TOTAL_COUNT`. Never add these values to a `VITE_` variable. Do not create production-mode plans/keys or enable subscription enforcement in this phase.
+There is no billing grace period: a subscription is `active` only after a verified captured payment for its current billing period; `pending_payment` and `past_due` are not active billing states. At the verified period end, the owner billing endpoint marks an active row `expired` and clears `is_current`, allowing a new subscription record. Full refunds move the current subscription to `past_due` unless another captured payment covers that period; partial refunds remain recorded on the payment. Cancellation and expiry are terminal for that subscription record; a new checkout creates a new record. Paid CRM APIs enforce the database entitlement function unconditionally. `SUBSCRIPTION_ENFORCEMENT_ENABLED` is obsolete and must not be used as a bypass.
+
+To prepare Razorpay Test Mode, use one INR yearly plan for 999900 paise with interval 1; record its immutable plan ID; generate the Test Mode API key pair; configure a webhook endpoint ending in `/api/billing/webhook` with an independently chosen webhook secret and subscription/payment lifecycle events; then set the server-only names above in staging configuration. Never add these values to a `VITE_` variable. Do not create production-mode plans/keys or change the entitlement policy.
 
 Razorpay requires creating a plan before a subscription and defines the plan cadence using `period` and `interval`; monthly plans use the monthly cadence. Subscription checkout verification uses HMAC-SHA256 over `payment_id|subscription_id`; webhook verification uses HMAC-SHA256 over the exact raw request body. See [Razorpay Create Plan API](https://razorpay.com/docs/api/payments/subscriptions/create-plan/), [Razorpay subscription signature documentation](https://github.com/razorpay/markdown-docs/blob/master/payments/payment-gateway/s2s-integration/subscriptions.md), and [Razorpay security checklist](https://razorpay.com/security/checklist/).
 
@@ -45,9 +49,9 @@ Razorpay requires creating a plan before a subscription and defines the plan cad
 
 The server-side API Supabase client uses a service-role key and bypasses RLS. Therefore, every user-facing API handler must perform an explicit entitlement check; RLS alone cannot protect these paths.
 
-## Safe rollout and grandfathering
+## Current entitlement policy
 
-No entitlement is inferred from the new tables in this phase. `isSubscriptionEnforcementEnabled()` reads only the server-side `SUBSCRIPTION_ENFORCEMENT_ENABLED` variable; it defaults to false and nothing in this phase invokes it to change existing access. Keep it false on the server until an approved existing-account policy, a defined cutoff, and tested backfill are ready. Existing organizations must remain on the current access behavior while this flag is off. When enforcement is later enabled, the server must treat organizations created before the approved cutoff as grandfathered; unknown/missing subscription rows must not be interpreted as a denial for those organizations. New organizations require the explicitly approved policy. The flag must never be a `VITE_` variable.
+Paid CRM APIs check the authoritative `organization_has_active_paid_entitlement` database function unconditionally. There is no rollout flag or fail-open mode: missing, invalid, expired or unavailable subscription state denies the paid operation. Billing, checkout, subscription status/history and account access remain available so an owner can renew. This server-side gate does not certify that the corresponding staging migrations have been applied; validate that separately before staging use.
 
 ## Verification commands
 
@@ -59,12 +63,17 @@ git diff --check
 
 The Vercel CLI build should be run only if the CLI is already installed locally; do not install it just for this foundation phase. No production database or Vercel setting should be changed.
 
-## Decisions required before Razorpay Test Mode
+## Remaining operational decisions before Razorpay Test Mode
 
-- Approved INR monthly prices, seat/lead/automation limits, and feature matrix for each plan.
-- Grandfathering policy and exact cutoff for existing organizations.
-- Whether renewal is automatic and cancellation takes effect immediately or at period end.
-- Test-mode Razorpay plan creation and webhook endpoint/secret setup.
-- Refund, failed-payment grace period, retries, and past-due entitlement behavior.
-- Billing-history visibility and administrator support/audit permissions.
-- Production migration order and preflight, given the already identified missing earlier migrations.
+- Staging test approval and Test Mode Business plan/webhook setup; the price and annual cadence are fixed at ₹9,999 per year.
+- Confirm the provider's Test Mode webhook event delivery and lifecycle edge cases against the configured account.
+- Staging migration order and preflight, given the already identified unverified or pending migrations.
+
+
+## Approved refund and cancellation workflow (local candidate)
+
+Business decision: the one-time ₹10,000 onboarding fee is deferred. Business remains ₹9,999/year. Owner billing checkout must contain only the annual subscription.
+
+Refunds require manual review. Owners can submit a reason and amount for a captured payment. The server associates the request with the authenticated owner's organization and related subscription/payment. A global ADMIN must explicitly review and approve/reject; the database records reviewer, timestamp, amount, entitlement decision and append-only review event. Amount reservations are serialized on the payment row and bounded by the remaining captured balance. Provider payment/refund state is fetched and reconciled through the signed webhook path. Pending requests do not change payment state or access. A partial refund only preserves access when the provider total matches internal completed refund decisions and an administrator chose retain.
+
+Cancellation is requested by an authenticated organization owner and sent server-side to Razorpay as end-of-current-cycle cancellation. The API requires the provider response to bind to the stored organization/subscription/plan, remain active, and report a scheduled change at `current_end`. Provider client errors trigger a provider-state read before marking the request failed; uncertain outcomes remain pending reconciliation. Access stays available until the period end, and a verified charge at/after the saved cancellation boundary cannot renew entitlement. Razorpay Test Mode/native PostgreSQL verification and an administrator-facing review UI/runbook are still required.

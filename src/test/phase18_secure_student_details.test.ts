@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+vi.mock('../../api/_lib/paidEntitlement.js', () => ({
+  requirePaidEntitlement: vi.fn(async () => true),
+}));
 import {
   createSignedSessionToken,
   revokeSession,
@@ -226,7 +229,7 @@ describe('ENCRIX Phase 18: Secure Student Details & Zero Phone Exposure', () => 
       const { req, res } = createMockReqRes({
         method: 'POST',
         headers: { authorization: `Bearer ${tokenTelecallerA1}` },
-        body: { leadId: 'lead-lv-10294' },
+        body: { leadId: 'lead-lv-10294', idempotencyKey: '30000000-0000-4000-8000-000000000001' },
       });
 
       await leadDetailHandler(req, res);
@@ -302,7 +305,7 @@ describe('ENCRIX Phase 18: Secure Student Details & Zero Phone Exposure', () => 
       const { req, res } = createMockReqRes({
         method: 'POST',
         headers: { authorization: `Bearer ${tokenTelecallerA1}` },
-        body: { leadId: 'lead-lv-10294' },
+        body: { leadId: '30000000-0000-4000-8000-000000000001', idempotencyKey: '30000000-0000-4000-8000-000000000002' },
       });
 
       await callHandler(req, res);
@@ -311,7 +314,7 @@ describe('ENCRIX Phase 18: Secure Student Details & Zero Phone Exposure', () => 
       const data = res.body;
 
       expect(data.callId).toBeUndefined();
-      expect(data.error).toMatch(/secure call bridge/i);
+      expect(data.error).toMatch(/live calling is disabled/i);
       expect(db.getCalls(telecallerA1)).toHaveLength(callsBefore);
       expect('phone' in data).toBe(false);
       expect('rawPhoneNumber' in data).toBe(false);

@@ -61,6 +61,40 @@ SELECT set_config('request.jwt.claim.role', 'service_role', TRUE);
 SELECT public.grant_platform_admin('92000000-0000-4000-8000-000000000006');
 RESET ROLE;
 
+-- Browser roles use authenticated server APIs for raw leads; neither role has
+-- direct table access after the least-privilege migration.
+DO $$
+DECLARE
+    v_role TEXT;
+    v_privilege TEXT;
+    v_column RECORD;
+BEGIN
+    FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+        FOREACH v_privilege IN ARRAY ARRAY[
+            'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'
+        ] LOOP
+            IF has_table_privilege(v_role, 'public.leads', v_privilege) THEN
+                RAISE EXCEPTION '% unexpectedly has direct % on public.leads', v_role, v_privilege;
+            END IF;
+        END LOOP;
+        FOR v_column IN
+            SELECT a.attname
+              FROM pg_catalog.pg_attribute AS a
+             WHERE a.attrelid = 'public.leads'::pg_catalog.regclass
+               AND a.attnum > 0
+               AND NOT a.attisdropped
+        LOOP
+            FOREACH v_privilege IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+                IF has_column_privilege(v_role, 'public.leads', v_column.attname, v_privilege) THEN
+                    RAISE EXCEPTION '% unexpectedly has column % on public.leads.%',
+                        v_role, v_privilege, v_column.attname;
+                END IF;
+            END LOOP;
+        END LOOP;
+    END LOOP;
+END;
+$$;
+
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.role', 'authenticated', TRUE);
 
@@ -74,10 +108,6 @@ BEGIN
        OR public.get_auth_org_id() <> '91000000-0000-4000-8000-000000000001'::UUID THEN
         RAISE EXCEPTION 'Active owner helpers did not resolve the authenticated tenant.';
     END IF;
-    IF (SELECT count(*) FROM public.leads) <> 2
-       OR (SELECT count(*) FROM public.leads WHERE organization_id = '91000000-0000-4000-8000-000000000002') <> 0 THEN
-        RAISE EXCEPTION 'Active owner lead reads crossed the organization boundary.';
-    END IF;
     IF (SELECT count(*) FROM public.profiles WHERE organization_id = '91000000-0000-4000-8000-000000000002') <> 0
        OR (SELECT count(*) FROM public.calls WHERE organization_id = '91000000-0000-4000-8000-000000000002') <> 0
        OR (SELECT count(*) FROM public.follow_ups WHERE organization_id = '91000000-0000-4000-8000-000000000002') <> 0
@@ -87,32 +117,8 @@ BEGIN
         RAISE EXCEPTION 'Active owner read data from another organization.';
     END IF;
 
-    UPDATE public.leads SET notes = 'updated by active owner'
-    WHERE id = '93000000-0000-4000-8000-000000000002';
-    GET DIAGNOSTICS affected = ROW_COUNT;
-    IF affected <> 1 THEN
-        RAISE EXCEPTION 'Active owner could not update an organization lead.';
-    END IF;
-    UPDATE public.leads SET notes = 'cross-tenant update attempt'
-    WHERE id = '93000000-0000-4000-8000-000000000003';
-    GET DIAGNOSTICS affected = ROW_COUNT;
-    IF affected <> 0 THEN
-        RAISE EXCEPTION 'Active owner updated a lead in another organization.';
-    END IF;
-
-    INSERT INTO public.leads (organization_id, lead_code, name, phone, assigned_to)
-    VALUES ('91000000-0000-4000-8000-000000000001', 'P238-A-INSERT', 'Inserted Lead', '+91 9000000003', NULL);
-
-    blocked := FALSE;
-    BEGIN
-        INSERT INTO public.leads (organization_id, lead_code, name, phone, assigned_to)
-        VALUES ('91000000-0000-4000-8000-000000000002', 'P238-B-FORBIDDEN', 'Cross Tenant', '+91 9000000004', NULL);
-    EXCEPTION WHEN insufficient_privilege THEN
-        blocked := TRUE;
-    END;
-    IF NOT blocked THEN
-        RAISE EXCEPTION 'Active owner inserted a lead into another organization.';
-    END IF;
+    -- Lead list/create/update/delete and cross-tenant behavior are exercised
+    -- through authenticated API tests, not direct table privileges.
 
     blocked := FALSE;
     BEGIN
@@ -147,11 +153,6 @@ BEGIN
         RAISE EXCEPTION 'Active owner could not update an organization profile.';
     END IF;
 
-    DELETE FROM public.leads WHERE id = '93000000-0000-4000-8000-000000000002';
-    GET DIAGNOSTICS affected = ROW_COUNT;
-    IF affected <> 1 THEN
-        RAISE EXCEPTION 'Active owner could not delete an organization lead.';
-    END IF;
 END;
 $$;
 
@@ -162,9 +163,6 @@ BEGIN
     PERFORM set_config('request.jwt.claim.sub', '90000000-0000-4000-8000-000000000002', TRUE);
     IF NOT public.is_active_authenticated_profile() OR public.get_auth_role() <> 'TELECALLER' THEN
         RAISE EXCEPTION 'Active telecaller was not authorized.';
-    END IF;
-    IF (SELECT count(*) FROM public.leads) <> 0 THEN
-        RAISE EXCEPTION 'Telecaller read raw leads.';
     END IF;
     IF (SELECT count(*) FROM public.telecaller_leads_view) <> 1 THEN
         RAISE EXCEPTION 'Telecaller did not receive only the assigned lead through the safe view.';
@@ -202,20 +200,8 @@ BEGIN
         RAISE EXCEPTION 'Recording path authorization did not preserve active assignment and tenant restrictions.';
     END IF;
 
-    UPDATE public.leads SET notes = 'updated by assigned telecaller'
-    WHERE id = '93000000-0000-4000-8000-000000000001';
-    GET DIAGNOSTICS affected = ROW_COUNT;
-    -- In PostgreSQL, direct UPDATE on public.leads affects 0 rows for telecallers
-    -- because raw-lead SELECT is strictly denied to uphold the zero-phone-exposure invariant.
-    IF affected <> 0 THEN
-        RAISE EXCEPTION 'Telecaller direct-updated raw leads despite zero-select security policy.';
-    END IF;
-    UPDATE public.leads SET notes = 'unassigned update attempt'
-    WHERE id = '93000000-0000-4000-8000-000000000002';
-    GET DIAGNOSTICS affected = ROW_COUNT;
-    IF affected <> 0 THEN
-        RAISE EXCEPTION 'Active telecaller updated an unassigned lead.';
-    END IF;
+    -- Assigned/unassigned telecaller writes are tested through the narrowly
+    -- scoped RPC in phase24_3_telecaller_lead_access.test.sql.
 
     INSERT INTO public.calls (organization_id, lead_id, telecaller_id, status)
     VALUES ('91000000-0000-4000-8000-000000000001', '93000000-0000-4000-8000-000000000001', '92000000-0000-4000-8000-000000000002', 'COMPLETED');
@@ -241,16 +227,10 @@ BEGIN
     IF NOT public.is_active_authenticated_profile() OR public.get_auth_role() <> 'ADMIN' THEN
         RAISE EXCEPTION 'Active platform admin was not authorized.';
     END IF;
-    IF (SELECT count(*) FROM public.leads) <> 3
-       OR (SELECT count(*) FROM public.profiles WHERE id = '92000000-0000-4000-8000-000000000005') <> 1 THEN
-        RAISE EXCEPTION 'Active platform admin lost intended cross-organization access.';
+    IF (SELECT count(*) FROM public.profiles WHERE id = '92000000-0000-4000-8000-000000000005') <> 1 THEN
+        RAISE EXCEPTION 'Active platform admin profile lookup failed.';
     END IF;
-    UPDATE public.leads SET notes = 'updated by active admin'
-    WHERE id = '93000000-0000-4000-8000-000000000003';
-    GET DIAGNOSTICS affected = ROW_COUNT;
-    IF affected <> 1 THEN
-        RAISE EXCEPTION 'Active platform admin could not update an authorized lead.';
-    END IF;
+    -- Admin cross-organization lead behavior belongs in authenticated API tests.
 END;
 $$;
 
@@ -273,8 +253,7 @@ BEGIN
             RAISE;
         END IF;
     END;
-    IF (SELECT count(*) FROM public.leads) <> 0
-       OR (SELECT count(*) FROM public.profiles) <> 0
+    IF (SELECT count(*) FROM public.profiles) <> 0
        OR (SELECT count(*) FROM public.organizations) <> 0
        OR (SELECT count(*) FROM public.calls) <> 0
        OR (SELECT count(*) FROM public.follow_ups) <> 0
@@ -284,29 +263,12 @@ BEGIN
        OR (SELECT count(*) FROM public.activity_logs) <> 0 THEN
         RAISE EXCEPTION 'Disabled owner read tenant data.';
     END IF;
-    UPDATE public.leads SET notes = 'disabled update attempt';
-    GET DIAGNOSTICS affected = ROW_COUNT;
-    IF affected <> 0 THEN
-        RAISE EXCEPTION 'Disabled owner updated leads.';
-    END IF;
-    DELETE FROM public.leads;
-    GET DIAGNOSTICS affected = ROW_COUNT;
-    IF affected <> 0 THEN
-        RAISE EXCEPTION 'Disabled owner deleted leads.';
-    END IF;
     UPDATE public.profiles SET status = 'ACTIVE'
     WHERE user_id = auth.uid();
     GET DIAGNOSTICS affected = ROW_COUNT;
     IF affected <> 0 THEN
         RAISE EXCEPTION 'Disabled owner reactivated their own profile.';
     END IF;
-    BEGIN
-        INSERT INTO public.leads (organization_id, lead_code, name, phone, assigned_to)
-        VALUES ('91000000-0000-4000-8000-000000000001', 'P238-DISABLED', 'Disabled Insert', '+91 9000000005', NULL);
-        RAISE EXCEPTION 'Disabled owner inserted a lead.';
-    EXCEPTION WHEN insufficient_privilege THEN
-        NULL;
-    END;
 END;
 $$;
 
@@ -328,19 +290,12 @@ BEGIN
             RAISE;
         END IF;
     END;
-    IF (SELECT count(*) FROM public.leads) <> 0
-       OR (SELECT count(*) FROM public.telecaller_leads_view) <> 0
+    IF (SELECT count(*) FROM public.telecaller_leads_view) <> 0
        OR (SELECT count(*) FROM public.calls) <> 0
        OR (SELECT count(*) FROM public.follow_ups) <> 0
        OR (SELECT count(*) FROM public.notifications) <> 0
        OR (SELECT count(*) FROM public.call_recordings) <> 0 THEN
         RAISE EXCEPTION 'Suspended telecaller read tenant data.';
-    END IF;
-    UPDATE public.leads SET notes = 'suspended update attempt'
-    WHERE id = '93000000-0000-4000-8000-000000000001';
-    GET DIAGNOSTICS affected = ROW_COUNT;
-    IF affected <> 0 THEN
-        RAISE EXCEPTION 'Suspended telecaller updated an assigned lead.';
     END IF;
     DELETE FROM public.follow_ups;
     GET DIAGNOSTICS affected = ROW_COUNT;
@@ -368,19 +323,12 @@ BEGIN
        OR (public.get_auth_profile()).id IS NOT NULL THEN
         RAISE EXCEPTION 'Pending profile was accepted by an auth helper.';
     END IF;
-    IF (SELECT count(*) FROM public.leads) <> 0
-       OR (SELECT count(*) FROM public.telecaller_leads_view) <> 0
+    IF (SELECT count(*) FROM public.telecaller_leads_view) <> 0
        OR (SELECT count(*) FROM public.calls) <> 0
        OR (SELECT count(*) FROM public.follow_ups) <> 0
        OR (SELECT count(*) FROM public.notifications) <> 0
        OR (SELECT count(*) FROM public.call_recordings) <> 0 THEN
         RAISE EXCEPTION 'Pending telecaller read tenant data.';
-    END IF;
-    UPDATE public.leads SET notes = 'pending update attempt'
-    WHERE id = '93000000-0000-4000-8000-000000000001';
-    GET DIAGNOSTICS affected = ROW_COUNT;
-    IF affected <> 0 THEN
-        RAISE EXCEPTION 'Pending telecaller updated an assigned lead.';
     END IF;
     BEGIN
         INSERT INTO public.calls (organization_id, lead_id, telecaller_id, status)

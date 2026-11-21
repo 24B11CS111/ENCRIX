@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+﻿import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import ownerLeadsHandler from '../../api/_lib/leads/owner';
-import teamHandler from '../../api/auth/team';
+import teamHandler from '../../api/_lib/authHandlers/team';
 import * as supabaseServerModule from '../../api/_lib/supabaseServer';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
 import { leadService } from '../../src/services/leads/leadService';
@@ -66,6 +66,11 @@ describe('ENCRIX Phase 32: Full CRM Real-Time Transformation (Database-Backed & 
   beforeEach(() => {
     vi.clearAllMocks();
     process.env = { ...originalEnv };
+    // Keep auth helper tests offline even if a developer has remote Supabase
+    // environment variables configured in their shell.
+    process.env.NODE_ENV = 'test';
+    process.env.SUPABASE_URL = 'https://placeholder.supabase.co';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'placeholder-test-key';
     process.env.SESSION_SERVER_SECRET = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2';
 
     mockProfilesDb = [
@@ -147,6 +152,27 @@ describe('ENCRIX Phase 32: Full CRM Real-Time Transformation (Database-Backed & 
 
     // Comprehensive mock Supabase server client
     mockSupabase = {
+      rpc: vi.fn(async (functionName: string, args: any) => {
+        if (functionName === 'organization_has_active_paid_entitlement') return { data: true, error: null };
+        if (functionName !== 'create_owner_lead') return { data: null, error: { message: 'Unknown RPC' } };
+        const newLead = {
+          id: `lead-${Date.now()}`,
+          organization_id: args.p_organization_id,
+          lead_code: `LV-${Date.now().toString(36)}`,
+          name: args.p_name,
+          phone: args.p_phone,
+          email: args.p_email,
+          source: args.p_source,
+          status: args.p_assigned_to ? 'ASSIGNED' : 'NEW',
+          priority: args.p_priority,
+          assigned_to: args.p_assigned_to,
+          notes: args.p_notes,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        mockLeadsDb.unshift(newLead);
+        return { data: { lead: newLead }, error: null };
+      }),
       from: vi.fn((table: string) => {
         if (table === 'profiles') {
           return {
@@ -214,6 +240,7 @@ describe('ENCRIX Phase 32: Full CRM Real-Time Transformation (Database-Backed & 
                   if (filtered.length > 0) return { data: filtered[0], error: null };
                   return { data: null, error: { message: 'Lead not found' } };
                 }),
+                maybeSingle: vi.fn(async () => ({ data: filtered[0] || null, error: null })),
                 then: (resolve: any) => resolve({ data: filtered, error: null }),
               };
               return builder;
@@ -380,6 +407,40 @@ describe('ENCRIX Phase 32: Full CRM Real-Time Transformation (Database-Backed & 
     expect(noAuthRes.statusCode).toBe(401);
   });
 
+  it('rejects disabled owners from listing and updating leads using verified session status', async () => {
+    const token = createSignedSessionToken({
+      userId: ownerUserId,
+      profileId: ownerProfileId,
+      organizationId: orgA,
+      fullName: 'Jane Owner',
+      email: 'owner@encrix.io',
+      role: 'OWNER',
+      status: 'DISABLED',
+    });
+
+    const { req: listReq, res: listRes } = createMockReqRes({
+      method: 'GET',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    await ownerLeadsHandler(listReq, listRes);
+    expect(listRes.statusCode).toBe(403);
+    expect(listRes.body.error).toMatch(/inactive or suspended/i);
+    expect(mockSupabase.from).not.toHaveBeenCalledWith('leads');
+
+    mockSupabase.from.mockClear();
+    const { req: updateReq, res: updateRes } = createMockReqRes({
+      method: 'PATCH',
+      query: { _route: 'owner-update' },
+      headers: { authorization: `Bearer ${token}` },
+      body: { leadId: 'lead-111', updates: { status: 'CONTACTED' } },
+    });
+    await ownerLeadsHandler(updateReq, updateRes);
+    expect(updateRes.statusCode).toBe(403);
+    expect(updateRes.body.error).toMatch(/inactive or suspended/i);
+    expect(mockSupabase.from).not.toHaveBeenCalledWith('leads');
+    expect(mockLeadsDb.find((lead) => lead.id === 'lead-111')?.status).toBe('NEW');
+  });
+
   // ---------------------------------------------------------------------------
   // 2. Database-backed Owner Lead Creation
   // ---------------------------------------------------------------------------
@@ -407,11 +468,64 @@ describe('ENCRIX Phase 32: Full CRM Real-Time Transformation (Database-Backed & 
     expect(res.body.lead.organization_id).toBe(orgA);
     expect(res.body.lead.status).toBe('NEW');
     expect(res.body.lead.lead_code).toMatch(/^LV-/);
+    expect(mockSupabase.rpc).toHaveBeenCalledWith('create_owner_lead', expect.objectContaining({
+      p_organization_id: orgA,
+      p_actor_profile_id: ownerProfileId,
+      p_phone: '+919999988888',
+    }));
 
     // Verify persisted into mock database
     const dbLead = mockLeadsDb.find((l) => l.name === 'New Prospective Student');
     expect(dbLead).toBeDefined();
     expect(dbLead.organization_id).toBe(orgA);
+  });
+
+  it('updates a same-organization lead through owner PATCH', async () => {
+    const token = createOwnerSession();
+    const { req, res } = createMockReqRes({
+      method: 'PATCH',
+      query: { _route: 'owner-update' },
+      headers: { authorization: `Bearer ${token}` },
+      body: {
+        leadId: 'lead-111',
+        updates: { status: 'CONTACTED', notes: 'Owner follow-up recorded' },
+      },
+    });
+
+    await ownerLeadsHandler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.lead.organization_id).toBe(orgA);
+    expect(res.body.lead.status).toBe('CONTACTED');
+    expect(res.body.lead.notes).toBe('Owner follow-up recorded');
+    expect(mockLeadsDb.find((lead) => lead.id === 'lead-111')).toMatchObject({
+      organization_id: orgA,
+      status: 'CONTACTED',
+      notes: 'Owner follow-up recorded',
+    });
+  });
+
+  it('rejects owner PATCH for a lead from another organization without changing it', async () => {
+    const token = createOwnerSession();
+    const foreignLeadBefore = { ...mockLeadsDb.find((lead) => lead.id === 'lead-999') };
+    const { req, res } = createMockReqRes({
+      method: 'PATCH',
+      query: { _route: 'owner-update' },
+      headers: { authorization: `Bearer ${token}` },
+      body: {
+        leadId: 'lead-999',
+        updates: { status: 'CONTACTED', notes: 'unauthorized update' },
+      },
+    });
+
+    await ownerLeadsHandler(req, res);
+
+    // The preflight lookup is tenant-scoped and returns the same not-found
+    // response without disclosing whether a foreign lead exists.
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toEqual({ error: 'Lead not found or unauthorized.' });
+    expect(mockLeadsDb.find((lead) => lead.id === 'lead-999')).toEqual(foreignLeadBefore);
   });
 
   // ---------------------------------------------------------------------------
@@ -474,7 +588,7 @@ describe('ENCRIX Phase 32: Full CRM Real-Time Transformation (Database-Backed & 
   it('6. retrieves organization telecallers from database and updates their status', async () => {
     const token = createOwnerSession();
 
-    // Step A: GET /api/auth/team
+    // Step A: GET /api/_lib/authHandlers/team
     const { req: listReq, res: listRes } = createMockReqRes({
       method: 'GET',
       headers: { authorization: `Bearer ${token}` },
@@ -487,7 +601,7 @@ describe('ENCRIX Phase 32: Full CRM Real-Time Transformation (Database-Backed & 
     expect(listRes.body.telecallers.length).toBe(1);
     expect(listRes.body.telecallers[0].id).toBe(telecallerProfileId);
 
-    // Step B: PATCH /api/auth/team (toggle status to DISABLED)
+    // Step B: PATCH /api/_lib/authHandlers/team (toggle status to DISABLED)
     const { req: patchReq, res: patchRes } = createMockReqRes({
       method: 'PATCH',
       headers: { authorization: `Bearer ${token}` },
@@ -532,7 +646,7 @@ describe('ENCRIX Phase 32: Full CRM Real-Time Transformation (Database-Backed & 
   // ---------------------------------------------------------------------------
   // 5. Real-Time Postgres Changes Translation & Reconciliation
   // ---------------------------------------------------------------------------
-  it('8. realtimeManager registers reconnection listeners and triggers reconciliation upon re-establishing connection', () => {
+  it('8. realtimeManager does not reconnect without a verified identity', () => {
     vi.useFakeTimers();
     let reconnectedCalled = false;
     const unsub = realtimeManager.onReconnected(() => {
@@ -544,10 +658,10 @@ describe('ENCRIX Phase 32: Full CRM Real-Time Transformation (Database-Backed & 
     // Trigger reconnect
     realtimeManager.reconnect();
 
-    // After backoff timeout, reconnected callback should be triggered
     vi.advanceTimersByTime(500);
 
-    expect(reconnectedCalled).toBe(true);
+    expect(reconnectedCalled).toBe(false);
+    expect(realtimeManager.getStatus()).toBe('OFFLINE');
 
     unsub();
     realtimeManager.cleanup();

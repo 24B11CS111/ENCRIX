@@ -7,20 +7,27 @@ import {
   PhoneCall,
   Calendar,
   BarChart3,
+  CreditCard,
+  type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export const MobileNav: React.FC = () => {
   const { profile } = useAuth();
-  if (!profile || profile.role !== 'TELECALLER') return null;
+  if (!profile || !['ADMIN', 'TELECALLER'].includes(profile.role)) return null;
 
-  const links = [
-    { to: '/telecaller', label: 'Home', icon: LayoutDashboard, end: true },
-    { to: '/telecaller/leads', label: 'My Leads', icon: Users },
-    { to: '/telecaller/calls', label: 'Calls', icon: PhoneCall },
-    { to: '/telecaller/follow-ups', label: 'Follow-ups', icon: Calendar },
-    { to: '/telecaller/performance', label: 'Stats', icon: BarChart3 },
-  ];
+  const links: { to: string; label: string; icon: LucideIcon; end?: boolean }[] = profile.role === 'ADMIN'
+    ? [
+      { to: '/admin', label: 'Overview', icon: LayoutDashboard, end: true },
+      { to: '/admin/refunds', label: 'Refunds', icon: CreditCard },
+    ]
+    : [
+      { to: '/telecaller', label: 'Home', icon: LayoutDashboard, end: true },
+      { to: '/telecaller/leads', label: 'My Leads', icon: Users },
+      { to: '/telecaller/calls', label: 'Calls', icon: PhoneCall },
+      { to: '/telecaller/follow-ups', label: 'Follow-ups', icon: Calendar },
+      { to: '/telecaller/performance', label: 'Stats', icon: BarChart3 },
+    ];
 
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 border-t border-[#DCE4EE] backdrop-blur-md px-2 py-1.5 flex items-center justify-around shadow-dropdown">

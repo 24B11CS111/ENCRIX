@@ -23,6 +23,10 @@ export interface SendOtpParams {
   companyName?: string;
   industry?: string;
   companySize?: string;
+  businessEmail?: string;
+  businessPhone?: string;
+  businessLocation?: string;
+  websiteUrl?: string;
   inviteToken?: string;
 }
 
@@ -52,6 +56,10 @@ export interface VerifyOtpParams {
     email?: string;
     industry?: string;
     companySize?: string;
+    businessEmail?: string;
+    businessPhone?: string;
+    businessLocation?: string;
+    websiteUrl?: string;
   };
   inviteToken?: string;
 }
@@ -165,6 +173,10 @@ export class AuthService {
             companyName: params.companyName,
             industry: params.industry,
             companySize: params.companySize,
+            businessEmail: params.businessEmail,
+            businessPhone: params.businessPhone,
+            businessLocation: params.businessLocation,
+            websiteUrl: params.websiteUrl,
             email: emailResult?.normalized,
             inviteToken: params.inviteToken,
           }),
@@ -208,6 +220,10 @@ export class AuthService {
             email: emailResult?.normalized || params.email,
             industry: params.industry,
             companySize: params.companySize,
+            businessEmail: params.businessEmail,
+            businessPhone: params.businessPhone,
+            businessLocation: params.businessLocation,
+            websiteUrl: params.websiteUrl,
           }
         : undefined,
       inviteToken: params.inviteToken,

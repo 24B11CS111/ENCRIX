@@ -1,22 +1,73 @@
 
 import { createClient } from '@supabase/supabase-js';
+import { ENCRIX_PRODUCTION_SUPABASE_PROJECT_REF, getSupabaseProjectRef } from '../../src/lib/supabaseProject.js';
 
-function getSupabaseUrl(): string {
-  return process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+type ServerEnvironment = NodeJS.ProcessEnv;
+
+function isProductionEnvironment(env: ServerEnvironment): boolean {
+  if (env.VERCEL_ENV) return env.VERCEL_ENV === 'production';
+  return env.NODE_ENV === 'production' || env.VITE_APP_ENV === 'production';
 }
 
-function getSupabaseServiceRoleKey(): string {
-  return process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
+function getSupabaseUrl(env: ServerEnvironment = process.env): string {
+  if (isProductionEnvironment(env)) return env.SUPABASE_URL || '';
+  return env.SUPABASE_URL || env.VITE_SUPABASE_URL || '';
 }
 
-export const isRealSupabaseServerConfigured = () => {
-  const url = getSupabaseUrl();
-  const key = getSupabaseServiceRoleKey();
-  return (
-    /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(url) &&
-    Boolean(key) &&
-    !/(placeholder|mock|dummy|example|your[-_ ]|change[-_ ]?me)/i.test(key)
-  );
+function getSupabaseServiceRoleKey(env: ServerEnvironment = process.env): string {
+  if (isProductionEnvironment(env)) return env.SUPABASE_SERVICE_ROLE_KEY || '';
+  return env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SERVICE_KEY || '';
+}
+
+function hasUsableSecret(value: string): boolean {
+  return value.length >= 20 && value.trim() === value &&
+    !/(placeholder|mock|dummy|example|your[-_ ]|change[-_ ]?me)/i.test(value);
+}
+
+function isProductionServiceRoleKey(value: string): boolean {
+  if (!hasUsableSecret(value)) return false;
+  if (/^sb_secret_[A-Za-z0-9_-]{20,}$/.test(value)) return true;
+
+  const parts = value.split('.');
+  if (parts.length !== 3 || parts.some((part) => !part)) return false;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    return payload?.role === 'service_role';
+  } catch {
+    return false;
+  }
+}
+
+export type ProductionSupabaseConfigurationResult =
+  | { valid: true }
+  | { valid: false; reason: 'missing_url' | 'unexpected_project' | 'missing_service_role_key' | 'invalid_service_role_key' | 'legacy_service_key_forbidden' };
+
+/** Validation result contains only a reason code and never includes configuration values. */
+export function validateProductionSupabaseServerEnvironment(
+  env: ServerEnvironment,
+): ProductionSupabaseConfigurationResult {
+  if (!env.SUPABASE_URL) return { valid: false, reason: 'missing_url' };
+  const projectRef = getSupabaseProjectRef(env.SUPABASE_URL);
+  if (!projectRef || projectRef !== ENCRIX_PRODUCTION_SUPABASE_PROJECT_REF) {
+    return { valid: false, reason: 'unexpected_project' };
+  }
+  if (env.SUPABASE_SERVICE_KEY) return { valid: false, reason: 'legacy_service_key_forbidden' };
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) return { valid: false, reason: 'missing_service_role_key' };
+  if (!isProductionServiceRoleKey(env.SUPABASE_SERVICE_ROLE_KEY)) {
+    return { valid: false, reason: 'invalid_service_role_key' };
+  }
+  return { valid: true };
+}
+
+export const isRealSupabaseServerConfigured = (env: ServerEnvironment = process.env) => {
+  if (isProductionEnvironment(env)) {
+    const validation = validateProductionSupabaseServerEnvironment(env);
+    return validation.valid;
+  }
+
+  const url = getSupabaseUrl(env);
+  const key = getSupabaseServiceRoleKey(env);
+  return Boolean(getSupabaseProjectRef(url)) && hasUsableSecret(key);
 };
 
 export const getSupabaseServerClient = () => {
@@ -91,6 +142,24 @@ export async function authenticateServerRequest(req: any): Promise<AuthContext> 
 
     const supabase = getSupabaseServerClient();
     try {
+      if (!sessionPayload.sessionId) {
+        return { user: null, profile: null, error: 'Invalid or expired auth token' };
+      }
+      const { data: sessionRevoked, error: revocationError } = await supabase.rpc(
+        'is_server_session_revoked',
+        { p_session_id: sessionPayload.sessionId },
+      );
+      if (revocationError || typeof sessionRevoked !== 'boolean') {
+        return {
+          user: null,
+          profile: null,
+          error: 'Unable to verify the current account status',
+        };
+      }
+      if (sessionRevoked) {
+        return { user: null, profile: null, error: 'Invalid or expired auth token' };
+      }
+
       const { data: dbProfile, error: profError } = await supabase
         .from('profiles')
         .select('id, user_id, organization_id, full_name, role, status, phone_verified, email')

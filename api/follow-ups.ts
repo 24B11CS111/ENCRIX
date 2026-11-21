@@ -6,6 +6,7 @@ import {
 import { db } from '../src/services/supabase/db.js';
 import { sanitizeText } from '../src/lib/validation.js';
 import { formatMaskedPhone } from '../src/lib/phoneNormalization.js';
+import { requirePaidEntitlement } from './_lib/paidEntitlement.js';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -32,6 +33,7 @@ export default async function handler(req: any, res: any) {
     // GET: List Follow-Ups (Organization and Role scoped)
     // -------------------------------------------------------------------------
     if (req.method === 'GET') {
+      if (!await requirePaidEntitlement(res, profile)) return;
       if (isRealSupabaseServerConfigured()) {
         const supabase = getSupabaseServerClient();
         let query = supabase
@@ -169,6 +171,7 @@ export default async function handler(req: any, res: any) {
         if (profile.role === 'TELECALLER' && lead.assigned_to && lead.assigned_to !== profile.id) {
           return res.status(403).json({ error: 'Forbidden: You are not assigned to this lead.' });
         }
+        if (!await requirePaidEntitlement(res, profile, supabase)) return;
 
         // 2. Insert follow-up record
         const sanitizedNotes = notes ? sanitizeText(String(notes)) : '';
@@ -206,6 +209,7 @@ export default async function handler(req: any, res: any) {
       if (process.env.NODE_ENV === 'production') {
         return res.status(503).json({ error: 'Database service is unavailable. Cannot create follow-up.' });
       }
+      if (!await requirePaidEntitlement(res, profile)) return;
       const created = db.createFollowUp(
         {
           lead_id: leadId,
@@ -270,6 +274,7 @@ export default async function handler(req: any, res: any) {
             error: 'Forbidden: You can only update follow-ups assigned to you.',
           });
         }
+        if (!await requirePaidEntitlement(res, profile, supabase)) return;
 
         const now = new Date().toISOString();
         const updatePayload: Record<string, any> = {
@@ -326,6 +331,7 @@ export default async function handler(req: any, res: any) {
       if (process.env.NODE_ENV === 'production') {
         return res.status(503).json({ error: 'Database service is unavailable. Cannot update follow-up.' });
       }
+      if (!await requirePaidEntitlement(res, profile)) return;
       let updated: any = null;
       if (action === 'reschedule') {
         updated = db.rescheduleFollowUp(id, scheduledAt, reason, profile as any);

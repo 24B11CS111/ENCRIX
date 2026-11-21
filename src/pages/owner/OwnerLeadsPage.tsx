@@ -59,7 +59,7 @@ export const OwnerLeadsPage: React.FC = () => {
       const fetchedLeads = await leadService.getOwnerLeads(profile);
       setLeads(fetchedLeads);
     } catch {
-      setLeads(db.getLeads(profile));
+      setLeads([]);
     }
 
     try {
@@ -79,6 +79,7 @@ export const OwnerLeadsPage: React.FC = () => {
 
     const unsubscribe = db.subscribe(({ type }) => {
       if (
+        type === 'LEAD_REFRESH_REQUIRED' ||
         type === 'LEAD_CREATED' ||
         type === 'LEAD_UPDATED' ||
         type === 'LEADS_IMPORTED' ||

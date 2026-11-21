@@ -1,17 +1,22 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+﻿import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import followUpsHandler from '../../api/follow-ups';
 import ownerLeadsHandler from '../../api/_lib/leads/owner';
 import leadDetailHandler from '../../api/_lib/leads/detail';
-import teamHandler from '../../api/auth/team';
+import teamHandler from '../../api/_lib/authHandlers/team';
 import voiceHandler from '../../api/telephony/voice';
 import telephonyCallHandler from '../../api/telephony/call';
 import webhookHandler from '../../api/telephony/webhook';
-import sessionHandler from '../../api/auth/session';
+import sessionHandler from '../../api/_lib/authHandlers/session';
 import * as twilioServerModule from '../../api/_lib/twilioServer';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
 import { realtimeManager } from '../../src/services/realtime/realtimeManager';
 import { db } from '../../src/services/supabase/db';
 import { Profile } from '../../src/types';
+
+vi.mock('../../api/_lib/paidEntitlement.js', () => ({
+  requirePaidEntitlement: vi.fn(async () => true),
+  checkPaidEntitlement: vi.fn(async () => ({ allowed: true })),
+}));
 
 function createMockReqRes(options: {
   method?: string;
@@ -216,7 +221,18 @@ describe('ENCRIX Phase 35: Live Integration Readiness & Deployment Audit', () =>
   // 2. Session Revocation & Logout
   // =========================================================================
   describe('2. Session Revocation & Logout', () => {
-    it('revokes session token via DELETE /api/auth/session and rejects subsequent requests', async () => {
+    it('rejects unauthenticated and malformed logout requests without revoking arbitrary tokens', async () => {
+      const { req, res } = createMockReqRes({
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer attacker-controlled-token' },
+      });
+
+      await sessionHandler(req, res);
+      expect(res.statusCode).toBe(401);
+      expect(res.body?.success).toBe(false);
+    });
+
+    it('revokes session token via DELETE /api/_lib/authHandlers/session and rejects subsequent requests', async () => {
       const ephemeralToken = createSignedSessionToken({
         userId: 'temp-user-id',
         profileId: 'temp-prof-id',
@@ -253,7 +269,7 @@ describe('ENCRIX Phase 35: Live Integration Readiness & Deployment Audit', () =>
   // 3. Telephony Webhook Security
   // =========================================================================
   describe('3. Telephony Webhook Security', () => {
-    it('voice webhook rejects requests with missing or invalid Twilio signature with 401', async () => {
+    it('voice webhook fails closed when server-side Supabase routing state is unavailable', async () => {
       const { req, res } = createMockReqRes({
         method: 'POST',
         url: '/api/telephony/voice',
@@ -267,11 +283,11 @@ describe('ENCRIX Phase 35: Live Integration Readiness & Deployment Audit', () =>
 
       await voiceHandler(req, res);
 
-      expect(res.statusCode).toBe(401);
-      expect(res.body).toMatch(/Unauthorized/i);
+      expect(res.statusCode).toBe(503);
+      expect(res.body).toMatch(/Call routing unavailable/i);
     });
 
-    it('rejects status callback with invalid duration characters', async () => {
+    it('rejects an unscoped legacy status callback before parsing provider event fields', async () => {
       vi.spyOn(twilioServerModule, 'verifyTwilioSignature').mockReturnValue(true);
 
       const { req, res } = createMockReqRes({
@@ -289,8 +305,8 @@ describe('ENCRIX Phase 35: Live Integration Readiness & Deployment Audit', () =>
 
       await webhookHandler(req, res);
 
-      expect(res.statusCode).toBe(400);
-      expect(res.body?.error).toMatch(/Invalid webhook/i);
+      expect(res.statusCode).toBe(503);
+      expect(res.body?.error).toMatch(/Webhook processing unavailable/i);
     });
   });
 
@@ -298,11 +314,8 @@ describe('ENCRIX Phase 35: Live Integration Readiness & Deployment Audit', () =>
   // 4. Realtime Connection Manager Lifecycle
   // =========================================================================
   describe('4. Realtime Connection Manager Lifecycle', () => {
-    it('manages organization context and cleans up listeners without residual timers', () => {
-      realtimeManager.setOrganization(orgA);
-      expect(realtimeManager.getStatus()).toBe('RECONNECTING');
-
-      realtimeManager.setStatus('LIVE');
+    it('does not accept client-supplied organization context and cleans up on logout', () => {
+      realtimeManager.cleanup();
       expect(realtimeManager.getStatus()).toBe('LIVE');
 
       const spy = vi.fn();

@@ -16,6 +16,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { sanitizeFormulaInjection, sanitizeText } from '@/lib/validation';
 import { MAX_IMPORT_ROWS, MAX_IMPORT_FILE_SIZE_BYTES } from '@/lib/config';
+import { isLiveApiMode } from '@/services/auth/authService';
+import { leadService } from '@/services/leads/leadService';
 
 export const LeadImportWizard: React.FC = () => {
   const { profile } = useAuth();
@@ -39,6 +41,8 @@ export const LeadImportWizard: React.FC = () => {
 
   const [isImporting, setIsImporting] = useState(false);
   const [distributionResult, setDistributionResult] = useState<DistributionResult | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importBatchId, setImportBatchId] = useState<string | null>(null);
 
   // STEP 1: Handle File Upload & Parse
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -51,6 +55,8 @@ export const LeadImportWizard: React.FC = () => {
     }
 
     setFileName(file.name);
+    setImportBatchId(null);
+    setImportError(null);
 
     Papa.parse(file, {
       header: true,
@@ -95,6 +101,8 @@ export const LeadImportWizard: React.FC = () => {
 
   // Preload Sample CSV for instant evaluation
   const handleLoadSample = () => {
+    setImportBatchId(null);
+    setImportError(null);
     const sampleCsv = `full_name,mobile,email,source,priority,requirement
 Vikash Singhania,+91 9845012340,vikash.s@example.com,Google Ads,HIGH,MS Computer Science USA Fall
 Deepika Padukone,+91 9845012341,deepika.p@example.com,Website,URGENT,MBA INSEAD France
@@ -153,7 +161,8 @@ Rahul Dravid,+91 9845012340,rahul.d@duplicate.com,Referral,HIGH,Duplicate phone 
       const rawNotes = notesCol ? row[notesCol] : '';
 
       const name = sanitizeFormulaInjection(sanitizeText(rawName || ''));
-      const phone = sanitizeFormulaInjection(sanitizeText(rawPhone || ''));
+      // A leading plus is a valid international dialing prefix; keep it intact.
+      const phone = sanitizeText(rawPhone || '').replace(/^'(?=\+)/, '');
       const email = sanitizeFormulaInjection(sanitizeText(rawEmail || ''));
       const source = sanitizeFormulaInjection(sanitizeText(rawSource || 'CSV Import'));
       const notes = sanitizeFormulaInjection(sanitizeText(rawNotes || ''));
@@ -208,6 +217,10 @@ Rahul Dravid,+91 9845012340,rahul.d@duplicate.com,Referral,HIGH,Duplicate phone 
       duplicateRows: duplicateCount,
       invalidRows: invalidCount,
     });
+    // A changed file or mapping is a new import identity. Retries from step 3
+    // retain the identity, making already committed chunks idempotent.
+    setImportBatchId(null);
+    setImportError(null);
 
     setStep(3);
   };
@@ -216,31 +229,121 @@ Rahul Dravid,+91 9845012340,rahul.d@duplicate.com,Referral,HIGH,Duplicate phone 
   const handleConfirmImport = async () => {
     if (!profile) return;
     setIsImporting(true);
+    setImportError(null);
+    let importedCount = 0;
+    const duplicateIndexes = new Set<number>();
+    const rejectedByIndex = new Map<number, string>();
+    parsedRows.filter((row) => !row.isValid).forEach((row) => {
+      if (row.isDuplicate) duplicateIndexes.add(row.rowIndex || 0);
+      else rejectedByIndex.set(row.rowIndex || 0, row.validationErrors[0] || 'Invalid lead row');
+    });
 
     try {
-      const validLeadsToInsert = parsedRows
-        .filter((r) => r.isValid)
-        .map((r) => ({
-          name: r.name,
-          phone: r.phone,
-          email: r.email,
-          source: r.source,
-          priority: r.priority,
-          notes: r.notes,
+      if (isLiveApiMode()) {
+        const activeImportId = importBatchId || crypto.randomUUID();
+        if (!importBatchId) setImportBatchId(activeImportId);
+        const requestRows = parsedRows.map((row) => ({
+          rowIndex: row.rowIndex || 0,
+          name: row.name,
+          phone: row.phone,
+          email: row.email,
+          source: row.source,
+          priority: row.priority,
+          notes: row.notes,
         }));
 
-      const res = db.importLeads(validLeadsToInsert, profile);
-      if (res.distribution) {
-        setDistributionResult(res.distribution);
+        // Keep each request comfortably below the serverless request-body limit.
+        const batches: typeof requestRows[] = [];
+        let batch: typeof requestRows = [];
+        let batchBytes = 0;
+        for (const row of requestRows) {
+          const rowBytes = new TextEncoder().encode(JSON.stringify(row)).byteLength;
+          if (batch.length && (batch.length >= 100 || batchBytes + rowBytes > 350_000)) {
+            batches.push(batch);
+            batch = [];
+            batchBytes = 0;
+          }
+          if (rowBytes > 350_000) {
+            rejectedByIndex.set(row.rowIndex, 'Row exceeds the safe import request size.');
+            continue;
+          }
+          batch.push(row);
+          batchBytes += rowBytes;
+        }
+        if (batch.length) batches.push(batch);
+
+        let distribution: DistributionResult | null = null;
+
+        for (const rows of batches) {
+          const result = await leadService.importOwnerLeads(rows, activeImportId, profile);
+          importedCount += result.importedCount;
+          result.duplicateRowIndexes.forEach((index) => duplicateIndexes.add(index));
+          result.rejectedRows.forEach((row) => rejectedByIndex.set(row.rowIndex, row.reason));
+          if (result.distribution) {
+            distribution = mergeDistributionResults(distribution, result.distribution);
+          }
+          setSummary((current) => ({
+            ...current,
+            validRows: importedCount,
+            duplicateRows: duplicateIndexes.size,
+            invalidRows: rejectedByIndex.size,
+          }));
+        }
+        setParsedRows((current) => current.map((row) => {
+          const index = row.rowIndex || 0;
+          if (duplicateIndexes.has(index)) return { ...row, isValid: false, isDuplicate: true, validationErrors: ['Duplicate phone in this organization'] };
+          const reason = rejectedByIndex.get(index);
+          if (reason) return { ...row, isValid: false, validationErrors: [reason] };
+          return row;
+        }));
+        setSummary((current) => ({
+          ...current,
+          validRows: importedCount,
+          duplicateRows: duplicateIndexes.size,
+          invalidRows: rejectedByIndex.size,
+        }));
+        setDistributionResult(distribution);
       } else {
-        setDistributionResult(null);
+        const validLeadsToInsert = parsedRows
+          .filter((row) => row.isValid)
+          .map((row) => ({
+            name: row.name,
+            phone: row.phone,
+            email: row.email,
+            source: row.source,
+            priority: row.priority,
+            notes: row.notes,
+          }));
+        const result = db.importLeads(validLeadsToInsert, profile);
+        setSummary((current) => ({ ...current, validRows: result.imported }));
+        setDistributionResult(result.distribution || null);
       }
       setStep(4);
     } catch (err) {
-      console.error('Import error:', err);
+      const message = err instanceof Error ? err.message : 'Import failed. Retry to continue safely.';
+      setImportError(`${message} ${importedCount} rows are confirmed saved; rejected and duplicate totals are shown below. Retry the same batch to reconcile any timed-out chunk safely.`);
     } finally {
       setIsImporting(false);
     }
+  };
+
+  const mergeDistributionResults = (
+    current: DistributionResult | null,
+    next: DistributionResult,
+  ): DistributionResult => {
+    if (!current) return next;
+    const assignments = { ...current.assignments };
+    Object.entries(next.assignments).forEach(([id, count]) => {
+      assignments[id] = (assignments[id] || 0) + count;
+    });
+    return {
+      ...next,
+      success: current.success || next.success,
+      total_requested: current.total_requested + next.total_requested,
+      assigned_count: current.assigned_count + next.assigned_count,
+      unassigned_count: current.unassigned_count + next.unassigned_count,
+      assignments,
+    };
   };
 
   return (
@@ -474,12 +577,13 @@ Rahul Dravid,+91 9845012340,rahul.d@duplicate.com,Referral,HIGH,Duplicate phone 
             </button>
             <button
               onClick={handleConfirmImport}
-              disabled={isImporting || summary.validRows === 0}
+              disabled={isImporting || !parsedRows.some((row) => row.isValid)}
               className="px-6 py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] disabled:opacity-40 text-white text-xs font-semibold rounded-[10px] shadow-subtle transition-all"
             >
-              {isImporting ? 'Ingesting Leads...' : `Confirm & Ingest ${summary.validRows} Leads`}
+              {isImporting ? 'Ingesting Leads...' : `Confirm & Ingest ${parsedRows.filter((row) => row.isValid).length} Leads`}
             </button>
           </div>
+          {importError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">{importError} Imported rows are safe to retry; already-imported rows in this batch will not be inserted twice.</p>}
         </div>
       )}
 
@@ -492,6 +596,9 @@ Rahul Dravid,+91 9845012340,rahul.d@duplicate.com,Referral,HIGH,Duplicate phone 
           <h2 className="text-xl font-bold text-[#0B1F3A]">Import Successfully Completed!</h2>
           <p className="text-xs text-[#64748B] max-w-md mx-auto">
             <strong className="text-[#16845B]">{summary.validRows} leads</strong> have been persisted.
+          </p>
+          <p className="text-xs text-[#64748B]" aria-live="polite">
+            {summary.duplicateRows} duplicate rows skipped · {summary.invalidRows} invalid rows rejected
           </p>
 
           {/* Smart Distribution Result Card */}

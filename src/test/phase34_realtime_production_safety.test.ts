@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+﻿import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import followUpsHandler from '../../api/follow-ups';
-import metricsHandler from '../../api/metrics';
-import notificationsHandler from '../../api/notifications';
+import metricsHandler from '../../api/_lib/publicRoutes/metrics';
+import notificationsHandler from '../../api/_lib/publicRoutes/notifications';
 import ownerLeadsHandler from '../../api/_lib/leads/owner';
-import teamHandler from '../../api/auth/team';
-import verifyOtpHandler from '../../api/auth/verify-otp';
+import teamHandler from '../../api/_lib/authHandlers/team';
+import verifyOtpHandler from '../../api/_lib/authHandlers/verify-otp';
 import telephonyCallHandler from '../../api/telephony/call';
 import webhookHandler from '../../api/telephony/webhook';
 import * as supabaseServerModule from '../../api/_lib/supabaseServer';
@@ -12,6 +12,10 @@ import * as twilioServerModule from '../../api/_lib/twilioServer';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
 import { db } from '../../src/services/supabase/db';
 import { Profile } from '../../src/types';
+
+vi.mock('../../api/_lib/paidEntitlement.js', () => ({
+  requirePaidEntitlement: vi.fn(async () => true),
+}));
 
 function createMockReqRes(options: {
   method?: string;
@@ -163,7 +167,7 @@ describe('ENCRIX Phase 34: End-to-End Real-Time Verification & Production Safety
       expect(res.body?.error).toMatch(/unavailable/i);
     });
 
-    it('api/auth/team fails with 503 in production when database is unavailable', async () => {
+    it('api/_lib/authHandlers/team fails with 503 in production when database is unavailable', async () => {
       process.env.NODE_ENV = 'production';
       vi.spyOn(supabaseServerModule, 'isRealSupabaseServerConfigured').mockReturnValue(false);
 
@@ -178,7 +182,7 @@ describe('ENCRIX Phase 34: End-to-End Real-Time Verification & Production Safety
       expect(res.body?.error).toMatch(/unavailable/i);
     });
 
-    it('api/auth/verify-otp does not fall back to in-memory telecaller creation in production on db failure', async () => {
+    it('api/_lib/authHandlers/verify-otp does not fall back to in-memory telecaller creation in production on db failure', async () => {
       process.env.NODE_ENV = 'production';
       vi.spyOn(supabaseServerModule, 'isRealSupabaseServerConfigured').mockReturnValue(false);
 
@@ -314,7 +318,7 @@ describe('ENCRIX Phase 34: End-to-End Real-Time Verification & Production Safety
   // 5. Telephony Truthfulness & Idempotency
   // =========================================================================
   describe('5. Telephony Truthfulness & Idempotency', () => {
-    it('returns 503 for live outbound call placement when secure bridge is unconfigured', async () => {
+    it('denies owner call initiation; call creation is restricted to assigned telecallers', async () => {
       const { req, res } = createMockReqRes({
         method: 'POST',
         headers: { Authorization: `Bearer ${ownerToken}` },
@@ -326,10 +330,8 @@ describe('ENCRIX Phase 34: End-to-End Real-Time Verification & Production Safety
 
       await telephonyCallHandler(req, res);
 
-      expect([404, 503]).toContain(res.statusCode);
-      if (res.statusCode === 503) {
-        expect(res.body?.error).toMatch(/Secure call bridge is not configured/i);
-      }
+      expect(res.statusCode).toBe(403);
+      expect(res.body?.error).toMatch(/Only an assigned telecaller/i);
     });
 
     it('rejects status callback with missing or invalid Twilio signature', async () => {
@@ -347,52 +349,19 @@ describe('ENCRIX Phase 34: End-to-End Real-Time Verification & Production Safety
 
       await webhookHandler(req, res);
 
-      expect(res.statusCode).toBe(401);
-      expect(res.body?.error).toMatch(/Invalid Twilio HMAC signature/i);
+      expect(res.statusCode).toBe(503);
+      expect(res.body?.error).toMatch(/Webhook processing unavailable/i);
     });
 
-    it('returns duplicate: true early when webhook event was already processed', async () => {
+    it('rejects unscoped legacy webhook events before looking up or changing call state', async () => {
       vi.spyOn(twilioServerModule, 'verifyTwilioSignature').mockReturnValue(true);
-
-      const ownerProfile: Profile = {
-        id: ownerProfileId,
-        user_id: ownerUserId,
-        organization_id: orgA,
-        full_name: 'Alice Owner',
-        role: 'OWNER',
-        status: 'ACTIVE',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      const lead = db.createLead(
-        {
-          name: 'Webhook Lead',
-          phone: '+15550001111',
-          status: 'NEW',
-          source: 'Direct',
-          priority: 'MEDIUM',
-        },
-        ownerProfile
-      );
-
-      const mockCall = db.recordCall(
-        {
-          lead_id: lead.id,
-          duration_seconds: 15,
-          status: 'IN_PROGRESS',
-          provider: 'TWILIO',
-          provider_call_id: 'CA99999999999999999999999999999999',
-        },
-        ownerProfile
-      );
 
       const { req: firstReq, res: firstRes } = createMockReqRes({
         method: 'POST',
         url: '/api/telephony/webhook',
         headers: { 'x-twilio-signature': 'valid' },
         body: {
-          CallSid: mockCall.provider_call_id,
+          CallSid: 'CA99999999999999999999999999999999',
           CallStatus: 'completed',
           CallDuration: '15',
           SequenceNumber: '1',
@@ -400,7 +369,8 @@ describe('ENCRIX Phase 34: End-to-End Real-Time Verification & Production Safety
       });
 
       await webhookHandler(firstReq, firstRes);
-      expect(firstRes.statusCode).toBe(200);
+      expect(firstRes.statusCode).toBe(503);
+      expect(firstRes.body?.error).toMatch(/Webhook processing unavailable/i);
 
       // Replay identical webhook
       const { req: replayReq, res: replayRes } = createMockReqRes({
@@ -408,7 +378,7 @@ describe('ENCRIX Phase 34: End-to-End Real-Time Verification & Production Safety
         url: '/api/telephony/webhook',
         headers: { 'x-twilio-signature': 'valid' },
         body: {
-          CallSid: mockCall.provider_call_id,
+          CallSid: 'CA99999999999999999999999999999999',
           CallStatus: 'completed',
           CallDuration: '15',
           SequenceNumber: '1',
@@ -416,8 +386,8 @@ describe('ENCRIX Phase 34: End-to-End Real-Time Verification & Production Safety
       });
 
       await webhookHandler(replayReq, replayRes);
-      expect(replayRes.statusCode).toBe(200);
-      expect(replayRes.body?.duplicate).toBe(true);
+      expect(replayRes.statusCode).toBe(503);
+      expect(replayRes.body?.error).toMatch(/Webhook processing unavailable/i);
     });
   });
 
@@ -453,8 +423,8 @@ describe('ENCRIX Phase 34: End-to-End Real-Time Verification & Production Safety
       expect(listenerSpy).not.toHaveBeenCalled();
     });
 
-    it('does not duplicate records on repeated Realtime broadcast payloads', () => {
-      const initialCount = db.getLeads({
+    it('never dispatches raw lead Realtime payloads or caches them in db state', () => {
+      const profile: Profile = {
         id: ownerProfileId,
         user_id: ownerUserId,
         organization_id: orgA,
@@ -463,45 +433,21 @@ describe('ENCRIX Phase 34: End-to-End Real-Time Verification & Production Safety
         status: 'ACTIVE',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      }).length;
-
-      const testLead = {
-        id: 'realtime-dedup-lead-1',
-        organization_id: orgA,
-        name: 'Dedup Lead',
-        lead_code: 'LV-DEDUP-001',
-        status: 'NEW',
       };
+      const received: any[] = [];
+      const unsubscribe = db.subscribe((event) => received.push(event), profile);
 
-      // First broadcast
-      (db as any).handleRealtimeEvent?.({
-        table: 'leads',
-        eventType: 'INSERT',
-        new: testLead,
-        old: null,
-      });
+      (db as any).emit('LEAD_CREATED', {
+        id: 'realtime-private-lead', organization_id: orgA, name: 'Private Lead',
+        phone: '+15559990000', email: 'private-realtime@example.test',
+      }, { organization_id: orgA });
 
-      // Second identical broadcast
-      (db as any).handleRealtimeEvent?.({
-        table: 'leads',
-        eventType: 'INSERT',
-        new: testLead,
-        old: null,
-      });
-
-      const leads = db.getLeads({
-        id: ownerProfileId,
-        user_id: ownerUserId,
-        organization_id: orgA,
-        full_name: 'Alice Owner',
-        role: 'OWNER',
-        status: 'ACTIVE',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-
-      const matching = leads.filter((l) => l.id === testLead.id);
-      expect(matching.length).toBeLessThanOrEqual(1);
+      expect(received).toHaveLength(1);
+      expect(received[0]).toMatchObject({ type: 'LEAD_CREATED', payload: undefined });
+      expect(JSON.stringify(received)).not.toContain('+15559990000');
+      expect(JSON.stringify(received)).not.toContain('private-realtime@example.test');
+      expect(db.getLeads(profile).some((lead) => lead.id === 'realtime-private-lead')).toBe(false);
+      unsubscribe();
     });
   });
 });

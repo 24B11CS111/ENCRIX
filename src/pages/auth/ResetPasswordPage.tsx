@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Shield, Lock, CheckCircle2 } from 'lucide-react';
+import { supabase } from '@/services/supabase/client';
 
 export const ResetPasswordPage: React.FC = () => {
   const navigate = useNavigate();
@@ -8,8 +9,9 @@ export const ResetPasswordPage: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (password !== confirmPassword) {
       setError('Passwords do not match');
@@ -19,8 +21,26 @@ export const ResetPasswordPage: React.FC = () => {
       setError('Password must be at least 8 characters');
       return;
     }
-    setSuccess(true);
-    setTimeout(() => navigate('/login'), 2000);
+    setSubmitting(true);
+    setError(null);
+    try {
+      const { error: updateError } = await supabase.auth.updateUser({ password });
+      if (updateError) {
+        setError('This recovery link is invalid or expired. Request a new reset link and try again.');
+        return;
+      }
+
+      const { error: signOutError } = await supabase.auth.signOut({ scope: 'global' });
+      setSuccess(true);
+      if (signOutError) {
+        setError('Your password was updated. Sign in again; other sessions may take a short time to expire.');
+      }
+      setTimeout(() => navigate('/login'), 2500);
+    } catch {
+      setError('Password reset is temporarily unavailable. Request a new reset link and try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -53,15 +73,17 @@ export const ResetPasswordPage: React.FC = () => {
             <div className="p-4 rounded-[10px] bg-[#EAF7EE] border border-[#C3EBD0] text-center space-y-2">
               <CheckCircle2 className="w-8 h-8 text-[#16845B] mx-auto" />
               <div className="text-sm font-bold text-[#0B1F3A]">Password updated!</div>
-              <p className="text-xs text-[#172B4D]">Redirecting you to login...</p>
+              <p className="text-xs text-[#172B4D]">Your password has been updated. Redirecting you to login...</p>
+              {error && <p role="status" className="text-xs text-amber-700">{error}</p>}
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="text-xs font-semibold text-[#172B4D] block mb-1">New Password</label>
+                <label htmlFor="new-password" className="text-xs font-semibold text-[#172B4D] block mb-1">New Password</label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-[#64748B] absolute left-3 top-2.5" />
                   <input
+                    id="new-password"
                     type="password"
                     required
                     value={password}
@@ -72,10 +94,11 @@ export const ResetPasswordPage: React.FC = () => {
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-[#172B4D] block mb-1">Confirm New Password</label>
+                <label htmlFor="confirm-new-password" className="text-xs font-semibold text-[#172B4D] block mb-1">Confirm New Password</label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-[#64748B] absolute left-3 top-2.5" />
                   <input
+                    id="confirm-new-password"
                     type="password"
                     required
                     value={confirmPassword}
@@ -89,7 +112,7 @@ export const ResetPasswordPage: React.FC = () => {
                 type="submit"
                 className="w-full py-2.5 bg-[#0B1F3A] hover:bg-[#071A33] text-white font-semibold text-xs rounded-[10px] shadow-subtle transition-all"
               >
-                Update Password
+                {submitting ? 'Updating…' : 'Update Password'}
               </button>
             </form>
           )}

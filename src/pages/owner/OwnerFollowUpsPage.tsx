@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
 import { followUpService } from '@/services/followUps/followUpService';
+import { leadService } from '@/services/leads/leadService';
 import { FollowUp, Profile, Lead } from '@/types';
 import { formatDateTime, formatRelativeTime } from '@/lib/utils';
 import {
@@ -55,14 +56,30 @@ export const OwnerFollowUpsPage: React.FC = () => {
 
   const loadData = async () => {
     if (!profile) return;
+    let currentFollowUps: FollowUp[] = [];
     try {
       const serverFollowUps = await followUpService.getFollowUps(profile);
       setFollowUps(serverFollowUps);
+      currentFollowUps = serverFollowUps;
     } catch {
-      setFollowUps(db.getFollowUps(profile));
+      currentFollowUps = db.getFollowUps(profile);
+      setFollowUps(currentFollowUps);
     }
     setTelecallers(db.getEligibleTelecallers(profile));
-    setLeadsWithoutAction(db.getLeadsWithoutNextAction(profile));
+    try {
+      const leads = await leadService.getOwnerLeads(profile);
+      const activeLeadIds = new Set(
+        currentFollowUps
+          .filter((item) => ['SCHEDULED', 'PENDING', 'DUE', 'OVERDUE'].includes(item.status))
+          .map((item) => item.lead_id)
+      );
+      setLeadsWithoutAction(leads.filter((lead) =>
+        !['CONVERTED', 'NOT_INTERESTED', 'INVALID', 'DO_NOT_CONTACT'].includes(lead.status) &&
+        !activeLeadIds.has(lead.id)
+      ));
+    } catch {
+      setLeadsWithoutAction([]);
+    }
   };
 
   useEffect(() => {
@@ -70,6 +87,7 @@ export const OwnerFollowUpsPage: React.FC = () => {
 
     const unsubscribe = db.subscribe(({ type }) => {
       if (
+        type === 'LEAD_REFRESH_REQUIRED' ||
         type === 'FOLLOWUP_CREATED' ||
         type === 'FOLLOWUP_UPDATED' ||
         type === 'CALL_OUTCOME_SAVED' ||

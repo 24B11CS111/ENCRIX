@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
 import { followUpService } from '@/services/followUps/followUpService';
+import { leadService } from '@/services/leads/leadService';
 import { FollowUp, Lead, LeadPriority } from '@/types';
 import { formatDateTime, formatRelativeTime } from '@/lib/utils';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
@@ -74,7 +75,11 @@ export const TelecallerFollowUpsPage: React.FC = () => {
     } catch {
       setFollowUps(db.getFollowUps(profile));
     }
-    setLeads(db.getLeads(profile));
+    try {
+      setLeads(await leadService.getAssignedTelecallerLeads(profile));
+    } catch {
+      setLeads([]);
+    }
   };
 
   useEffect(() => {
@@ -82,6 +87,7 @@ export const TelecallerFollowUpsPage: React.FC = () => {
 
     const unsubscribe = db.subscribe(({ type }) => {
       if (
+        type === 'LEAD_REFRESH_REQUIRED' ||
         type === 'FOLLOWUP_CREATED' ||
         type === 'FOLLOWUP_UPDATED' ||
         type === 'CALL_OUTCOME_SAVED' ||

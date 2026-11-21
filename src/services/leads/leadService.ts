@@ -1,4 +1,4 @@
-import { Lead, LeadStatus, Profile, StudentDetails } from '@/types';
+import { DistributionResult, Lead, LeadStatus, Profile, StudentDetails } from '@/types';
 import { isLiveApiMode, authService } from '@/services/auth/authService';
 import { db } from '@/services/supabase/db';
 import { IS_DEMO_MODE } from '@/lib/config';
@@ -224,6 +224,60 @@ export class LeadService {
     }
 
     return db.assignLeads(leadIds, telecallerId, currentProfile);
+  }
+
+  /** Persists an owner CSV import through the authenticated server boundary. */
+  public async importOwnerLeads(
+    rows: Array<{
+      rowIndex: number;
+      name: string;
+      phone: string;
+      email?: string;
+      source?: string;
+      priority?: Lead['priority'];
+      notes?: string;
+    }>,
+    importId: string,
+    currentProfile: Profile,
+  ): Promise<{
+    importedCount: number;
+    duplicateRowIndexes: number[];
+    rejectedRows: Array<{ rowIndex: number; reason: string }>;
+    distribution: DistributionResult | null;
+  }> {
+    if (!currentProfile || !['OWNER', 'ADMIN'].includes(currentProfile.role) || currentProfile.status !== 'ACTIVE') {
+      throw new Error('Only active owners or administrators can import leads.');
+    }
+    if (!isLiveApiMode()) throw new Error('Live lead import is unavailable in demo mode.');
+
+    const token = authService.getSessionToken();
+    if (!token) throw new Error('Your session has expired. Please sign in again.');
+
+    const response = await fetch('/api/leads/owner', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ action: 'import', importId, rows }),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok || !body?.success) {
+      throw new Error(body?.error || 'Lead import could not be saved. Retry the import to continue safely.');
+    }
+    if (
+      !Number.isInteger(body.importedCount) ||
+      !Array.isArray(body.duplicateRowIndexes) ||
+      !Array.isArray(body.rejectedRows)
+    ) {
+      throw new Error('Lead import response was invalid. Retry the import to continue safely.');
+    }
+    return {
+      importedCount: body.importedCount,
+      duplicateRowIndexes: body.duplicateRowIndexes,
+      rejectedRows: body.rejectedRows,
+      distribution: body.distribution || null,
+    };
   }
 }
 

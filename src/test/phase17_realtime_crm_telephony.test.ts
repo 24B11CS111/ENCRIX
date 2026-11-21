@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+﻿import { describe, it, expect, beforeEach } from 'vitest';
 import crypto from 'crypto';
 import {
   createSignedSessionToken,
@@ -10,7 +10,7 @@ import { verifyTwilioSignature } from '../../api/_lib/twilioServer';
 import callHandler from '../../api/telephony/call';
 import webhookHandler from '../../api/telephony/webhook';
 import recordingHandler from '../../api/telephony/recording';
-import sessionHandler from '../../api/auth/session';
+import sessionHandler from '../../api/_lib/authHandlers/session';
 import { db } from '@/services/supabase/db';
 import { recordingService } from '@/services/telephony/recordingService';
 import { realtimeManager } from '@/services/realtime/realtimeManager';
@@ -216,8 +216,13 @@ describe('ENCRIX Phase 17: Real-Time Telecalling CRM & Production Telephony', ()
       expect(verifySignedSessionToken(token)).toBeNull();
     });
 
+    it('does not retain arbitrary invalid tokens in the local revocation cache', () => {
+      expect(revokeSession('attacker-controlled-token')).toBeNull();
+      expect(isSessionRevoked('attacker-controlled-token')).toBe(false);
+    });
+
     it('rejects unauthenticated requests or client-spoofed localStorage without valid server token', async () => {
-      // Client calls /api/auth/session with no authorization header
+      // Client calls /api/_lib/authHandlers/session with no authorization header
       const { req, res } = createMockReqRes({
         method: 'GET',
         headers: {},
@@ -286,8 +291,8 @@ describe('ENCRIX Phase 17: Real-Time Telecalling CRM & Production Telephony', ()
       });
 
       await callHandler(req, res);
-      expect(res.statusCode).toBe(400);
-      expect(res.body.error).toMatch(/leadId is required/i);
+      expect(res.statusCode).toBe(403);
+      expect(res.body.error).toMatch(/Only an assigned telecaller/i);
     });
 
     it('rejects call dispatch if caller account is suspended or inactive', async () => {
@@ -347,8 +352,8 @@ describe('ENCRIX Phase 17: Real-Time Telecalling CRM & Production Telephony', ()
       });
 
       await webhookHandler(req, res);
-      expect(res.statusCode).toBe(401);
-      expect(res.body.error).toMatch(/invalid twilio hmac signature/i);
+      expect(res.statusCode).toBe(503);
+      expect(res.body.error).toMatch(/webhook processing unavailable/i);
     }, 10000);
 
     it('verifies valid HMAC-SHA1 signature using timing-safe comparison', () => {
@@ -487,11 +492,12 @@ describe('ENCRIX Phase 17: Real-Time Telecalling CRM & Production Telephony', ()
     });
 
     it('sanitizes real-time lead updates before broadcasting to telecallers', () => {
-      let receivedLeadPhone: string | undefined = '';
+      let receivedLeadEvent = false;
+      let receivedPayload: unknown = null;
       const unsubscribe = db.subscribe(({ type, payload }) => {
         if (type === 'LEAD_UPDATED') {
-          const lead = payload as Lead;
-          receivedLeadPhone = lead.phone;
+          receivedLeadEvent = true;
+          receivedPayload = payload;
         }
       }, telecallerA1);
 
@@ -500,7 +506,8 @@ describe('ENCRIX Phase 17: Real-Time Telecalling CRM & Production Telephony', ()
       const targetLead = leads.find((l) => l.assigned_to === telecallerA1.id);
       if (targetLead) {
         db.updateLead(targetLead.id, { notes: 'Updated notes' }, ownerA);
-        expect(receivedLeadPhone).toBeUndefined();
+        expect(receivedLeadEvent).toBe(true);
+        expect(receivedPayload).toBeUndefined();
       }
 
       unsubscribe();

@@ -1,5 +1,10 @@
 import crypto from 'node:crypto';
-import { BILLING_PLAN_CODES, BILLING_PLAN_DRAFTS, type BillingPlanCode } from './billingPlans.js';
+import {
+  BILLING_PLAN_CODES,
+  BILLING_PLAN_DRAFTS,
+  type BillingInterval,
+  type BillingPlanCode,
+} from './billingPlans.js';
 
 const PLACEHOLDER_MARKERS = ['placeholder', 'your-', 'replace-me', 'changeme'];
 
@@ -20,7 +25,7 @@ export function getRazorpayTestConfiguration(
   const keyId = env.RAZORPAY_KEY_ID;
   const keySecret = env.RAZORPAY_KEY_SECRET;
   const webhookSecret = env.RAZORPAY_WEBHOOK_SECRET;
-  if (!keyId?.startsWith('rzp_test_') || !isUsableSecret(keySecret)) return null;
+  if (!keyId || !/^rzp_test_[A-Za-z0-9]+$/.test(keyId) || !isUsableSecret(keyId) || !isUsableSecret(keySecret)) return null;
   if (requireWebhookSecret && !isUsableSecret(webhookSecret)) return null;
   return { keyId, keySecret, ...(isUsableSecret(webhookSecret) ? { webhookSecret } : {}) };
 }
@@ -29,7 +34,57 @@ export interface ConfiguredBillingPlan {
   code: BillingPlanCode;
   planId: string;
   amountPaise: number;
+  currency: 'INR';
+  period: BillingInterval;
+  interval: number;
   totalCount: number;
+}
+
+/**
+ * Builds the expected provider configuration without making a plan purchasable.
+ * RAZORPAY_SUBSCRIPTION_TOTAL_COUNT counts charges using the plan period; for a
+ * yearly plan, each count is one year. There is intentionally no default: the
+ * test environment must choose this value deliberately before checkout is enabled.
+ */
+export function getExpectedRazorpayPlan(
+  code: unknown,
+  env: NodeJS.ProcessEnv = process.env,
+): ConfiguredBillingPlan | null {
+  if (typeof code !== 'string' || !BILLING_PLAN_CODES.includes(code as BillingPlanCode)) return null;
+  const draft = BILLING_PLAN_DRAFTS[code as BillingPlanCode];
+  const planId = env[`RAZORPAY_PLAN_${code.toUpperCase()}`];
+  const configuredTotalCount = env.RAZORPAY_SUBSCRIPTION_TOTAL_COUNT?.trim();
+  const totalCount = configuredTotalCount && /^[1-9]\d*$/.test(configuredTotalCount)
+    ? Number(configuredTotalCount)
+    : NaN;
+  if (
+    draft.priceInr === null ||
+    !Number.isSafeInteger(draft.priceInr) ||
+    draft.priceInr <= 0 ||
+    draft.currency !== 'INR' ||
+    !planId ||
+    !/^plan_[A-Za-z0-9]+$/.test(planId) ||
+    !isUsableSecret(planId) ||
+    !Number.isSafeInteger(totalCount) ||
+    totalCount < 1
+  ) return null;
+
+  const amountPaise = Math.round(draft.priceInr * 100);
+  if (
+    !Number.isSafeInteger(amountPaise) ||
+    amountPaise <= 0 ||
+    !Number.isSafeInteger(draft.billingIntervalCount) ||
+    draft.billingIntervalCount < 1
+  ) return null;
+  return {
+    code: draft.code,
+    planId,
+    amountPaise,
+    currency: draft.currency,
+    period: draft.billingInterval,
+    interval: draft.billingIntervalCount,
+    totalCount,
+  };
 }
 
 export function getConfiguredBillingPlan(
@@ -38,21 +93,8 @@ export function getConfiguredBillingPlan(
 ): ConfiguredBillingPlan | null {
   if (typeof code !== 'string' || !BILLING_PLAN_CODES.includes(code as BillingPlanCode)) return null;
   const draft = BILLING_PLAN_DRAFTS[code as BillingPlanCode];
-  const planId = env[`RAZORPAY_PLAN_${code.toUpperCase()}`];
-  const totalCount = Number(env.RAZORPAY_SUBSCRIPTION_TOTAL_COUNT);
-  if (
-    !draft.checkoutEnabled ||
-    draft.priceInr === null ||
-    !Number.isFinite(draft.priceInr) ||
-    draft.priceInr <= 0 ||
-    !planId?.startsWith('plan_') ||
-    !Number.isInteger(totalCount) ||
-    totalCount < 1
-  ) return null;
-
-  const amountPaise = Math.round(draft.priceInr * 100);
-  if (!Number.isSafeInteger(amountPaise) || amountPaise <= 0) return null;
-  return { code: draft.code, planId, amountPaise, totalCount };
+  if (draft.availability !== 'available' || !draft.checkoutEnabled) return null;
+  return getExpectedRazorpayPlan(code, env);
 }
 
 function timingSafeHexEqual(expectedHex: string, actualHex: string): boolean {
@@ -175,14 +217,65 @@ export function paymentMatchesSubscription(
 
 export function razorpayPlanMatchesConfiguration(
   providerPlan: any,
-  expected: { planId: string; amountPaise: number },
+  expected: Pick<ConfiguredBillingPlan, 'planId' | 'amountPaise' | 'currency' | 'period' | 'interval'>,
 ): boolean {
-  const amount = providerPlan?.item?.amount ?? providerPlan?.item?.unit_amount;
+  const item = providerPlan?.item;
+  const providerAmounts = [item?.amount, item?.unit_amount].filter((amount) => amount !== undefined);
   return Boolean(
+    /^plan_[A-Za-z0-9]+$/.test(expected.planId) &&
+    isUsableSecret(expected.planId) &&
+    Number.isSafeInteger(expected.amountPaise) &&
+    expected.amountPaise > 0 &&
+    expected.currency === 'INR' &&
+    (expected.period === 'monthly' || expected.period === 'yearly') &&
+    Number.isSafeInteger(expected.interval) &&
+    expected.interval > 0 &&
     providerPlan?.id === expected.planId &&
-    providerPlan?.period === 'monthly' &&
-    providerPlan?.interval === 1 &&
-    amount === expected.amountPaise &&
-    providerPlan?.item?.currency === 'INR',
+    providerPlan?.period === expected.period &&
+    providerPlan?.interval === expected.interval &&
+    providerAmounts.length > 0 &&
+    providerAmounts.every((amount) => amount === expected.amountPaise) &&
+    item?.currency === expected.currency,
   );
+}
+
+/**
+ * Validates provider payment state progression mirroring protect_billing_payment_identity().
+ * Permitted transitions:
+ *   created -> authorized | captured | failed
+ *   authorized -> captured | failed
+ *   failed -> captured
+ *   captured -> refunded
+ * All other transitions and reversals (e.g. captured -> failed, refunded -> captured) are rejected.
+ */
+export function isValidPaymentStatusTransition(oldStatus: string, newStatus: string): boolean {
+  if (oldStatus === newStatus) return true;
+  return (
+    (oldStatus === 'created' && ['authorized', 'captured', 'failed'].includes(newStatus)) ||
+    (oldStatus === 'authorized' && ['captured', 'failed'].includes(newStatus)) ||
+    (oldStatus === 'failed' && newStatus === 'captured') ||
+    (oldStatus === 'captured' && newStatus === 'refunded')
+  );
+}
+
+/**
+ * Validates payment identity immutability mirroring protect_billing_payment_identity().
+ * - organization_id and subscription_id cannot be changed.
+ * - razorpay_payment_id may transition once from NULL to a valid non-empty string.
+ * - Once set, razorpay_payment_id is strictly immutable (cannot change or clear to NULL).
+ */
+export function isValidPaymentIdentityUpdate(
+  oldPayment: { organizationId: string; subscriptionId: string; razorpayPaymentId: string | null },
+  newPayment: { organizationId: string; subscriptionId: string; razorpayPaymentId: string | null },
+): boolean {
+  if (oldPayment.organizationId !== newPayment.organizationId || oldPayment.subscriptionId !== newPayment.subscriptionId) {
+    return false;
+  }
+  if (newPayment.razorpayPaymentId !== null && newPayment.razorpayPaymentId.trim() === '') {
+    return false;
+  }
+  if (oldPayment.razorpayPaymentId !== null && oldPayment.razorpayPaymentId !== newPayment.razorpayPaymentId) {
+    return false;
+  }
+  return true;
 }

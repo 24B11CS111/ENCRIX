@@ -4,39 +4,42 @@ import { describe, expect, it } from 'vitest';
 import {
   BILLING_PLAN_CODES,
   BILLING_PLAN_DRAFTS,
-  isSubscriptionEnforcementEnabled,
 } from '../../api/_lib/billingPlans.js';
 
 describe('billing foundation', () => {
-  it('defines the three monthly INR plans as non-purchasable placeholders', () => {
+  it('keeps only the annual Business plan purchasable at the approved price', () => {
     expect(BILLING_PLAN_CODES).toEqual(['starter', 'professional', 'business']);
 
     for (const plan of Object.values(BILLING_PLAN_DRAFTS)) {
-      expect(plan.billingInterval).toBe('monthly');
       expect(plan.currency).toBe('INR');
-      expect(plan.availability).toBe('draft');
-      expect(plan.checkoutEnabled).toBe(false);
-      expect(plan.priceInr).toBeNull();
       expect(plan.telecallerSeatLimit).toBeNull();
       expect(plan.leadLimit).toBeNull();
       expect(plan.followUpAutomationLimit).toBeNull();
       expect(Object.values(plan.featureEntitlements).every((value) => value === null)).toBe(true);
     }
+
+    expect(BILLING_PLAN_DRAFTS.starter.availability).toBe('draft');
+    expect(BILLING_PLAN_DRAFTS.starter.checkoutEnabled).toBe(false);
+    expect(BILLING_PLAN_DRAFTS.professional.availability).toBe('draft');
+    expect(BILLING_PLAN_DRAFTS.professional.checkoutEnabled).toBe(false);
+
+    expect(BILLING_PLAN_DRAFTS.starter.priceInr).toBeNull();
+    expect(BILLING_PLAN_DRAFTS.professional.priceInr).toBeNull();
+    expect(BILLING_PLAN_DRAFTS.starter.billingInterval).toBe('monthly');
+    expect(BILLING_PLAN_DRAFTS.professional.billingInterval).toBe('monthly');
+    expect(BILLING_PLAN_DRAFTS.business).toMatchObject({
+      billingInterval: 'yearly',
+      billingIntervalCount: 1,
+      currency: 'INR',
+      priceInr: 9999,
+      availability: 'available',
+      checkoutEnabled: false,
+    });
   });
 
-  it('keeps entitlement enforcement disabled unless the server flag is exactly true', () => {
-    const original = process.env.SUBSCRIPTION_ENFORCEMENT_ENABLED;
-    try {
-      delete process.env.SUBSCRIPTION_ENFORCEMENT_ENABLED;
-      expect(isSubscriptionEnforcementEnabled()).toBe(false);
-      process.env.SUBSCRIPTION_ENFORCEMENT_ENABLED = 'false';
-      expect(isSubscriptionEnforcementEnabled()).toBe(false);
-      process.env.SUBSCRIPTION_ENFORCEMENT_ENABLED = 'true';
-      expect(isSubscriptionEnforcementEnabled()).toBe(true);
-    } finally {
-      if (original === undefined) delete process.env.SUBSCRIPTION_ENFORCEMENT_ENABLED;
-      else process.env.SUBSCRIPTION_ENFORCEMENT_ENABLED = original;
-    }
+  it('does not use a feature flag that could accidentally bypass paid entitlement checks', () => {
+    const planSource = readFileSync(resolve(process.cwd(), 'api/_lib/billingPlans.ts'), 'utf8');
+    expect(planSource).not.toContain('SUBSCRIPTION_ENFORCEMENT_ENABLED');
   });
 
   it('keeps plan configuration server-only and billing writes unavailable to browser roles', () => {

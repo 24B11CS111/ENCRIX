@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import sendOtpHandler from '../../api/auth/send-otp';
-import verifyOtpHandler from '../../api/auth/verify-otp';
+﻿import { afterEach, describe, expect, it, vi } from 'vitest';
+import sendOtpHandler from '../../api/_lib/authHandlers/send-otp';
+import verifyOtpHandler from '../../api/_lib/authHandlers/verify-otp';
 import * as supabaseServer from '../../api/_lib/supabaseServer';
 import * as otpServer from '../../api/_lib/otpServer';
 
@@ -51,6 +51,7 @@ describe('production registration pending-state persistence', () => {
     const privateErrorText = `${email} private provider detail`;
     const pendingRegistrationError = { code: '42P01', status: 404, message: privateErrorText };
     const fakeSupabase = {
+      rpc: vi.fn(async () => ({ data: null, error: pendingRegistrationError })),
       from: vi.fn((table: string) => createQueryBuilder(
         table === 'pending_registrations'
           ? { data: null, error: pendingRegistrationError }
@@ -72,6 +73,10 @@ describe('production registration pending-state persistence', () => {
         purpose: 'REGISTER',
         fullName: 'Example Owner',
         companyName: 'Example Organization',
+        phone: '+919876543210',
+        businessEmail: 'billing@example.test',
+        businessPhone: '+919876543211',
+        businessLocation: 'Mumbai, India',
       },
     }, response);
 
@@ -86,10 +91,11 @@ describe('production registration pending-state persistence', () => {
     expect(JSON.stringify(log.mock.calls)).not.toContain(privateErrorText);
   });
 
-  it('diagnoses missing database and instance-local state without logging the submitted email', async () => {
+  it('rejects a registration request with no durable ticket and never falls back to instance-local state', async () => {
     const email = 'owner@example.test';
     const otp = otpServer.generateSecureOtp();
     const fakeSupabase = {
+      rpc: vi.fn(),
       from: vi.fn(() => createQueryBuilder({ data: null, error: null })),
     };
     vi.spyOn(supabaseServer, 'getSupabaseServerClient').mockReturnValue(fakeSupabase as any);
@@ -103,8 +109,9 @@ describe('production registration pending-state persistence', () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.body.error).toBe('No pending registration found for this email address.');
-    expect(JSON.stringify(log.mock.calls)).toContain('Registration verification state unavailable');
-    expect(JSON.stringify(log.mock.calls)).toContain('memoryFallback');
+    expect(fakeSupabase.rpc).not.toHaveBeenCalled();
+    expect(fakeSupabase.from).not.toHaveBeenCalled();
+    expect(JSON.stringify(log.mock.calls)).not.toContain('memoryFallback');
     expect(JSON.stringify(log.mock.calls)).not.toContain(email);
   });
 });

@@ -1,61 +1,178 @@
 {
-  "rewrites": [
-    {
-      "source": "/api/followups/reminders",
-      "destination": "/api/cron/follow-up-reminders"
-    },
-    { "source": "/api/leads/detail", "destination": "/api/leads?_route=detail" },
-    { "source": "/api/leads/distribute", "destination": "/api/leads?_route=distribute" },
-    { "source": "/api/leads/distribution-config", "destination": "/api/leads?_route=distribution-config" },
-    { "source": "/api/leads/telecaller", "destination": "/api/leads?_route=telecaller-list" },
-    { "source": "/api/leads/telecaller/update", "destination": "/api/leads?_route=telecaller-update" },
-    { "source": "/api/leads/owner/create", "destination": "/api/leads?_route=owner-create" },
-    { "source": "/api/leads/owner/assign", "destination": "/api/leads?_route=owner-assign" },
-    { "source": "/api/leads/owner/update", "destination": "/api/leads?_route=owner-update" },
-    { "source": "/api/leads/owner", "destination": "/api/leads?_route=owner-list" },
-    { "source": "/api/billing/plans", "destination": "/api/billing?_route=plans" },
-    { "source": "/api/billing/checkout", "destination": "/api/billing?_route=checkout" },
-    { "source": "/api/billing/verify", "destination": "/api/billing?_route=verify" },
-    { "source": "/api/billing/webhook", "destination": "/api/billing?_route=webhook" },
-    { "source": "/api/billing/subscription", "destination": "/api/billing?_route=subscription" },
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/$1"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
-  ],
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
+    "routes": [
         {
-          "key": "X-Frame-Options",
-          "value": "DENY"
+            "src": "/api/health",
+            "dest": "/api/monitor",
+            "transforms": [
+                { "type": "request.query", "op": "set", "target": { "key": "__encrix_route" }, "args": "health" }
+            ]
         },
         {
-          "key": "X-Content-Type-Options",
-          "value": "nosniff"
+            "src": "/api/realtime/refresh",
+            "dest": "/api/monitor",
+            "transforms": [
+                { "type": "request.query", "op": "set", "target": { "key": "__encrix_route" }, "args": "realtime-refresh" }
+            ]
         },
         {
-          "key": "Referrer-Policy",
-          "value": "strict-origin-when-cross-origin"
+            "src": "/api/metrics",
+            "dest": "/api/workspace",
+            "transforms": [
+                { "type": "request.query", "op": "set", "target": { "key": "__encrix_route" }, "args": "metrics" }
+            ]
         },
         {
-          "key": "Permissions-Policy",
-          "value": "camera=(), microphone=(), geolocation=(), payment=()"
-        },
-        {
-          "key": "Strict-Transport-Security",
-          "value": "max-age=63072000; includeSubDomains; preload"
-        },
-        {
-          "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self' https: wss:; media-src 'self' https: blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';"
+            "src": "/api/notifications",
+            "dest": "/api/workspace",
+            "transforms": [
+                { "type": "request.query", "op": "set", "target": { "key": "__encrix_route" }, "args": "notifications" }
+            ]
         }
-      ]
-    }
-  ]
+    ],
+    "functions": {
+        "api/cron/follow-up-reminders.ts": {
+            "maxDuration": 30
+        }
+    },
+    "rewrites":  [
+                     {
+                         "source":  "/api/followups/reminders",
+                         "destination":  "/api/cron/follow-up-reminders"
+                     },
+                     {
+                         "source":  "/api/leads/detail",
+                         "destination":  "/api/leads?_route=detail"
+                     },
+                     {
+                         "source":  "/api/leads/distribute",
+                         "destination":  "/api/leads?_route=distribute"
+                     },
+                     {
+                         "source":  "/api/leads/distribution-config",
+                         "destination":  "/api/leads?_route=distribution-config"
+                     },
+                     {
+                         "source":  "/api/leads/telecaller",
+                         "destination":  "/api/leads?_route=telecaller-list"
+                     },
+                     {
+                         "source":  "/api/leads/telecaller/update",
+                         "destination":  "/api/leads?_route=telecaller-update"
+                     },
+                     {
+                         "source":  "/api/leads/owner/create",
+                         "destination":  "/api/leads?_route=owner-create"
+                     },
+                     {
+                         "source":  "/api/leads/owner/assign",
+                         "destination":  "/api/leads?_route=owner-assign"
+                     },
+                     {
+                         "source":  "/api/leads/owner/update",
+                         "destination":  "/api/leads?_route=owner-update"
+                     },
+                     {
+                         "source":  "/api/leads/owner",
+                         "destination":  "/api/leads?_route=owner-list"
+                     },
+                     {
+                         "source":  "/api/pilot-entitlements",
+                         "destination":  "/api/billing?_route=pilot-entitlements"
+                     },
+                     {
+                         "source":  "/api/billing/plans",
+                         "destination":  "/api/billing?_route=plans"
+                     },
+                     {
+                         "source":  "/api/billing/checkout",
+                         "destination":  "/api/billing?_route=checkout"
+                     },
+            {
+                        "source":  "/api/billing/reconcile",
+                        "destination":  "/api/billing?_route=reconcile"
+                    },
+                     {
+                         "source":  "/api/billing/verify",
+                         "destination":  "/api/billing?_route=verify"
+                     },
+                     {
+                         "source":  "/api/billing/webhook",
+                         "destination":  "/api/billing?_route=webhook"
+                     },
+                     {
+                         "source":  "/api/billing/subscription",
+                         "destination":  "/api/billing?_route=subscription"
+                     },
+                     {
+                         "source":  "/api/billing/business-details",
+                         "destination":  "/api/billing?_route=business-details"
+                     },
+                     {
+                         "destination":  "/api/auth-router?_route=invitations",
+                         "source":  "/api/auth/invitations"
+                     },
+                     {
+                         "destination":  "/api/auth-router?_route=invite",
+                         "source":  "/api/auth/invite"
+                     },
+                     {
+                         "destination":  "/api/auth-router?_route=phone-enrollment",
+                         "source":  "/api/auth/phone-enrollment"
+                     },
+                     {
+                         "destination":  "/api/auth-router?_route=send-otp",
+                         "source":  "/api/auth/send-otp"
+                     },
+                     {
+                         "destination":  "/api/auth-router?_route=session",
+                         "source":  "/api/auth/session"
+                     },
+                     {
+                         "destination":  "/api/auth-router?_route=team",
+                         "source":  "/api/auth/team"
+                     },
+                     {
+                         "destination":  "/api/auth-router?_route=verify-otp",
+                         "source":  "/api/auth/verify-otp"
+                     },
+                     {
+                         "source":  "/api/(.*)",
+                         "destination":  "/api/$1"
+                     },
+                     {
+                         "source":  "/(.*)",
+                         "destination":  "/index.html"
+                     }
+                 ],
+    "headers":  [
+                    {
+                        "source":  "/(.*)",
+                        "headers":  [
+                                        {
+                                            "key":  "X-Frame-Options",
+                                            "value":  "DENY"
+                                        },
+                                        {
+                                            "key":  "X-Content-Type-Options",
+                                            "value":  "nosniff"
+                                        },
+                                        {
+                                            "key":  "Referrer-Policy",
+                                            "value":  "strict-origin-when-cross-origin"
+                                        },
+                                        {
+                                            "key":  "Permissions-Policy",
+                                            "value":  "camera=(), microphone=(), geolocation=(), payment=()"
+                                        },
+                                        {
+                                            "key":  "Strict-Transport-Security",
+                                            "value":  "max-age=63072000; includeSubDomains; preload"
+                                        },
+                                        {
+                                            "key":  "Content-Security-Policy",
+                                            "value":  "default-src \u0027self\u0027; script-src \u0027self\u0027 \u0027unsafe-inline\u0027 https:; style-src \u0027self\u0027 \u0027unsafe-inline\u0027 https:; img-src \u0027self\u0027 data: https:; font-src \u0027self\u0027 data: https:; connect-src \u0027self\u0027 https: wss:; frame-src \u0027self\u0027 https://*.razorpay.com; media-src \u0027self\u0027 https: blob:; object-src \u0027none\u0027; base-uri \u0027self\u0027; form-action \u0027self\u0027; frame-ancestors \u0027none\u0027;"
+                                        }
+                                    ]
+                    }
+                ]
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { db } from '@/services/supabase/db';
+import { leadService } from '@/services/leads/leadService';
 import { metricsService, OwnerDashboardMetrics } from '@/services/metrics/metricsService';
 import { Lead, Call, FollowUp, Profile, SecurityEvent } from '@/types';
 import {
@@ -42,7 +43,11 @@ export const OwnerDashboard: React.FC = () => {
 
   const loadData = async () => {
     if (!profile) return;
-    setLeads(db.getLeads(profile));
+    try {
+      setLeads(await leadService.getOwnerLeads(profile));
+    } catch {
+      setLeads([]);
+    }
     setCalls(db.getCalls(profile));
     setFollowUps(db.getFollowUps(profile));
     setTelecallers(db.getTelecallers(profile));
@@ -65,6 +70,7 @@ export const OwnerDashboard: React.FC = () => {
     const unsubscribe = db.subscribe(({ type }) => {
       if (
         type === 'LEAD_CREATED' ||
+        type === 'LEAD_REFRESH_REQUIRED' ||
         type === 'LEADS_IMPORTED' ||
         type === 'LEADS_ASSIGNED' ||
         type === 'LEADS_ASSIGNED_ROUND_ROBIN' ||

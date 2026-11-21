@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import sendOtpHandler from '../../api/auth/send-otp';
-import verifyOtpHandler from '../../api/auth/verify-otp';
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import sendOtpHandler from '../../api/_lib/authHandlers/send-otp';
+import verifyOtpHandler from '../../api/_lib/authHandlers/verify-otp';
 import * as supabaseServer from '../../api/_lib/supabaseServer';
 import * as otpServer from '../../api/_lib/otpServer';
 import { verifySignedSessionToken } from '../../api/_lib/sessionServer';
@@ -117,6 +117,12 @@ describe('Phase 25 Regression: Login OTP Verification Across Serverless Instance
       otpHash,
       expiresAt,
     });
+    const ticketPayload = otpServer.verifyVerificationTicket(verificationTicket)!;
+    const otpRow = {
+      id: 'otp-row-1', ticket_id: ticketPayload.ticketId, email, purpose: 'LOGIN',
+      otp_hash: otpHash, attempts: 0, expires_at: expiresAt, resend_after: expiresAt,
+      used: false, verified_at: null,
+    };
 
     // Container B handles verify-otp with empty local memory (fresh lambda instance)
     otpServer.serverOtpStore.clear();
@@ -140,7 +146,7 @@ describe('Phase 25 Regression: Login OTP Verification Across Serverless Instance
     const fakeSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'email_otps') {
-          return createQueryBuilder({ data: [], error: null });
+          return createQueryBuilder({ data: [otpRow], error: null });
         }
         if (table === 'profiles') {
           return {
@@ -162,6 +168,7 @@ describe('Phase 25 Regression: Login OTP Verification Across Serverless Instance
         }
         return createQueryBuilder({ data: null, error: null });
       }),
+      rpc: vi.fn(async () => ({ data: { verified: true, attempts: 0 }, error: null })),
     };
     vi.spyOn(supabaseServer, 'getSupabaseServerClient').mockReturnValue(fakeSupabase as any);
 
@@ -186,6 +193,46 @@ describe('Phase 25 Regression: Login OTP Verification Across Serverless Instance
     expect(verifiedSession?.profileId).toBe('prof-verified-user');
   });
 
+  it('returns a retryable server error when the profile lookup fails after OTP verification', async () => {
+    const email = 'database-retry@encrix.test';
+    const otp = '654321';
+    const ticket = otpServer.createVerificationTicket({
+      email,
+      purpose: 'LOGIN',
+      otpHash: otpServer.hashOtp(email, otp),
+      expiresAt: new Date(Date.now() + 300000).toISOString(),
+    });
+    const ticketId = otpServer.verifyVerificationTicket(ticket)?.ticketId;
+    expect(ticketId).toBeTruthy();
+    const payload = otpServer.verifyVerificationTicket(ticket)!;
+    const emailOtps = createQueryBuilder({ data: [{
+      id: 'otp-row-retry', ticket_id: payload.ticketId, email, purpose: 'LOGIN',
+      otp_hash: payload.otpHash, attempts: 0, expires_at: payload.expiresAt,
+      resend_after: payload.expiresAt, used: false, verified_at: null,
+    }], error: null });
+    const failedProfileLookup = {
+      select: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          single: vi.fn(async () => ({ data: null, error: { code: '08006' } })),
+        })),
+      })),
+    };
+    vi.spyOn(supabaseServer, 'getSupabaseServerClient').mockReturnValue({
+      from: vi.fn((table: string) => table === 'email_otps' ? emailOtps : failedProfileLookup),
+      rpc: vi.fn(async () => ({ data: { verified: true, attempts: 0 }, error: null })),
+    } as any);
+
+    const response = createResponse();
+    await verifyOtpHandler({
+      method: 'POST',
+      body: { email, otp, purpose: 'LOGIN', verificationTicket: ticket },
+    }, response);
+
+    expect(response.statusCode).toBe(503);
+    expect(response.body.error).toMatch(/temporarily unavailable/i);
+    expect(otpServer.consumedTickets.has(ticketId!)).toBe(false);
+  });
+
   it('strictly rejects replay of consumed LOGIN verification ticket', async () => {
     const email = 'replay-login@encrix.test';
     const otp = '112233';
@@ -198,6 +245,12 @@ describe('Phase 25 Regression: Login OTP Verification Across Serverless Instance
       otpHash,
       expiresAt,
     });
+    const ticketPayload = otpServer.verifyVerificationTicket(ticket)!;
+    const otpRow = {
+      id: 'otp-row-replay', ticket_id: ticketPayload.ticketId, email, purpose: 'LOGIN',
+      otp_hash: otpHash, attempts: 0, expires_at: expiresAt, resend_after: expiresAt,
+      used: false, verified_at: null,
+    };
 
     const mockProfile = {
       id: 'prof-replay-login',
@@ -216,7 +269,7 @@ describe('Phase 25 Regression: Login OTP Verification Across Serverless Instance
 
     const fakeSupabase = {
       from: vi.fn((table: string) => {
-        if (table === 'email_otps') return createQueryBuilder({ data: [], error: null });
+        if (table === 'email_otps') return createQueryBuilder({ data: [otpRow], error: null });
         if (table === 'profiles') {
           return {
             select: vi.fn(() => ({
@@ -237,6 +290,7 @@ describe('Phase 25 Regression: Login OTP Verification Across Serverless Instance
         }
         return createQueryBuilder({ data: null, error: null });
       }),
+      rpc: vi.fn(async () => ({ data: { verified: true, attempts: 0 }, error: null })),
     };
     vi.spyOn(supabaseServer, 'getSupabaseServerClient').mockReturnValue(fakeSupabase as any);
 
@@ -274,7 +328,7 @@ describe('Phase 25 Regression: Login OTP Verification Across Serverless Instance
       const email = 'session-persistence@encrix.test';
       const fakeTicket = 'payload.fake-sig-123';
 
-      // Mock fetch for /api/auth/send-otp
+      // Mock fetch for the public auth endpoint.
       global.fetch = vi.fn().mockImplementation(async (url: any, init: any) => {
         if (String(url).includes('/api/auth/send-otp')) {
           return {

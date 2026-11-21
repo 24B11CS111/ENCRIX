@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { getSupabaseServerClient, isRealSupabaseServerConfigured } from './supabaseServer.js';
-import { isLiveEmailConfigured } from './otpServer.js';
-import { db } from '../../src/services/supabase/db.js';
+import { sendFollowUpReminderEmail } from './emailDelivery.js';
+import { escapeHtml } from './emailHtml.js';
 
 export interface ProcessRemindersOptions {
   referenceTime?: Date;
@@ -69,10 +69,128 @@ export function evaluateEmailReminderStatus(): string {
   if (!isEnabled) {
     return 'disabled_by_feature_flag';
   }
-  if (!isLiveEmailConfigured()) {
+  if (!process.env.RESEND_API_KEY || /placeholder|your-|test/i.test(process.env.RESEND_API_KEY) ||
+      !process.env.RESEND_FROM_EMAIL || !process.env.RESEND_FROM_EMAIL.includes('@')) {
     return 'missing_provider_credentials';
   }
-  return 'provider_not_integrated';
+  return 'ready';
+}
+
+export async function enqueueAndDispatchReminderEmails(
+  client: any,
+  referenceTime: Date,
+  targetOrganizationId?: string,
+): Promise<{ sent: number; failed: number }> {
+  if (process.env.ENABLE_FOLLOWUP_EMAIL_REMINDERS !== 'true') return { sent: 0, failed: 0 };
+  if (evaluateEmailReminderStatus() !== 'ready' || !isSafeAppUrl(process.env.APP_URL)) return { sent: 0, failed: 1 };
+
+  const referenceIso = referenceTime.toISOString();
+  const eventColumns = [
+    { column: 'reminded_at', milestone: 'UPCOMING_REMINDER', recipientRole: 'TELECALLER' },
+    { column: 'overdue_notified_at', milestone: 'OVERDUE_ALERT', recipientRole: 'TELECALLER' },
+    { column: 'owner_alerted_at', milestone: 'OWNER_ESCALATION', recipientRole: 'OWNER' },
+  ] as const;
+  let failed = 0;
+
+  for (const event of eventColumns) {
+    let query = client.from('follow_ups')
+      .select('id, organization_id, assigned_to, scheduled_at')
+      .eq(event.column, referenceIso);
+    if (targetOrganizationId) query = query.eq('organization_id', targetOrganizationId);
+    const { data: dueRows, error: dueError } = await query;
+    if (dueError) { failed++; continue; }
+
+    for (const followUp of dueRows || []) {
+      const profileQuery = client.from('profiles')
+        .select('id, organization_id, role, status, email, email_verified')
+        .eq('organization_id', followUp.organization_id)
+        .eq('role', event.recipientRole)
+        .eq('status', 'ACTIVE')
+        .eq('email_verified', true);
+      if (event.recipientRole === 'TELECALLER') profileQuery.eq('id', followUp.assigned_to);
+      const { data: recipients, error: recipientsError } = await profileQuery;
+      if (recipientsError) { failed++; continue; }
+
+      const scheduled = new Date(followUp.scheduled_at).toUTCString();
+      const message = event.milestone === 'UPCOMING_REMINDER'
+        ? `A follow-up is scheduled soon (${scheduled}). Sign in to ENCRIX to review it.`
+        : event.milestone === 'OVERDUE_ALERT'
+          ? `A scheduled follow-up is overdue (${scheduled}). Sign in to ENCRIX to review it.`
+          : `A follow-up escalation requires review (${scheduled}). Sign in to ENCRIX to review it.`;
+      const subject = event.milestone === 'UPCOMING_REMINDER'
+        ? 'Upcoming ENCRIX follow-up'
+        : event.milestone === 'OVERDUE_ALERT'
+          ? 'Overdue ENCRIX follow-up'
+          : 'ENCRIX follow-up escalation';
+      for (const recipient of recipients || []) {
+        if (recipient.organization_id !== followUp.organization_id || recipient.status !== 'ACTIVE' ||
+            recipient.email_verified !== true || typeof recipient.email !== 'string') continue;
+        const { error: queueError } = await client.rpc('queue_follow_up_reminder_email', {
+          p_organization_id: followUp.organization_id,
+          p_follow_up_id: followUp.id,
+          p_recipient_profile_id: recipient.id,
+          p_milestone: event.milestone,
+          p_recipient_email: recipient.email,
+          p_subject: subject,
+          p_text_body: message,
+          p_html_body: `<p>${escapeHtml(message)}</p><p><a href="${escapeHtml(process.env.APP_URL!)}/login">Open ENCRIX</a></p>`,
+        });
+        if (queueError) failed++;
+      }
+    }
+  }
+
+  const { data: deliveries, error: claimError } = await client.rpc('claim_follow_up_reminder_emails', {
+    p_organization_id: targetOrganizationId || null,
+    p_limit: 20,
+  });
+  if (claimError || !Array.isArray(deliveries)) return { sent: 0, failed: failed + 1 };
+
+  let sent = 0;
+  for (const delivery of deliveries) {
+    try {
+      const provider = await sendFollowUpReminderEmail({
+        recipient: delivery.recipient_email,
+        subject: delivery.subject,
+        text: delivery.text_body,
+        html: delivery.html_body,
+        idempotencyKey: delivery.id,
+      });
+      const { data: completed, error: completeError } = await client.rpc('complete_follow_up_reminder_email', {
+        p_id: delivery.id,
+        p_claim_token: delivery.claim_token,
+        p_sent: true,
+        p_provider_message_id: provider.id || null,
+        p_failure_code: null,
+      });
+      if (completeError || completed !== true) failed++;
+      else sent++;
+    } catch (error: any) {
+      const code = typeof error?.code === 'string' && /^[A-Z0-9_]+$/i.test(error.code)
+        ? error.code
+        : 'DELIVERY_FAILED';
+      const { error: completeError } = await client.rpc('complete_follow_up_reminder_email', {
+        p_id: delivery.id,
+        p_claim_token: delivery.claim_token,
+        p_sent: false,
+        p_provider_message_id: null,
+        p_failure_code: code,
+      });
+      failed++;
+      if (completeError) console.error('[reminders] Unable to record email delivery failure', { code: 'OUTBOX_UPDATE_FAILED' });
+    }
+  }
+  return { sent, failed };
+}
+
+function isSafeAppUrl(value: string | undefined): value is string {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -90,35 +208,79 @@ export async function processFollowUpReminders(
 
   const client = options.supabaseClient || (isRealSupabaseServerConfigured() ? getSupabaseServerClient() : null);
 
+  const unavailableResult = (message: string): ReminderProcessResult => ({
+    success: false,
+    timestamp: referenceTime.toISOString(),
+    remindedCount: 0,
+    overdueCount: 0,
+    escalatedCount: 0,
+    emailStatus: evaluateEmailReminderStatus(),
+    errors: [message],
+  });
+
   // 1. Production Safety Check: Fail closed if real database configuration is absent
   if (isProd && !client) {
     throw new Error('Server Misconfiguration: Supabase database connection is required in production.');
   }
 
-  // 2. Offline / Demo Sandbox Fallback (strictly in non-production mode when no Supabase client is available)
+  // Reminders are a paid CRM feature; never use the in-memory/demo fallback
+  // because it cannot establish a verified subscription entitlement.
   if (!client) {
-    let mockProfile: any = undefined;
-    if (targetOrgId) {
-      mockProfile = {
-        id: 'system-cron',
-        organization_id: targetOrgId,
-        role: 'ADMIN',
-        status: 'ACTIVE',
-        full_name: 'ENCRIX Cron Daemon',
+    return unavailableResult('PAID_ENTITLEMENT_UNAVAILABLE');
+  }
+
+  if (targetOrgId) {
+    const { data: entitled, error: entitlementError } = await client.rpc(
+      'organization_has_active_paid_entitlement',
+      { p_organization_id: targetOrgId },
+    );
+    if (entitlementError) throw new Error('Paid entitlement could not be verified for reminder processing.');
+    if (entitled !== true) {
+      return {
+        success: true,
+        timestamp: referenceTime.toISOString(),
+        remindedCount: 0,
+        overdueCount: 0,
+        escalatedCount: 0,
+        emailStatus: evaluateEmailReminderStatus(),
       };
     }
-    const { remindedCount, overdueCount } = db.processFollowUpReminders(mockProfile, referenceTime);
-    return {
-      success: true,
-      timestamp: referenceTime.toISOString(),
-      remindedCount,
-      overdueCount,
+  } else {
+    // Scheduled all-tenant runs enumerate active organizations and invoke the
+    // existing atomic reminder RPC only for organizations with paid access.
+    const { data: organizations, error: organizationError } = await client
+      .from('organizations').select('id').eq('status', 'ACTIVE');
+    if (organizationError || !Array.isArray(organizations)) {
+      throw new Error('Organization entitlement scan is unavailable.');
+    }
+    const totals: Omit<ReminderProcessResult, 'success' | 'timestamp' | 'errors'> = {
+      remindedCount: 0,
+      overdueCount: 0,
       escalatedCount: 0,
       emailStatus: evaluateEmailReminderStatus(),
     };
+    const errors: string[] = [];
+    for (const organization of organizations) {
+      if (typeof organization?.id !== 'string') continue;
+      try {
+        const result = await processFollowUpReminders({
+          ...options,
+          referenceTime,
+          targetOrganizationId: organization.id,
+          supabaseClient: client,
+        });
+        totals.remindedCount += result.remindedCount;
+        totals.overdueCount += result.overdueCount;
+        totals.escalatedCount += result.escalatedCount;
+        if (!result.success) errors.push(...(result.errors || [`Reminder processing failed for an organization.`]));
+      } catch {
+        errors.push('Reminder processing failed for an organization.');
+      }
+    }
+    return { ...totals, success: errors.length === 0, timestamp: referenceTime.toISOString(), ...(errors.length ? { errors } : {}) };
   }
 
-  // 3. Attempt Atomic Stored Procedure Execution (Postgres FOR UPDATE SKIP LOCKED)
+  // Attempt Atomic Stored Procedure Execution (Postgres FOR UPDATE SKIP LOCKED)
   const { data: rpcData, error: rpcError } = await client.rpc(
     'process_follow_up_reminders_cron',
     {
@@ -128,13 +290,17 @@ export async function processFollowUpReminders(
   );
 
   if (!rpcError && rpcData?.success) {
+    const emailResult = await enqueueAndDispatchReminderEmails(client, referenceTime, targetOrgId);
     return {
       success: true,
       timestamp: referenceTime.toISOString(),
       remindedCount: rpcData.reminded_count || 0,
       overdueCount: rpcData.overdue_count || 0,
       escalatedCount: rpcData.escalated_count || 0,
-      emailStatus: evaluateEmailReminderStatus(),
+      emailStatus: process.env.ENABLE_FOLLOWUP_EMAIL_REMINDERS === 'true'
+        ? (emailResult.failed ? 'delivery_failed' : 'sent')
+        : evaluateEmailReminderStatus(),
+      ...(emailResult.failed ? { errors: ['One or more reminder emails could not be delivered.'] } : {}),
     };
   }
   if (rpcError && !['42883', 'PGRST202'].includes(rpcError.code || '')) {
@@ -371,13 +537,18 @@ export async function processFollowUpReminders(
     }
   }
 
+  const emailResult = await enqueueAndDispatchReminderEmails(client, referenceTime, targetOrgId);
+  if (emailResult.failed) processingErrors.push('One or more reminder emails could not be delivered.');
+
   return {
     success: processingErrors.length === 0,
     timestamp: refIso,
     remindedCount,
     overdueCount,
     escalatedCount,
-    emailStatus: evaluateEmailReminderStatus(),
+    emailStatus: process.env.ENABLE_FOLLOWUP_EMAIL_REMINDERS === 'true'
+      ? (emailResult.failed ? 'delivery_failed' : 'sent')
+      : evaluateEmailReminderStatus(),
     errors: processingErrors.length > 0 ? processingErrors : undefined,
   };
 }

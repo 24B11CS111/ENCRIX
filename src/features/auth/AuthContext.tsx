@@ -200,12 +200,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   useEffect(() => {
-    if (profile?.organization_id) {
-      realtimeManager.setOrganization(profile.organization_id);
-    } else {
-      realtimeManager.cleanup();
-    }
-  }, [profile?.organization_id]);
+    // The manager verifies the active Supabase user against profile.user_id.
+    // Signed custom OTP sessions always use the server-mediated polling path.
+    realtimeManager.setIdentity(profile);
+  }, [profile?.id, profile?.user_id, profile?.organization_id, profile?.role, profile?.status]);
 
   const login = async (email: string, password?: string) => {
     // Rate limit login attempts: 5 attempts per 60 seconds
@@ -334,7 +332,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const register = async (data: {
+  const register = async (_data: {
     companyName: string;
     ownerName: string;
     email: string;
@@ -342,99 +340,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     industry: string;
     companySize: string;
   }) => {
-    setIsLoading(true);
-    try {
-      if (isRealSupabaseConfigured()) {
-        const generatedPass = `Encrix_${Date.now()}_Pass!`;
-        const { data: authData, error: authErr } = await supabase.auth.signUp({
-          email: data.email,
-          password: generatedPass,
-        });
-        if (authErr || !authData.user) {
-          return { success: false, error: authErr?.message || 'Failed to create authentication user.' };
-        }
-
-        const { data: orgData, error: orgErr } = await supabase
-          .from('organizations')
-          .insert({
-            name: data.companyName,
-            industry: data.industry,
-            company_size: data.companySize,
-            slug: data.companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-            owner_id: authData.user.id,
-            status: 'ACTIVE',
-          })
-          .select('*')
-          .single();
-
-        if (orgErr || !orgData) {
-          return { success: false, error: orgErr?.message || 'Failed to create organization record.' };
-        }
-
-        const { data: profData, error: profErr } = await supabase
-          .from('profiles')
-          .insert({
-            user_id: authData.user.id,
-            organization_id: orgData.id,
-            full_name: data.ownerName,
-            phone: data.phone,
-            role: 'OWNER',
-            status: 'ACTIVE',
-          })
-          .select('*')
-          .single();
-
-        if (profErr || !profData) {
-          return { success: false, error: profErr?.message || 'Failed to create owner profile.' };
-        }
-
-        setProfile(profData);
-        setOrganization(orgData);
-        return { success: true };
-      }
-
-      // 1. Create Organization in Database
-      const newOrg = db.createOrganization({
-        name: data.companyName,
-        industry: data.industry,
-        company_size: data.companySize,
-        owner_id: `user-${Date.now().toString(36)}`,
-      });
-
-      // 2. Create Owner Profile via db.createProfile
-      const newOwner = db.createProfile({
-        user_id: newOrg.owner_id,
-        organization_id: newOrg.id,
-        full_name: data.ownerName,
-        phone: data.phone,
-        role: 'OWNER',
-        status: 'ACTIVE',
-      });
-
-      setProfile(newOwner);
-      setOrganization(newOrg);
-      localStorage.setItem('leadvault_session', JSON.stringify({ profileId: newOwner.id }));
-
-      db.logActivity({
-        organization_id: newOrg.id,
-        user_id: newOwner.id,
-        user_name: newOwner.full_name,
-        user_role: 'OWNER',
-        action: 'LOGIN',
-        entity_type: 'organization',
-        entity_id: newOrg.id,
-        metadata: { companyName: newOrg.name, owner: newOwner.full_name },
-      });
-
-      return { success: true };
-    } catch (e) {
-      return { success: false, error: (e as Error).message };
-    } finally {
-      setIsLoading(false);
-    }
+    return { success: false, error: 'Owner registration must use the email OTP verification flow.' };
   };
 
   const logout = async () => {
+    // Close the transport before awaiting network logout/revocation calls.
+    realtimeManager.cleanup();
     await authService.logout();
     if (isRealSupabaseConfigured()) {
       try {
@@ -454,7 +365,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
     }
     db.unsubscribeAll();
-    realtimeManager.cleanup();
     localStorage.removeItem('leadvault_session');
     localStorage.removeItem('leadvault_session_token');
     setProfile(null);
@@ -549,10 +459,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         isDemoMode: IS_DEMO_MODE,
         login,
-        register,
         requestOtp,
         verifyOtp,
         inviteTelecaller,
+        register,
         logout,
         switchRole,
         quickLogin,

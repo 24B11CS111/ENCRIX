@@ -6,7 +6,10 @@
  * - Suite 5 validates the SQL migration artifacts, DDL constraints, and clean-database migration plan.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+vi.mock('../../api/_lib/paidEntitlement.js', () => ({
+  requirePaidEntitlement: vi.fn(async () => true),
+}));
 import { db } from '@/services/supabase/db';
 import { sanitizeLeadForRole, scrubPhoneFromText } from '@/lib/dataMasking';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
@@ -356,7 +359,7 @@ describe('Phase 22.1: Security-Critical Schema Remediation & Zero Phone Hardenin
       const { req, res } = createMockReqRes({
         method: 'POST',
         headers: { authorization: `Bearer ${tokenTelecallerA}` },
-        body: { leadId: leadAAssigned.id },
+        body: { leadId: '31000000-0000-4000-8000-000000000001', idempotencyKey: '30000000-0000-4000-8000-000000000001' },
       });
 
       await callHandler(req, res);
@@ -364,7 +367,7 @@ describe('Phase 22.1: Security-Critical Schema Remediation & Zero Phone Hardenin
       expect(res.statusCode).toBe(503);
       const data = res.body;
 
-      expect(data.error).toMatch(/Secure call bridge is not configured/i);
+      expect(data.error).toMatch(/Live calling is disabled/i);
       expect(data.callId).toBeUndefined();
       expect(data.status).toBeUndefined();
 
@@ -378,8 +381,10 @@ describe('Phase 22.1: Security-Critical Schema Remediation & Zero Phone Hardenin
 
     it('Realtime payload sanitizer: strips all phone fields and scrubs notes/metadata for telecallers', () => {
       let receivedPayload: any = null;
+      let receivedLeadEvent = false;
       const unsub = db.subscribe((event) => {
         if (event.type === 'RECORD_INSERTED') {
+          receivedLeadEvent = true;
           receivedPayload = event.payload;
         }
       }, telecallerA);
@@ -404,12 +409,8 @@ describe('Phase 22.1: Security-Critical Schema Remediation & Zero Phone Hardenin
         { organization_id: orgA, target_user_id: telecallerA.id }
       );
 
-      expect(receivedPayload).not.toBeNull();
-      expect(receivedPayload.new.phone).toBeUndefined();
-      expect(receivedPayload.new.lead_phone).toBeUndefined();
-      expect('phone' in receivedPayload.new).toBe(false);
-      expect(receivedPayload.new.notes).toContain('[PHONE PROTECTED]');
-      expect(receivedPayload.new.metadata?.phone).toBeUndefined();
+      expect(receivedLeadEvent).toBe(true);
+      expect(receivedPayload).toBeUndefined();
 
       unsub();
     });
@@ -506,16 +507,16 @@ describe('Phase 22.1: Security-Critical Schema Remediation & Zero Phone Hardenin
       expect(res.body.error).toMatch(/Forbidden: You do not have permission to access this lead|You can only view leads assigned to you/i);
     });
 
-    it('blocks telecaller from placing call to unassigned lead', async () => {
+    it('keeps calling unavailable while the organization calling gate is disabled', async () => {
       const { req, res } = createMockReqRes({
         method: 'POST',
         headers: { authorization: `Bearer ${tokenTelecallerA}` },
-        body: { leadId: leadAUnassigned.id },
+        body: { leadId: '31000000-0000-4000-8000-000000000002', idempotencyKey: '30000000-0000-4000-8000-000000000002' },
       });
 
       await callHandler(req, res);
-      expect(res.statusCode).toBe(403);
-      expect(res.body.error).toMatch(/You can only call leads assigned to you/i);
+      expect(res.statusCode).toBe(503);
+      expect(res.body.error).toMatch(/Live calling is disabled/i);
     });
 
     it('blocks cross-tenant lead access (Telecaller A cannot access Org B lead)', async () => {

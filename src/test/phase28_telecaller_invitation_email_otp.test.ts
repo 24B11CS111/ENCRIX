@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+﻿import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import sendOtpHandler, {
   sanitizeErrorMessage,
   formatActionableEmailError,
-} from '../../api/auth/send-otp';
-import verifyOtpHandler from '../../api/auth/verify-otp';
-import inviteHandler from '../../api/auth/invite';
+} from '../../api/_lib/authHandlers/send-otp';
+import verifyOtpHandler from '../../api/_lib/authHandlers/verify-otp';
+import inviteHandler from '../../api/_lib/authHandlers/invite';
 import {
   serverOtpStore,
   hashOtp,
@@ -16,6 +16,8 @@ import {
   getServerInvitation,
   StoredServerInvitation,
 } from '../../api/_lib/invitationServer';
+import * as supabaseServerModule from '../../api/_lib/supabaseServer';
+import { createDurableOtpSupabaseMock, seedDurableOtp } from './helpers/durableOtpSupabaseMock';
 
 function helperStoreInvitation(overrides: Partial<StoredServerInvitation> & { token: string; email: string }) {
   storeServerInvitation({
@@ -68,6 +70,7 @@ function createMockReqRes(options: {
 
 describe('ENCRIX Phase 28: Telecaller Invitation Email OTP Delivery & Error Remediation', () => {
   const originalEnv = { ...process.env };
+  let durableOtpRows: any[] = [];
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -84,6 +87,9 @@ describe('ENCRIX Phase 28: Telecaller Invitation Email OTP Delivery & Error Reme
     delete process.env.SENDGRID_FROM_EMAIL;
     process.env.OTP_SERVER_SECRET = 'c8f7e2a1b4d3e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0';
     process.env.SESSION_SERVER_SECRET = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2';
+    const durableMock = createDurableOtpSupabaseMock();
+    durableOtpRows = durableMock.rows;
+    vi.spyOn(supabaseServerModule, 'getSupabaseServerClient').mockReturnValue(durableMock.client);
   });
 
   afterEach(() => {
@@ -125,7 +131,7 @@ describe('ENCRIX Phase 28: Telecaller Invitation Email OTP Delivery & Error Reme
     });
 
     it('strips internal error prefixes while preserving diagnostic reason', () => {
-      const msg = 'BLOCKED — EMAIL OTP PROVIDER ERROR: Invalid recipient domain';
+      const msg = 'BLOCKED â€” EMAIL OTP PROVIDER ERROR: Invalid recipient domain';
       const sanitized = sanitizeErrorMessage(msg);
       expect(sanitized).toBe('Invalid recipient domain');
     });
@@ -174,7 +180,7 @@ describe('ENCRIX Phase 28: Telecaller Invitation Email OTP Delivery & Error Reme
       const configErr = {
         status: 503,
         code: 'EMAIL_PROVIDER_NOT_CONFIGURED',
-        message: 'BLOCKED — EMAIL OTP PROVIDER NOT CONFIGURED: Please configure RESEND_API_KEY...',
+        message: 'BLOCKED â€” EMAIL OTP PROVIDER NOT CONFIGURED: Please configure RESEND_API_KEY...',
       };
 
       const actionable = formatActionableEmailError(configErr);
@@ -230,9 +236,9 @@ describe('ENCRIX Phase 28: Telecaller Invitation Email OTP Delivery & Error Reme
   });
 
   // =========================================================================
-  // 3. Invitation Token & Email Binding Validation in /api/auth/send-otp
+  // 3. Invitation Token & Email Binding Validation in /api/_lib/authHandlers/send-otp
   // =========================================================================
-  describe('3. Invitation Token & Email Binding in /api/auth/send-otp', () => {
+  describe('3. Invitation Token & Email Binding in /api/_lib/authHandlers/send-otp', () => {
     it('returns 400 when inviteToken is missing for INVITATION purpose', async () => {
       const { req, res } = createMockReqRes({
         method: 'POST',
@@ -417,17 +423,10 @@ describe('ENCRIX Phase 28: Telecaller Invitation Email OTP Delivery & Error Reme
         created_at: new Date().toISOString(),
       });
 
-      // Simulate active cooldown in store
-      serverOtpStore.set('telecaller@encrix.io:INVITATION', {
-        identifier: 'telecaller@encrix.io',
-        purpose: 'INVITATION',
-        otpHash: 'dummyhash',
-        attempts: 0,
-        resendAfter: new Date(Date.now() + 45000).toISOString(),
-        expiresAt: new Date(Date.now() + 500000).toISOString(),
-        used: false,
-        createdAt: new Date().toISOString(),
-      });
+      // Simulate the durable ticket cooldown written by the issuance RPC.
+      seedDurableOtp(durableOtpRows, 'telecaller@encrix.io', '123456', 'INVITATION', token);
+      const cooldownRow = durableOtpRows.find((row) => row.ticket_id);
+      cooldownRow.resend_after = new Date(Date.now() + 45000).toISOString();
 
       const { req, res } = createMockReqRes({
         method: 'POST',
@@ -585,10 +584,11 @@ describe('ENCRIX Phase 28: Telecaller Invitation Email OTP Delivery & Error Reme
       expect(res.body.otp).toBeUndefined();
       expect(res.body.rawOtp).toBeUndefined();
 
-      // In-memory store holds the HMAC-SHA256 hash, not plaintext OTP
-      const stored = serverOtpStore.get('hrixofficial@gmail.com:INVITATION');
+      // Durable state stores only the HMAC hash, never the plaintext OTP.
+      const stored = durableOtpRows.find((row) => row.email === 'hrixofficial@gmail.com');
       expect(stored).toBeDefined();
-      expect(stored?.otpHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(stored.otp_hash).toMatch(/^[a-f0-9]{64}$/);
+      expect(stored.otp_hash).not.toContain('654321');
     });
   });
 
@@ -610,19 +610,8 @@ describe('ENCRIX Phase 28: Telecaller Invitation Email OTP Delivery & Error Reme
         created_at: new Date().toISOString(),
       });
 
-      // Prepare OTP in memory store
       const plainOtp = '654321';
-      const otpHash = hashOtp('caller@encrix.io', plainOtp);
-      serverOtpStore.set('caller@encrix.io:INVITATION', {
-        identifier: 'caller@encrix.io',
-        purpose: 'INVITATION',
-        otpHash,
-        attempts: 0,
-        resendAfter: new Date(Date.now() + 60000).toISOString(),
-        expiresAt: new Date(Date.now() + 600000).toISOString(),
-        used: false,
-        createdAt: new Date().toISOString(),
-      });
+      const verificationTicket = seedDurableOtp(durableOtpRows, 'caller@encrix.io', plainOtp, 'INVITATION', token);
 
       // Call verify-otp handler
       const { req: vReq, res: vRes } = createMockReqRes({
@@ -632,6 +621,7 @@ describe('ENCRIX Phase 28: Telecaller Invitation Email OTP Delivery & Error Reme
           email: 'caller@encrix.io',
           otp: plainOtp,
           inviteToken: token,
+          verificationTicket,
         },
       });
 
@@ -656,6 +646,7 @@ describe('ENCRIX Phase 28: Telecaller Invitation Email OTP Delivery & Error Reme
           email: 'caller@encrix.io',
           otp: plainOtp,
           inviteToken: token,
+          verificationTicket,
         },
       });
 
@@ -694,17 +685,7 @@ describe('ENCRIX Phase 28: Telecaller Invitation Email OTP Delivery & Error Reme
       });
 
       const plainOtp = '112233';
-      const otpHash = hashOtp('caller@encrix.io', plainOtp);
-      serverOtpStore.set('caller@encrix.io:INVITATION', {
-        identifier: 'caller@encrix.io',
-        purpose: 'INVITATION',
-        otpHash,
-        attempts: 0,
-        resendAfter: new Date(Date.now() + 60000).toISOString(),
-        expiresAt: new Date(Date.now() + 600000).toISOString(),
-        used: false,
-        createdAt: new Date().toISOString(),
-      });
+      const verificationTicket = seedDurableOtp(durableOtpRows, 'caller@encrix.io', plainOtp, 'INVITATION', token);
 
       // Verify OTP will verify invitation match and org match
       const { req, res } = createMockReqRes({
@@ -714,6 +695,7 @@ describe('ENCRIX Phase 28: Telecaller Invitation Email OTP Delivery & Error Reme
           email: 'caller@encrix.io',
           otp: plainOtp,
           inviteToken: token,
+          verificationTicket,
         },
       });
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+﻿import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   generateSecureOtp,
   hashOtp,
@@ -8,11 +8,11 @@ import {
   OTP_CONFIG,
   serverOtpStore,
 } from '../../api/_lib/otpServer';
-import { authService, isLiveApiMode } from '../services/auth/authService';
+import { authService } from '../services/auth/authService';
 import { db } from '../services/supabase/db';
 import { Profile } from '../types';
 import * as supabaseServerModule from '../../api/_lib/supabaseServer';
-import verifyOtpHandler from '../../api/auth/verify-otp';
+import verifyOtpHandler from '../../api/_lib/authHandlers/verify-otp';
 
 describe('ENCRIX Phase 16.1: Local Live Email OTP Verification Suite', () => {
   const originalResendKey = process.env.RESEND_API_KEY;
@@ -333,6 +333,12 @@ describe('ENCRIX Phase 16.1: Local Live Email OTP Verification Suite', () => {
 
         return {
           from: vi.fn().mockImplementation((tableName: string) => createBuilder(tableName)),
+          rpc: vi.fn(async (name: string, args: any) => name === 'create_owner_registration' ? ({
+            data: {
+              organization: { id: 'org-vertex-001', name: args.p_company_name, slug: args.p_slug, owner_id: args.p_owner_user_id },
+              profile: { id: 'prof-vikram-001', user_id: args.p_owner_user_id, organization_id: 'org-vertex-001', full_name: args.p_full_name, email: args.p_email, role: 'OWNER', status: 'ACTIVE' },
+            }, error: null,
+          }) : ({ data: { attempts: 0 }, error: null })),
         } as any;
       });
     });
@@ -391,7 +397,7 @@ describe('ENCRIX Phase 16.1: Local Live Email OTP Verification Suite', () => {
       }
     });
 
-    it('verifies REGISTER OTP without throwing .catch is not a function on Postgrest query builder', async () => {
+    it('fails closed when REGISTER OTP exists only in process-local memory', async () => {
       const email = 'newfounder@encrix.io';
       const otp = '334455';
       const otpHash = hashOtp(email, otp);
@@ -427,17 +433,13 @@ describe('ENCRIX Phase 16.1: Local Live Email OTP Verification Suite', () => {
 
       await verifyOtpHandler(req, res);
 
-      expect(res.getStatusCode()).toBe(200);
-      expect(res.getBody().success).toBe(true);
-      expect(res.getBody().role).toBe('OWNER');
-      expect(res.getBody().profile.full_name).toBe('Dev Founder');
-      expect(res.getBody().organization.name).toBe('Encrix Labs');
-
-      // Ensure OTP was burned upon verification
-      expect(serverOtpStore.get(`${email}:REGISTER`)).toBeUndefined();
+      expect(res.getStatusCode()).toBe(400);
+      expect(res.getBody().error).toBe('No pending registration found for this email address.');
+      expect(serverOtpStore.get(`${email}:REGISTER`)?.otpHash).toBe(otpHash);
+      expect(JSON.stringify(res.getBody())).not.toContain('.catch is not a function');
     });
 
-    it('rejects invalid OTP code with proper attempt incrementing and without .catch error', async () => {
+    it('does not consult or mutate process-local registration OTP state without a durable ticket', async () => {
       const email = 'newfounder@encrix.io';
       const otp = '334455';
       const otpHash = hashOtp(email, otp);
@@ -462,10 +464,11 @@ describe('ENCRIX Phase 16.1: Local Live Email OTP Verification Suite', () => {
       await verifyOtpHandler(req, res);
 
       expect(res.getStatusCode()).toBe(400);
-      expect(res.getBody().error).toBe('Invalid verification code.');
+      expect(res.getBody().error).toBe('No pending registration found for this email address.');
 
       const mem = serverOtpStore.get(`${email}:REGISTER`);
-      expect(mem?.attempts).toBe(1);
+      expect(mem?.attempts).toBe(0);
+      expect(JSON.stringify(res.getBody())).not.toContain('.catch is not a function');
     });
   });
 });

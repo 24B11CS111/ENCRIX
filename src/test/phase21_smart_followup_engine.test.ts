@@ -499,7 +499,7 @@ describe('ENCRIX Phase 21: Smart Follow-Up Engine & Overdue Escalation', () => {
       expect(tcNotifs2.filter((n) => n.type === 'FOLLOW_UP_OVERDUE')).toHaveLength(1);
     });
 
-    it('handles simultaneous cron invocations with zero duplicate notifications', async () => {
+    it('fails closed for cron requests when paid entitlement storage is unavailable', async () => {
       process.env.CRON_SECRET = 'cron-concurrency-test-secret';
       const now = '2026-10-15T10:00:00.000Z';
 
@@ -528,13 +528,17 @@ describe('ENCRIX Phase 21: Smart Follow-Up Engine & Overdue Escalation', () => {
 
       // Run two invocations concurrently
       const [res1, res2] = await Promise.all([makeReq(), makeReq()]);
-      expect(res1.statusCode).toBe(200);
-      expect(res2.statusCode).toBe(200);
+      expect(res1.statusCode).toBe(500);
+      expect(res2.statusCode).toBe(500);
+      expect(res1.body.error).toBe('Reminder processing completed with errors.');
+      expect(res2.body.error).toBe('Reminder processing completed with errors.');
+      expect(res1.body.errors).toBeUndefined();
+      expect(res2.body.errors).toBeUndefined();
 
       // Total delivered reminder notifications is exactly 1 (zero duplicates)
       const notifs = db.getNotifications(telecallerA1);
       const reminderNotifs = notifs.filter((n) => n.type === 'FOLLOW_UP_DUE');
-      expect(reminderNotifs).toHaveLength(1);
+      expect(reminderNotifs).toHaveLength(0);
     });
 
     it('rescheduling callback prevents old due time from triggering reminders and triggers at new time', () => {
@@ -610,7 +614,7 @@ describe('ENCRIX Phase 21: Smart Follow-Up Engine & Overdue Escalation', () => {
       expect(res.body.error).toMatch(/Unauthorized/i);
     });
 
-    it('authorizes requests with the valid CRON_SECRET and executes reminders', async () => {
+    it('does not let a valid CRON_SECRET bypass paid entitlement verification', async () => {
       process.env.CRON_SECRET = 'encrix-secret-test-token-789';
 
       const now = '2026-10-15T10:00:00.000Z';
@@ -635,9 +639,10 @@ describe('ENCRIX Phase 21: Smart Follow-Up Engine & Overdue Escalation', () => {
       });
 
       await cronReminderHandler(req, res);
-      expect(res.statusCode).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.remindedCount).toBeGreaterThanOrEqual(1);
+      expect(res.statusCode).toBe(500);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error).toBe('Reminder processing completed with errors.');
+      expect(res.body.errors).toBeUndefined();
     });
 
     it('configures /api/followups/reminders as an alias to the secured cron endpoint', () => {
@@ -648,7 +653,7 @@ describe('ENCRIX Phase 21: Smart Follow-Up Engine & Overdue Escalation', () => {
       });
     });
 
-    it('authorizes the secured cron endpoint with an Owner signed session', async () => {
+    it('fails closed for an Owner session when entitlement cannot be verified', async () => {
       const sessionToken = createSignedSessionToken({
         profileId: ownerA.id,
         userId: ownerA.user_id,
@@ -670,8 +675,10 @@ describe('ENCRIX Phase 21: Smart Follow-Up Engine & Overdue Escalation', () => {
       });
 
       await cronReminderHandler(req, res);
-      expect(res.statusCode).toBe(200);
-      expect(res.body.success).toBe(true);
+      expect(res.statusCode).toBe(500);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error).toBe('Reminder processing completed with errors.');
+      expect(res.body.errors).toBeUndefined();
     });
 
     it('prevents an authenticated Owner from processing follow-ups of another tenant', async () => {

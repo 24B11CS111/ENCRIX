@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import invitationsHandler from '../../api/auth/invitations';
-import inviteHandler from '../../api/auth/invite';
-import sendOtpHandler from '../../api/auth/send-otp';
-import verifyOtpHandler from '../../api/auth/verify-otp';
+﻿import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import invitationsHandler from '../../api/_lib/authHandlers/invitations';
+import inviteHandler from '../../api/_lib/authHandlers/invite';
+import sendOtpHandler from '../../api/_lib/authHandlers/send-otp';
+import verifyOtpHandler from '../../api/_lib/authHandlers/verify-otp';
 import * as supabaseServerModule from '../../api/_lib/supabaseServer';
 import { createSignedSessionToken } from '../../api/_lib/sessionServer';
 import {
@@ -12,6 +12,15 @@ import {
 } from '../../api/_lib/invitationServer';
 import { serverOtpStore, hashOtp } from '../../api/_lib/otpServer';
 import { authService } from '../../src/services/auth/authService';
+
+vi.mock('../../api/_lib/emailDelivery.js', () => ({
+  sendInvitationEmail: vi.fn(async () => ({ id: 'mock-invitation-email' })),
+  sendFollowUpReminderEmail: vi.fn(async () => ({ id: 'mock-reminder-email' })),
+}));
+
+vi.mock('../../api/_lib/paidEntitlement.js', () => ({
+  requirePaidEntitlement: vi.fn(async () => true),
+}));
 
 function createMockReqRes(options: {
   method?: string;
@@ -122,10 +131,13 @@ describe('ENCRIX Phase 29: Production-Ready Invitation Management API', () => {
       from: vi.fn((table: string) => {
         if (table === 'profiles') {
           return {
-            select: vi.fn(() => ({
-              eq: vi.fn((field: string, val: string) => ({
+            select: vi.fn(() => {
+              let selectedId: string | null = null;
+              const query: any = {
+                eq: vi.fn((field: string, val: string) => { if (field === 'id') selectedId = val; return query; }),
+                ilike: vi.fn(() => query),
                 single: vi.fn(async () => {
-                  if (val === ownerProfileId) {
+                  if (selectedId === ownerProfileId) {
                     return {
                       data: {
                         id: ownerProfileId,
@@ -139,7 +151,7 @@ describe('ENCRIX Phase 29: Production-Ready Invitation Management API', () => {
                       error: null,
                     };
                   }
-                  if (val === telecallerProfileId) {
+                  if (selectedId === telecallerProfileId) {
                     return {
                       data: {
                         id: telecallerProfileId,
@@ -158,8 +170,9 @@ describe('ENCRIX Phase 29: Production-Ready Invitation Management API', () => {
                 maybeSingle: vi.fn(async () => {
                   return { data: null, error: null };
                 }),
-              })),
-            })),
+              };
+              return query;
+            }),
           };
         }
 
@@ -181,6 +194,10 @@ describe('ENCRIX Phase 29: Production-Ready Invitation Management API', () => {
               const builder: any = {
                 eq: vi.fn((field: string, val: any) => {
                   filtered = filtered.filter((row) => row[field] === val);
+                  return builder;
+                }),
+                gt: vi.fn((field: string, val: any) => {
+                  filtered = filtered.filter((row) => String(row[field]) > String(val));
                   return builder;
                 }),
                 order: vi.fn(() => builder),
@@ -220,6 +237,17 @@ describe('ENCRIX Phase 29: Production-Ready Invitation Management API', () => {
                   if (field === 'organization_id') requiredOrg = val;
                   return builder;
                 }),
+                lte: vi.fn((field: string, val: string) => {
+                  if (field === 'expires_at') {
+                    for (const row of mockInvitationsDb) {
+                      if (row.organization_id === requiredOrg && row.status === requiredStatus && String(row.expires_at) <= val) {
+                        Object.assign(row, updates);
+                      }
+                    }
+                  }
+                  return builder;
+                }),
+                then: (resolve: any) => Promise.resolve({ data: [], error: null }).then(resolve),
                 select: vi.fn(() => ({
                   maybeSingle: vi.fn(async () => {
                     const idx = mockInvitationsDb.findIndex((row) => {
@@ -235,6 +263,7 @@ describe('ENCRIX Phase 29: Production-Ready Invitation Management API', () => {
                     return { data: mockInvitationsDb[idx], error: null };
                   }),
                 })),
+                ilike: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data: null, error: null })) })),
               };
               return builder;
             }),
@@ -302,13 +331,13 @@ describe('ENCRIX Phase 29: Production-Ready Invitation Management API', () => {
   // 1. Unauthenticated requests are rejected
   // =========================================================================
   it('1. rejects unauthenticated requests with 401 Unauthorized', async () => {
-    // GET /api/auth/invitations
+    // GET /api/_lib/authHandlers/invitations
     const { req: getReq, res: getRes } = createMockReqRes({ method: 'GET' });
     await invitationsHandler(getReq, getRes);
     expect(getRes.statusCode).toBe(401);
     expect(getRes.body.error).toContain('Authorization');
 
-    // DELETE /api/auth/invitations
+    // DELETE /api/_lib/authHandlers/invitations
     const { req: delReq, res: delRes } = createMockReqRes({
       method: 'DELETE',
       body: { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
@@ -316,7 +345,7 @@ describe('ENCRIX Phase 29: Production-Ready Invitation Management API', () => {
     await invitationsHandler(delReq, delRes);
     expect(delRes.statusCode).toBe(401);
 
-    // POST /api/auth/invite
+    // POST /api/_lib/authHandlers/invite
     const { req: postReq, res: postRes } = createMockReqRes({
       method: 'POST',
       body: { fullName: 'New Caller', email: 'caller@encrix.io' },
@@ -645,25 +674,51 @@ describe('ENCRIX Phase 29: Production-Ready Invitation Management API', () => {
     mockSupabase.from = vi.fn((table: string) => {
       if (table === 'profiles') {
         return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              single: vi.fn(async () => ({
-                data: { id: ownerProfileId, user_id: ownerUserId, organization_id: orgA, role: 'OWNER', status: 'ACTIVE' },
-                error: null,
-              })),
+          select: vi.fn(() => {
+            const query: any = {
+              eq: vi.fn(() => query),
+              ilike: vi.fn(() => query),
+              single: vi.fn(async () => ({ data: { id: ownerProfileId, user_id: ownerUserId, organization_id: orgA, role: 'OWNER', status: 'ACTIVE' }, error: null })),
               maybeSingle: vi.fn(async () => ({ data: null, error: null })),
-            })),
-          })),
+            };
+            return query;
+          }),
         };
       }
       if (table === 'organization_invitations') {
         return {
+          update: vi.fn(() => {
+            const query: any = {
+              eq: vi.fn(() => query),
+              lte: vi.fn(() => query),
+              then: (resolve: any) => Promise.resolve({ data: [], error: null }).then(resolve),
+            };
+            return query;
+          }),
+          select: vi.fn(() => {
+            const query: any = {
+              eq: vi.fn(() => query),
+              ilike: vi.fn(() => query),
+              gt: vi.fn(() => query),
+              maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+            };
+            return query;
+          }),
           insert: vi.fn(() => ({
             select: vi.fn(() => ({
               single: vi.fn(async () => ({
                 data: null,
                 error: { code: '23505', message: 'Unique constraint violation on token' },
               })),
+            })),
+          })),
+        };
+      }
+      if (table === 'organizations') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn(async () => ({ data: { id: orgA, name: 'ENCRIX Org A' }, error: null })),
             })),
           })),
         };
@@ -678,8 +733,8 @@ describe('ENCRIX Phase 29: Production-Ready Invitation Management API', () => {
     });
     await inviteHandler(req, res);
 
-    expect(res.statusCode).toBe(500);
-    expect(res.body.error).toContain('Database failed to persist invitation');
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toContain('pending invitation already exists');
     expect(res.body.success).toBeUndefined();
   });
 

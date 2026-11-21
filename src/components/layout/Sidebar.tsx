@@ -16,6 +16,7 @@ import {
   Server,
   Headphones,
   CheckCircle,
+  CreditCard,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -41,6 +42,7 @@ export const Sidebar: React.FC = () => {
       title: 'MANAGEMENT',
       links: [
         { to: '/owner/team', label: 'Team', icon: Headphones },
+        { to: '/owner/pricing', label: 'Pricing & Billing', icon: CreditCard },
         { to: '/owner/analytics', label: 'Analytics', icon: BarChart3 },
         { to: '/owner/settings', label: 'Settings', icon: Settings },
       ],
@@ -88,6 +90,12 @@ export const Sidebar: React.FC = () => {
         { to: '/admin/activity', label: 'Platform Activity', icon: Activity },
         { to: '/admin/security', label: 'Security Audit', icon: ShieldCheck },
         { to: '/admin/system', label: 'System Health', icon: Server },
+      ],
+    },
+    {
+      title: 'BILLING',
+      links: [
+        { to: '/admin/refunds', label: 'Refund Management', icon: CreditCard },
       ],
     },
   ];

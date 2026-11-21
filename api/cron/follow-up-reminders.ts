@@ -12,6 +12,7 @@ import {
  * 2. Authenticated Admin / Owner user session bearer token (scoped to user's organization)
  */
 export default async function handler(req: any, res: any) {
+  res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed. Use GET or POST.' });
   }
@@ -121,13 +122,14 @@ export default async function handler(req: any, res: any) {
       overdueCount: result.overdueCount,
       escalatedCount: result.escalatedCount,
       emailStatus: result.emailStatus,
-      errors: result.errors,
+      ...(result.success ? {} : { errorCount: result.errors?.length || 1, error: 'Reminder processing completed with errors.' }),
     });
   } catch (error: any) {
     // Sanitize error logging: never log authorization tokens or customer contact information
-    console.error('Follow-up cron reminder failure:', error?.message || 'Unknown error');
+    const code = typeof error?.code === 'string' && /^[A-Z0-9_]+$/i.test(error.code) ? error.code : 'PROCESSING_FAILED';
+    console.error('Follow-up cron reminder failure:', { code });
     return res.status(500).json({
-      error: error?.message || 'Internal Server Error during follow-up reminder processing.',
+      error: 'Internal Server Error during follow-up reminder processing.',
     });
   }
 }

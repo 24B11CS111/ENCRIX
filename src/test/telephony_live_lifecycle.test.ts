@@ -16,6 +16,10 @@ vi.mock('../../api/_lib/supabaseServer.js', () => ({
   }),
 }));
 
+vi.mock('../../api/_lib/paidEntitlement.js', () => ({
+  requirePaidEntitlement: vi.fn(async () => true),
+}));
+
 import callHandler from '../../api/telephony/call';
 import { db } from '@/services/supabase/db';
 
@@ -147,7 +151,7 @@ describe('authenticated live call lifecycle API', () => {
     expect(JSON.stringify(status.res.body)).not.toContain('recording_url');
   });
 
-  it('treats end acknowledgements as pending and leaves status persistence to verified webhooks', async () => {
+  it('fails closed on call control when durable tenant credentials and bridge data are unavailable', async () => {
     seedCall();
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'in-progress' }) })
@@ -157,16 +161,16 @@ describe('authenticated live call lifecycle API', () => {
 
     const end = request('POST', { body: { action: 'end', callId } });
     await callHandler(end.req, end.res);
-    expect(end.res.statusCode).toBe(202);
-    expect(end.res.body).toEqual({ callId, accepted: true, status: 'IN_PROGRESS' });
+    expect(end.res.statusCode).toBe(503);
+    expect(end.res.body.error).toMatch(/live call control is unavailable/i);
     expect((db as any).calls[0].status).toBe('IN_PROGRESS');
 
     const repeatedEnd = request('POST', { body: { action: 'end', callId } });
     await callHandler(repeatedEnd.req, repeatedEnd.res);
-    expect(repeatedEnd.res.statusCode).toBe(202);
-    expect(repeatedEnd.res.body).toEqual({ callId, accepted: false, status: 'IN_PROGRESS' });
+    expect(repeatedEnd.res.statusCode).toBe(503);
+    expect(repeatedEnd.res.body.error).toMatch(/live call control is unavailable/i);
     expect((db as any).calls[0]).toMatchObject({ status: 'IN_PROGRESS', duration_seconds: 0 });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(JSON.stringify(end.res.body)).not.toContain(callSid);
     expect(JSON.stringify(end.res.body)).not.toContain('synthetic-secret');
   });
@@ -199,11 +203,11 @@ describe('authenticated live call lifecycle API', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-    const start = request('POST', { body: { leadId } });
+    const start = request('POST', { body: { leadId, idempotencyKey: '30000000-0000-4000-8000-000000000001' } });
     await callHandler(start.req, start.res);
 
     expect(start.res.statusCode).toBe(503);
-    expect(start.res.body.error).toMatch(/secure call bridge/i);
+    expect(start.res.body.error).toMatch(/live calling is disabled/i);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(JSON.stringify(start.res.body)).not.toContain('+15550001111');
     expect((db as any).calls).toHaveLength(callCountBefore);
