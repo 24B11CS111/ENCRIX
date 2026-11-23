@@ -508,9 +508,35 @@ export const OwnerTeamPage: React.FC = () => {
             ) : (
               <form onSubmit={handleSendInvitation} className="space-y-3.5">
                 {formError && (
-                  <div className="p-3 bg-[#FEECEB] border border-[#F8C8C6] rounded-[8px] text-xs text-[#C53030]">
-                    {formError}
-                  </div>
+                  formError === 'ACTIVE_SUBSCRIPTION_REQUIRED' ? (
+                    <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-[10px] text-xs text-amber-900 space-y-2">
+                      <div className="flex items-center gap-1.5 font-semibold text-amber-950">
+                        <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
+                        <span>Business Plan Required</span>
+                      </div>
+                      <p className="text-amber-800 leading-relaxed text-[11px]">
+                        Inviting telecallers and growing your team requires an active Business Plan (₹9,999/year). Upgrade your subscription to unlock unlimited telecaller seats.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddOpen(false);
+                          navigate('/owner/pricing');
+                        }}
+                        className="w-full py-2 bg-[#0B1F3A] hover:bg-[#17385F] text-white text-xs font-semibold rounded-[8px] transition-colors cursor-pointer text-center"
+                      >
+                        View Business Plan · ₹9,999/yr
+                      </button>
+                    </div>
+                  ) : formError === 'PAID_ENTITLEMENT_UNAVAILABLE' ? (
+                    <div className="p-3 bg-[#FEECEB] border border-[#F8C8C6] rounded-[8px] text-xs text-[#C53030]">
+                      Subscription verification is temporarily unavailable. Please try again shortly.
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-[#FEECEB] border border-[#F8C8C6] rounded-[8px] text-xs text-[#C53030]">
+                      {formError}
+                    </div>
+                  )
                 )}
 
                 <div>
